@@ -23,8 +23,14 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFViewDelegate {
     }
     
     func open(url: URL) {
-        document = PDFDocument(url: url)
-        pdfView?.document = document
+        guard let doc = PDFDocument(url: url) else {
+            document = nil
+            pdfView?.document = nil
+            return
+        }
+        PDFDocumentSanitizer.sanitize(document: doc)
+        document = doc
+        pdfView?.document = doc
         configurePDFView()
         currentPageIndex = 0
         searchMatches.removeAll()

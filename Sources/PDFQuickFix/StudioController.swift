@@ -62,6 +62,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
 
     func open(url: URL) {
         guard let doc = PDFDocument(url: url) else { return }
+        PDFDocumentSanitizer.sanitize(document: doc)
         document = doc
         currentURL = url
         pdfView?.document = doc
@@ -70,11 +71,16 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
     }
 
     func setDocument(_ document: PDFDocument?, url: URL? = nil) {
-        self.document = document
+        var doc = document
+        if let d = doc {
+            PDFDocumentSanitizer.sanitize(document: d)
+            doc = d
+        }
+        self.document = doc
         if let url {
             currentURL = url
         }
-        pdfView?.document = document
+        pdfView?.document = doc
         refreshAll()
     }
 
