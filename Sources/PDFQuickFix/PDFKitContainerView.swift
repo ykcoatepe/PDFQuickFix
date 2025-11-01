@@ -35,6 +35,50 @@ struct PDFKitContainerView: NSViewRepresentable {
     }
 }
 
+final class ImageStampAnnotation: PDFAnnotation {
+    private let signatureImage: NSImage
+    private static let imageKey = "ImageStampAnnotationData"
+    
+    init(bounds: CGRect, image: NSImage) {
+        self.signatureImage = image
+        super.init(bounds: bounds, forType: .stamp, withProperties: nil)
+        self.color = .clear
+    }
+    
+    required init?(coder: NSCoder) {
+        guard
+            let data = coder.decodeObject(forKey: Self.imageKey) as? Data,
+            let image = NSImage(data: data)
+        else {
+            return nil
+        }
+        self.signatureImage = image
+        super.init(coder: coder)
+    }
+    
+    override func encode(with coder: NSCoder) {
+        super.encode(with: coder)
+        if let data = signatureImage.tiffRepresentation {
+            coder.encode(data, forKey: Self.imageKey)
+        }
+    }
+    
+    override func draw(with box: PDFDisplayBox, in context: CGContext) {
+        super.draw(with: box, in: context)
+        guard let cgImage = signatureImage.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
+        context.saveGState()
+        context.draw(cgImage, in: bounds)
+        context.restoreGState()
+    }
+    
+    override func copy(with zone: NSZone? = nil) -> Any {
+        let copy = ImageStampAnnotation(bounds: bounds, image: signatureImage)
+        copy.border = border
+        copy.color = color
+        return copy
+    }
+}
+
 protocol PDFCanvasDelegate: AnyObject {
     func jumpTo(selection: PDFSelection, on view: PDFCanvasView, page: PDFPage)
 }
@@ -94,9 +138,7 @@ final class PDFCanvasView: PDFView {
                 let w: CGFloat = 180
                 let aspect = img.size.height / img.size.width
                 let rect = CGRect(x: pagePoint.x - w/2, y: pagePoint.y - w*aspect/2, width: w, height: w*aspect)
-                let ann = PDFAnnotation(bounds: rect, forType: .stamp, withProperties: nil)
-                ann.image = img
-                ann.color = .clear
+                let ann = ImageStampAnnotation(bounds: rect, image: img)
                 page.addAnnotation(ann)
             }
         case .redactBox:

@@ -52,7 +52,7 @@ struct QuickFixTab: View {
                     }
                     HStack {
                         Stepper("DPI: \(Int(dpi))", value: $dpi, in: 150...600, step: 50)
-                        Stepper("Redaction padding: \(String(format: \"%.1f\", padding)) px", value: $padding, in: 0...8, step: 0.5)
+                        Stepper("Redaction padding: \(String(format: "%.1f", padding)) px", value: $padding, in: 0...8, step: 0.5)
                     }
                     HStack {
                         Text("OCR languages:")
@@ -138,7 +138,7 @@ struct DropAreaView: View {
         ZStack {
             RoundedRectangle(cornerRadius: 12)
                 .strokeBorder(style: StrokeStyle(lineWidth: 2, dash: [6]))
-                .foregroundStyle(isDragging ? .accent : .secondary)
+                .foregroundStyle(isDragging ? Color.accentColor : Color.secondary)
             VStack(spacing: 6) {
                 Text("Drop a PDF here")
                 Text("or click “Choose PDF…”").foregroundStyle(.secondary).font(.footnote)

@@ -15,6 +15,7 @@ struct ReaderTabView: View {
     @State private var manualRedactions: [Int:[CGRect]] = [:]
     @State private var showAlert: Bool = false
     @State private var alertMsg: String = ""
+    @State private var debounceWorkItem: DispatchWorkItem?
     
     var body: some View {
         VStack(spacing: 0) {
@@ -100,8 +101,11 @@ struct ReaderTabView: View {
         guard let pdfDoc else { return }
         let v = PDFView()
         v.document = pdfDoc
-        let op = v.printOperation(for: nil)
-        op?.run()
+        v.autoScales = true
+        let operation = NSPrintOperation(view: v)
+        operation.showsPrintPanel = true
+        operation.showsProgressPanel = true
+        operation.run()
     }
     
     private func performSearch() {
@@ -109,10 +113,19 @@ struct ReaderTabView: View {
         currentMatchIndex = 0
         guard let pdfDoc, !searchText.isEmpty else { return }
         let options: NSString.CompareOptions = [.caseInsensitive]
-        for i in 0..<pdfDoc.pageCount {
-            guard let page = pdfDoc.page(at: i) else { continue }
-            let selections = page.findString(searchText, withOptions: options)
-            matches.append(contentsOf: selections)
+        for index in 0..<pdfDoc.pageCount {
+            guard let page = pdfDoc.page(at: index), let pageString = page.string else { continue }
+            let nsString = pageString as NSString
+            var searchLocation = 0
+            while searchLocation < nsString.length {
+                let range = NSRange(location: searchLocation, length: nsString.length - searchLocation)
+                let foundRange = nsString.range(of: searchText, options: options, range: range)
+                if foundRange.location == NSNotFound { break }
+                if let selection = page.selection(for: foundRange) {
+                    matches.append(selection)
+                }
+                searchLocation = foundRange.location + max(foundRange.length, 1)
+            }
         }
         if !matches.isEmpty { focusMatch(index: 0) }
     }
@@ -135,10 +148,11 @@ struct ReaderTabView: View {
     }
     
     private func debounceSearch() {
-        NSObject.cancelPreviousPerformRequests(withTarget: self, selector: #selector(_doSearch), object: nil)
-        self.perform(#selector(_doSearch), with: nil, afterDelay: 0.35)
+        debounceWorkItem?.cancel()
+        let workItem = DispatchWorkItem { performSearch() }
+        debounceWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: workItem)
     }
-    @objc private func _doSearch() { performSearch() }
     
     private func repairOCR() {
         guard let url = docURL else { alert("Open a PDF first."); return }
@@ -239,15 +253,13 @@ extension Notification.Name {
     static let PDFQuickFixJumpToSelection = Notification.Name("PDFQuickFixJumpToSelection")
 }
 
-struct ThumbsSidebar: NSViewRepresentable {
-    let pdfDocument: PDFDocument
-    func makeNSView(context: Context) -> PDFThumbnailView {
-        let v = PDFThumbnailView()
-        v.minimumSize = CGSize(width: 120, height: 160)
-        v.maximumSize = CGSize(width: 120, height: 200)
-        v.thumbnailSize = CGSize(width: 120, height: 160)
-        return v
-    }
+    struct ThumbsSidebar: NSViewRepresentable {
+        let pdfDocument: PDFDocument
+        func makeNSView(context: Context) -> PDFThumbnailView {
+            let v = PDFThumbnailView()
+            v.thumbnailSize = CGSize(width: 120, height: 160)
+            return v
+        }
     func updateNSView(_ nsView: PDFThumbnailView, context: Context) {
         nsView.pdfView = context.coordinator.pdfView
         nsView.pdfView?.document = pdfDocument

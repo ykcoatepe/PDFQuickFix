@@ -154,8 +154,8 @@ final class PDFQuickFixEngine {
             // Convert segments to runs with rectangles
             for seg in segments {
                 let r = NSRange(location: seg.start, length: seg.end - seg.start)
-                if let box = try? best.boundingBox(for: r) {
-                    let rectPx = visionRectToPixelRect(box, imageSize: CGSize(width: baseImage.width, height: baseImage.height))
+                if let range = Range(r, in: text), let box = try? best.boundingBox(for: range) {
+                    let rectPx = visionRectToPixelRect(box.boundingBox, imageSize: CGSize(width: baseImage.width, height: baseImage.height))
                     switch seg.kind {
                     case .skip:
                         let padded = rectPx.insetBy(dx: -options.redactionPadding, dy: -options.redactionPadding)
@@ -268,7 +268,7 @@ final class PDFQuickFixEngine {
         }
         
         for page in pages {
-            var box = CGRect(origin: .zero, size: page.pageSizePoints)
+            let box = CGRect(origin: .zero, size: page.pageSizePoints)
             pdfCtx.beginPDFPage([kCGPDFContextMediaBox as String: box] as CFDictionary)
             // draw raster page
             pdfCtx.draw(page.cgImage, in: box)
