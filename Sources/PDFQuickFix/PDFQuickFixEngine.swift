@@ -103,7 +103,7 @@ final class PDFQuickFixEngine {
                 y: rect.origin.y * scaleY,
                 width: rect.size.width * scaleX,
                 height: rect.size.height * scaleY
-            ).insetBy(dx: -options.redactionPadding, dy: -options.redactionPadding)
+            )
             redactionRectsPx.append(converted)
         }
         

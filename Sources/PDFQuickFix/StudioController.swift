@@ -295,13 +295,16 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
         case .signature:
             annotation = PDFFormBuilder.makeSignature(name: fieldName, rect: rect)
             annotation.backgroundColor = NSColor.clear
-            annotation.border?.style = .dashed
         }
         if annotation.border == nil {
             let border = PDFBorder()
             border.lineWidth = 1
-            border.style = .solid
             annotation.border = border
+        }
+        if kind == .signature {
+            annotation.border?.style = .dashed
+        } else {
+            annotation.border?.style = .solid
         }
         page.addAnnotation(annotation)
         refreshAnnotations()

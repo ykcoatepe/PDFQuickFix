@@ -199,6 +199,7 @@ struct ReaderProView: View {
         .sheet(isPresented: $quickFixPresented) {
             QuickFixSheet(inputURL: $lastOpenedURL) { output in
                 if let output {
+                    lastOpenedURL = output
                     controller.open(url: output)
                 }
             }
