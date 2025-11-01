@@ -6,6 +6,7 @@ struct QuickFixSheet: View {
     
     @Binding var inputURL: URL?
     var onDone: (URL?) -> Void
+    var manualRedactions: [Int: [CGRect]] = [:]
     
     @State private var doOCR: Bool = true
     @State private var useDefaults: Bool = true
@@ -137,7 +138,8 @@ struct QuickFixSheet: View {
                 outputURL: nil,
                 redactionPatterns: patterns,
                 customRegexes: customs,
-                findReplace: rules
+                findReplace: rules,
+                manualRedactions: manualRedactions
             )
             log += "✅ Done → \(output.path)\n"
             onDone(output)

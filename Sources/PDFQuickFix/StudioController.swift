@@ -282,30 +282,27 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
 
     func addFormField(kind: FormFieldKind, name: String, rect: CGRect) {
         guard let page = pdfView?.currentPage else { return }
-        let annotation = PDFAnnotation(bounds: rect, forType: .widget, withProperties: nil)
-        annotation.fieldName = name.isEmpty ? kind.rawValue : name
-        let border = PDFBorder()
-        border.lineWidth = 1
-        border.style = .solid
-        annotation.border = border
-
+        let fieldName = name.isEmpty ? kind.rawValue : name
+        let annotation: PDFAnnotation
         switch kind {
         case .text:
-            annotation.widgetFieldType = .text
-            annotation.widgetDefaultStringValue = ""
-            annotation.widgetStringValue = ""
+            annotation = PDFFormBuilder.makeTextField(name: fieldName, rect: rect)
             annotation.font = NSFont.systemFont(ofSize: 12)
-            annotation.backgroundColor = NSColor.white.withAlphaComponent(0.85)
+            annotation.widgetStringValue = ""
+            annotation.widgetDefaultStringValue = ""
         case .checkbox:
-            annotation.widgetFieldType = .button
-            annotation.widgetControlType = PDFWidgetControlType(rawValue: 3) ?? PDFWidgetControlType(rawValue: 0)!
-            annotation.backgroundColor = NSColor.white.withAlphaComponent(0.85)
+            annotation = PDFFormBuilder.makeCheckbox(name: fieldName, rect: rect)
         case .signature:
-            annotation.widgetFieldType = .signature
+            annotation = PDFFormBuilder.makeSignature(name: fieldName, rect: rect)
             annotation.backgroundColor = NSColor.clear
             annotation.border?.style = .dashed
         }
-
+        if annotation.border == nil {
+            let border = PDFBorder()
+            border.lineWidth = 1
+            border.style = .solid
+            annotation.border = border
+        }
         page.addAnnotation(annotation)
         refreshAnnotations()
         pushLog("Added \(kind.rawValue)")

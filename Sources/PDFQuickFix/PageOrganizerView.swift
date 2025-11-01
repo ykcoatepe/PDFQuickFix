@@ -1,5 +1,6 @@
 import SwiftUI
 import PDFKit
+import UniformTypeIdentifiers
 
 struct PageOrganizerView: View {
     @EnvironmentObject private var controller: StudioController
@@ -73,6 +74,21 @@ struct PageOrganizerView: View {
                     }
                     .tag(snapshot.id)
                     .padding(.vertical, 4)
+                    .onDrag {
+                        NSItemProvider(object: "\(snapshot.index)" as NSString)
+                    }
+                    .onDrop(of: [UTType.plainText], isTargeted: nil) { providers in
+                        guard let provider = providers.first else { return false }
+                        provider.loadDataRepresentation(forTypeIdentifier: UTType.plainText.identifier) { data, _ in
+                            guard let data,
+                                  let string = String(data: data, encoding: .utf8),
+                                  let sourceIndex = Int(string) else { return }
+                            DispatchQueue.main.async {
+                                controller.movePage(at: sourceIndex, to: snapshot.index)
+                            }
+                        }
+                        return true
+                    }
                 }
             }
         }

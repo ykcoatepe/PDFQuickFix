@@ -224,6 +224,30 @@ struct StudioView: View {
                 Label("Tools", systemImage: "slider.horizontal.3")
             }
 
+            Menu("Edit Tools") {
+                Button("Add FreeText") { EditingTools.addFreeText(in: controller.pdfView) }
+                Button("Add Rectangle") { EditingTools.addRectangle(in: controller.pdfView) }
+                Button("Add Filled Rectangle") { EditingTools.addRectangle(in: controller.pdfView, filled: true) }
+                Button("Add Oval") { EditingTools.addOval(in: controller.pdfView) }
+                Button("Add Filled Oval") { EditingTools.addOval(in: controller.pdfView, filled: true) }
+                Button("Add Line") { EditingTools.addLine(in: controller.pdfView) }
+                Button("Add Arrow") { EditingTools.addArrow(in: controller.pdfView) }
+                Button("Add Link…") {
+                    let alert = NSAlert()
+                    alert.messageText = "Enter link URL"
+                    let textField = NSTextField(string: "https://example.com")
+                    textField.frame = NSRect(x: 0, y: 0, width: 260, height: 22)
+                    alert.accessoryView = textField
+                    alert.addButton(withTitle: "OK")
+                    alert.addButton(withTitle: "Cancel")
+                    if alert.runModal() == .alertFirstButtonReturn {
+                        EditingTools.addLink(in: controller.pdfView, urlString: textField.stringValue)
+                    }
+                }
+                Button("Add Ink (sample)") { EditingTools.addSampleInk(in: controller.pdfView) }
+            }
+            .disabled(controller.pdfView == nil)
+
             Spacer()
 
             Toggle(isOn: $showInspector) {

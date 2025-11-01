@@ -91,9 +91,21 @@ final class PDFQuickFixEngine {
         // Build redaction rectangles and replacement runs
         let allRegexes = redactionPatterns.map { $0.regex } + customRegexes
         
+        let scaleX = CGFloat(widthPx) / mediaBox.width
+        let scaleY = CGFloat(heightPx) / mediaBox.height
         var redactionRectsPx: [CGRect] = []
         var replacementRunsPx: [(rect: CGRect, replacement: String)] = []
         var textRuns: [RecognizedRun] = []
+        
+        for rect in manualRedactions {
+            let converted = CGRect(
+                x: rect.origin.x * scaleX,
+                y: rect.origin.y * scaleY,
+                width: rect.size.width * scaleX,
+                height: rect.size.height * scaleY
+            ).insetBy(dx: -options.redactionPadding, dy: -options.redactionPadding)
+            redactionRectsPx.append(converted)
+        }
         
         for ob in textObservations {
             guard let best = ob.topCandidates(1).first else { continue }
@@ -184,16 +196,6 @@ final class PDFQuickFixEngine {
         // redact
         editCtx.setFillColor(NSColor.black.cgColor)
         for r in redactionRectsPx { editCtx.fill(r) }
-        // manual redactions in points -> convert to pixels and fill
-        for rp in manualRedactions {
-            let rpx = CGRect(
-                x: pointsToPixels(rp.origin.x, dpi: options.dpi),
-                y: pointsToPixels(rp.origin.y, dpi: options.dpi),
-                width: pointsToPixels(rp.size.width, dpi: options.dpi),
-                height: pointsToPixels(rp.size.height, dpi: options.dpi)
-            )
-            editCtx.fill(rpx)
-        }
         
         // replace (white out then draw text)
         for run in replacementRunsPx {
