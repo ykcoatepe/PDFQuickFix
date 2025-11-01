@@ -1,0 +1,35 @@
+name: PDFQuickFix
+options:
+  minimumXcodeGenVersion: 2.38.0
+  deploymentTarget:
+    macOS: "13.0"
+settings:
+  base:
+    SWIFT_VERSION: 5.9
+packages: {}
+targets:
+  PDFQuickFix:
+    type: application
+    platform: macOS
+    deploymentTarget: "13.0"
+    sources:
+      - path: Sources/PDFQuickFix
+    info:
+      path: Sources/PDFQuickFix/Info.plist
+      properties:
+        CFBundleIdentifier: com.yourorg.PDFQuickFix
+        CFBundleName: PDFQuickFix
+        CFBundleDisplayName: PDFQuickFix
+        CFBundleVersion: 1
+        CFBundleShortVersionString: 0.2.0
+        LSApplicationCategoryType: public.app-category.productivity
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+    entitlements:
+      path: Sources/PDFQuickFix/PDFQuickFix.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.files.user-selected.read-write: true
+    settings:
+      base:
+        CODE_SIGNING_ALLOWED: NO

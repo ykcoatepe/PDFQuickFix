@@ -1,0 +1,14 @@
+# Normalize line endings
+* text=auto
+
+# Keep PDFs and DMGs as binary
+*.pdf binary
+*.dmg binary
+*.zip binary
+
+# Swift and plist as text
+*.swift text
+*.plist text
+
+# Linguist hints
+Sources/** linguist-language=Swift

@@ -1,0 +1,36 @@
+name: Release (tag)
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-release:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install deps
+        run: brew install xcodegen create-dmg
+      - name: Generate project
+        run: xcodegen generate
+      - name: Build (Release)
+        run: xcodebuild -project PDFQuickFix.xcodeproj -scheme PDFQuickFix -configuration Release -derivedDataPath build build
+      - name: Create DMG
+        run: |
+          mkdir -p dist
+          create-dmg --volname "PDFQuickFix" --window-size 500 300 --icon-size 100 --app-drop-link 380 120 dist/PDFQuickFix.dmg build/Build/Products/Release/PDFQuickFix.app
+      # Notarization (optional) — requires secrets and code signing set in Xcode project
+      # - name: Notarize
+      #   env:
+      #     NOTARY_PROFILE: ${{ secrets.NOTARY_PROFILE }}
+      #   run: scripts/notarize_template.sh dist/PDFQuickFix.dmg
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: PDFQuickFix-DMG
+          path: dist/PDFQuickFix.dmg
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/PDFQuickFix.dmg

@@ -1,0 +1,37 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Xcode
+build/
+DerivedData/
+*.xcworkspace
+xcuserdata/
+*.xccheckout
+*.moved-aside
+*.xcuserstate
+*.xcodeproj/project.xcworkspace/xcshareddata/WorkspaceSettings.xcsettings
+
+# SwiftPM
+.build/
+
+# CocoaPods / Carthage (not used, but safe)
+Pods/
+Carthage/
+Carthage/Build/
+
+# Logs
+*.log
+
+# XcodeGen output (can be regenerated)
+*.xcodeproj
+project.yml.lock
+
+# Artifacts
+*.dmg
+*.zip
+dist/
+
+# Temporary
+.tmp/
