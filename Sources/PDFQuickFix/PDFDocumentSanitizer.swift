@@ -3,10 +3,19 @@ import PDFKit
 
 enum PDFDocumentSanitizer {
     static func sanitize(document: PDFDocument) {
-        guard let attributes = document.documentAttributes as? [PDFDocumentAttribute: Any] else { return }
+        guard let attributes = document.documentAttributes else { return }
         var sanitized: [PDFDocumentAttribute: Any] = [:]
 
-        for (key, value) in attributes {
+        for (rawKey, value) in attributes {
+            let key: PDFDocumentAttribute
+            if let attr = rawKey as? PDFDocumentAttribute {
+                key = attr
+            } else if let stringKey = rawKey as? String {
+                key = PDFDocumentAttribute(rawValue: stringKey)
+            } else {
+                continue
+            }
+
             switch key {
             case PDFDocumentAttribute.titleAttribute,
                  PDFDocumentAttribute.authorAttribute,
