@@ -1,6 +1,7 @@
 name: PDFQuickFix
 options:
   minimumXcodeGenVersion: 2.38.0
+  lastUpgradeCheck: 1600
   deploymentTarget:
     macOS: "13.0"
 settings:
@@ -17,7 +18,7 @@ targets:
     info:
       path: Sources/PDFQuickFix/Info.plist
       properties:
-        CFBundleIdentifier: com.yourorg.PDFQuickFix
+        CFBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
         CFBundleName: PDFQuickFix
         CFBundleDisplayName: PDFQuickFix
         CFBundleVersion: 1
@@ -33,3 +34,4 @@ targets:
     settings:
       base:
         CODE_SIGNING_ALLOWED: NO
+        PRODUCT_BUNDLE_IDENTIFIER: com.yordamkocatepe.PDFQuickFix
