@@ -16,21 +16,7 @@ enum PDFDocumentSanitizer {
                 continue
             }
 
-            switch key {
-            case PDFDocumentAttribute.titleAttribute,
-                 PDFDocumentAttribute.authorAttribute,
-                 PDFDocumentAttribute.creatorAttribute,
-                 PDFDocumentAttribute.producerAttribute,
-                 PDFDocumentAttribute.subjectAttribute:
-                sanitized[key] = coerceToString(value)
-            case PDFDocumentAttribute.keywordsAttribute:
-                sanitized[key] = coerceToStringArray(value)
-            case PDFDocumentAttribute.creationDateAttribute,
-                 PDFDocumentAttribute.modificationDateAttribute:
-                sanitized[key] = value as? Date
-            default:
-                sanitized[key] = value
-            }
+            sanitized[key] = coerceValue(value)
         }
 
         document.documentAttributes = sanitized.compactMapValues { $0 }
@@ -67,6 +53,26 @@ enum PDFDocumentSanitizer {
                 return [single]
             }
             return nil
+        }
+    }
+
+    private static func coerceValue(_ value: Any?) -> Any? {
+        switch value {
+        case let date as Date:
+            return date
+        case let string as String:
+            return string
+        case let attributed as NSAttributedString:
+            return attributed.string
+        case let number as NSNumber:
+            return number.stringValue
+        case let array as [Any]:
+            let converted = array.compactMap { coerceToString($0) }
+            return converted.isEmpty ? nil : converted
+        case nil:
+            return nil
+        default:
+            return coerceToString(value)
         }
     }
 }
