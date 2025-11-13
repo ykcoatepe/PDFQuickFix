@@ -167,8 +167,9 @@ enum PDFOps {
         for index in 0..<document.pageCount {
             guard let page = document.page(at: index) else { continue }
             let bounds = page.bounds(for: .mediaBox)
-            let current = start + index
-            let number = prefix + String(format: "%0\(digits)d", current)
+            // Build format safely — avoid the "*" width argument which can crash when digits underflow
+            let fmt = "%@%0\(max(1, digits))d"
+            let number = String(format: fmt, prefix, start + index)
 
             let y: CGFloat
             switch placement {

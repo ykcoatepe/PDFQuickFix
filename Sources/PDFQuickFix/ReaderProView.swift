@@ -23,17 +23,19 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFViewDelegate {
     }
     
     func open(url: URL) {
-        guard let doc = PDFDocument(url: url) else {
+        do {
+            let doc = try PDFDocumentSanitizer.loadDocument(at: url)
+            document = doc
+            pdfView?.document = doc
+            configurePDFView()
+            currentPageIndex = 0
+            searchMatches.removeAll()
+        } catch {
             document = nil
             pdfView?.document = nil
-            return
+            log = "❌ \(error.localizedDescription)"
+            present(error)
         }
-        PDFDocumentSanitizer.sanitize(document: doc)
-        document = doc
-        pdfView?.document = doc
-        configurePDFView()
-        currentPageIndex = 0
-        searchMatches.removeAll()
     }
     
     func saveCopy() {
@@ -162,6 +164,16 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFViewDelegate {
         if !rects.isEmpty { return rects }
         let fallback = selection.bounds(for: page)
         return fallback.isEmpty ? [] : [fallback]
+    }
+
+    private func present(_ error: Error) {
+        DispatchQueue.main.async {
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "PDF açılamadı"
+            alert.informativeText = error.localizedDescription
+            alert.runModal()
+        }
     }
 }
 

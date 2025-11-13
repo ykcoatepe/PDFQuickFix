@@ -13,6 +13,7 @@ struct ReaderTabView: View {
     @State private var showSignaturePad = false
     @State private var signatureImage: NSImage? = SignatureStore.load()
     @State private var manualRedactions: [Int:[CGRect]] = [:]
+    @State private var pdfCanvasView: PDFCanvasView?
     @State private var showAlert: Bool = false
     @State private var alertMsg: String = ""
     @State private var debounceWorkItem: DispatchWorkItem?
@@ -30,8 +31,8 @@ struct ReaderTabView: View {
                 signatureImage: $signatureImage
             )
             HStack(spacing: 0) {
-                if let pdfDoc {
-                    ThumbsSidebar(pdfDocument: pdfDoc)
+                if let pdfCanvasView {
+                    ThumbsSidebar(pdfViewProvider: { pdfCanvasView })
                         .frame(width: 160)
                         .background(.quaternary.opacity(0.1))
                 }
@@ -48,7 +49,10 @@ struct ReaderTabView: View {
                         pdfDocument: $pdfDoc,
                         tool: $tool,
                         signatureImage: $signatureImage,
-                        manualRedactions: $manualRedactions
+                        manualRedactions: $manualRedactions,
+                        didCreate: { view in
+                            pdfCanvasView = view
+                        }
                     )
                 }
             }
@@ -76,11 +80,18 @@ struct ReaderTabView: View {
     
     private func openDoc() { showOpen = true }
     private func open(_ url: URL) {
-        self.docURL = url
-        self.pdfDoc = PDFDocument(url: url)
-        self.matches = []
-        self.currentMatchIndex = 0
-        self.manualRedactions.removeAll()
+        do {
+            let doc = try PDFDocumentSanitizer.loadDocument(at: url)
+            self.docURL = url
+            self.pdfDoc = doc
+            self.matches = []
+            self.currentMatchIndex = 0
+            self.manualRedactions.removeAll()
+        } catch {
+            self.docURL = nil
+            self.pdfDoc = nil
+            self.alert("Open failed: \(error.localizedDescription)")
+        }
     }
     
     private func saveAs() {
@@ -253,19 +264,18 @@ extension Notification.Name {
     static let PDFQuickFixJumpToSelection = Notification.Name("PDFQuickFixJumpToSelection")
 }
 
-    struct ThumbsSidebar: NSViewRepresentable {
-        let pdfDocument: PDFDocument
-        func makeNSView(context: Context) -> PDFThumbnailView {
-            let v = PDFThumbnailView()
-            v.thumbnailSize = CGSize(width: 120, height: 160)
-            return v
-        }
-    func updateNSView(_ nsView: PDFThumbnailView, context: Context) {
-        nsView.pdfView = context.coordinator.pdfView
-        nsView.pdfView?.document = pdfDocument
+struct ThumbsSidebar: NSViewRepresentable {
+    let pdfViewProvider: () -> PDFView?
+
+    func makeNSView(context: Context) -> PDFThumbnailView {
+        let view = PDFThumbnailView()
+        view.thumbnailSize = CGSize(width: 120, height: 160)
+        view.maximumNumberOfColumns = 1
+        view.pdfView = pdfViewProvider()
+        return view
     }
-    func makeCoordinator() -> Coordinator { Coordinator() }
-    final class Coordinator {
-        let pdfView = PDFView()
+
+    func updateNSView(_ nsView: PDFThumbnailView, context: Context) {
+        nsView.pdfView = pdfViewProvider()
     }
 }

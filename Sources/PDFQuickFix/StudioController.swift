@@ -61,26 +61,37 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
     }
 
     func open(url: URL) {
-        guard let doc = PDFDocument(url: url) else { return }
-        PDFDocumentSanitizer.sanitize(document: doc)
-        document = doc
-        currentURL = url
-        pdfView?.document = doc
-        refreshAll()
-        pushLog("Opened \(url.lastPathComponent)")
+        do {
+            let doc = try PDFDocumentSanitizer.loadDocument(at: url)
+            document = doc
+            currentURL = url
+            pdfView?.document = doc
+            refreshAll()
+            pushLog("Opened \(url.lastPathComponent)")
+        } catch {
+            document = nil
+            pdfView?.document = nil
+            pushLog("⚠️ \(error.localizedDescription)")
+            present(error)
+        }
     }
 
     func setDocument(_ document: PDFDocument?, url: URL? = nil) {
-        var doc = document
-        if let d = doc {
-            PDFDocumentSanitizer.sanitize(document: d)
-            doc = d
+        var sanitized: PDFDocument?
+        if let document {
+            do {
+                sanitized = try PDFDocumentSanitizer.sanitize(document: document)
+            } catch {
+                pushLog("⚠️ \(error.localizedDescription)")
+                present(error)
+                sanitized = nil
+            }
         }
-        self.document = doc
+        self.document = sanitized
         if let url {
             currentURL = url
         }
-        pdfView?.document = doc
+        pdfView?.document = sanitized
         refreshAll()
     }
 
@@ -253,9 +264,10 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
     }
 
     func addOutline(title: String) {
-        guard let doc = document,
-              let page = pdfView?.currentPage else { return }
-        let destination = PDFDestination(page: page, at: CGPoint(x: 0, y: page.bounds(for: .mediaBox).maxY))
+        guard let doc = document else { return }
+        guard let page = pdfView?.currentPage ?? doc.page(at: 0) else { return }
+        let destination = PDFDestination(page: page,
+                                         at: CGPoint(x: 0, y: page.bounds(for: .mediaBox).maxY))
         let outline = PDFOutline()
         outline.label = title.isEmpty ? "Untitled" : title
         outline.destination = destination
@@ -287,7 +299,8 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
     }
 
     func addFormField(kind: FormFieldKind, name: String, rect: CGRect) {
-        guard let page = pdfView?.currentPage else { return }
+        guard let doc = document else { return }
+        guard let page = pdfView?.currentPage ?? doc.page(at: 0) else { return }
         let fieldName = name.isEmpty ? kind.rawValue : name
         let annotation: PDFAnnotation
         switch kind {
@@ -302,16 +315,20 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
             annotation = PDFFormBuilder.makeSignature(name: fieldName, rect: rect)
             annotation.backgroundColor = NSColor.clear
         }
-        if annotation.border == nil {
-            let border = PDFBorder()
-            border.lineWidth = 1
-            annotation.border = border
-        }
+        let border = annotation.border ?? {
+            let newBorder = PDFBorder()
+            newBorder.lineWidth = 1
+            return newBorder
+        }()
+        border.lineWidth = 1
         if kind == .signature {
-            annotation.border?.style = .dashed
+            border.style = .dashed
+            border.dashPattern = [4, 2]
         } else {
-            annotation.border?.style = .solid
+            border.style = .solid
+            border.dashPattern = nil
         }
+        annotation.border = border
         page.addAnnotation(annotation)
         refreshAnnotations()
         pushLog("Added \(kind.rawValue)")
@@ -388,5 +405,15 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
     func pushLog(_ message: String) {
         let timestamp = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium)
         logMessages.append("[\(timestamp)] \(message)")
+    }
+
+    private func present(_ error: Error) {
+        DispatchQueue.main.async {
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "PDF açılamadı"
+            alert.informativeText = error.localizedDescription
+            alert.runModal()
+        }
     }
 }

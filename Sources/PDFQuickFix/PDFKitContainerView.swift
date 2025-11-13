@@ -7,6 +7,7 @@ struct PDFKitContainerView: NSViewRepresentable {
     @Binding var tool: AnnotationTool
     @Binding var signatureImage: NSImage?
     @Binding var manualRedactions: [Int:[CGRect]]
+    var didCreate: ((PDFCanvasView) -> Void)? = nil
     
     func makeNSView(context: Context) -> PDFCanvasView {
         let v = PDFCanvasView()
@@ -15,6 +16,7 @@ struct PDFKitContainerView: NSViewRepresentable {
         v.displaysPageBreaks = true
         v.backgroundColor = .windowBackgroundColor
         v.delegateProxy = context.coordinator
+        didCreate?(v)
         return v
     }
     func updateNSView(_ nsView: PDFCanvasView, context: Context) {

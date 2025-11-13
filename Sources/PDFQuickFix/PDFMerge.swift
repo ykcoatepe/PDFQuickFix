@@ -6,12 +6,10 @@ enum PDFMerge {
         guard let firstURL = urls.first else {
             throw NSError(domain: "PDFQuickFix", code: -50, userInfo: [NSLocalizedDescriptionKey: "No PDFs selected"])
         }
-        guard let baseDocument = PDFDocument(url: firstURL) else {
-            throw NSError(domain: "PDFQuickFix", code: -51, userInfo: [NSLocalizedDescriptionKey: "Unable to open first PDF"])
-        }
-        
+        var baseDocument = try PDFDocumentSanitizer.loadDocument(at: firstURL)
+
         for url in urls.dropFirst() {
-            guard let document = PDFDocument(url: url) else { continue }
+            guard let document = try? PDFDocumentSanitizer.loadDocument(at: url) else { continue }
             var insertionIndex = baseDocument.pageCount
             for pageIndex in 0..<document.pageCount {
                 guard let page = document.page(at: pageIndex)?.copy() as? PDFPage else { continue }

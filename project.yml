@@ -35,3 +35,4 @@ targets:
       base:
         CODE_SIGNING_ALLOWED: NO
         PRODUCT_BUNDLE_IDENTIFIER: com.yordamkocatepe.PDFQuickFix
+        SWIFT_OBJC_BRIDGING_HEADER: Sources/PDFQuickFix/Bridging-Header.h

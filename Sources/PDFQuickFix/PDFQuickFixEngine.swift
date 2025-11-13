@@ -22,8 +22,11 @@ final class PDFQuickFixEngine {
                  findReplace: [FindReplaceRule] = [],
                  manualRedactions: [Int:[CGRect]] = [:]) throws -> URL {
         
-        guard let doc = PDFDocument(url: inputURL) else {
-            throw NSError(domain: "PDFQuickFix", code: -1, userInfo: [NSLocalizedDescriptionKey: "Unable to open PDF"])
+        let doc: PDFDocument
+        do {
+            doc = try PDFDocumentSanitizer.loadDocument(at: inputURL)
+        } catch {
+            throw NSError(domain: "PDFQuickFix", code: -1, userInfo: [NSLocalizedDescriptionKey: error.localizedDescription])
         }
         let outURL: URL = outputURL ?? inputURL.deletingPathExtension().appendingPathExtension("fixed.pdf")
         

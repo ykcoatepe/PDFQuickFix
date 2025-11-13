@@ -75,7 +75,14 @@ struct PageOrganizerView: View {
                     .tag(snapshot.id)
                     .padding(.vertical, 4)
                     .onDrag {
-                        NSItemProvider(object: "\(snapshot.index)" as NSString)
+                        let provider = NSItemProvider()
+                        provider.registerDataRepresentation(forTypeIdentifier: UTType.plainText.identifier,
+                                                             visibility: .all) { completion in
+                            let payload = Data("\(snapshot.index)".utf8)
+                            completion(payload, nil)
+                            return nil
+                        }
+                        return provider
                     }
                     .onDrop(of: [UTType.plainText], isTargeted: nil) { providers in
                         guard let provider = providers.first else { return false }
