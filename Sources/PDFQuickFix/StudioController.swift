@@ -1,12 +1,21 @@
 import Foundation
 import PDFKit
 import AppKit
+import CoreGraphics
 
 struct PageSnapshot: Identifiable, Hashable {
     let id: Int
     let index: Int
-    let thumbnail: NSImage
+    let thumbnail: CGImage
     let label: String
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+    }
+
+    static func == (lhs: PageSnapshot, rhs: PageSnapshot) -> Bool {
+        lhs.id == rhs.id
+    }
 }
 
 struct OutlineRow: Identifiable, Hashable {
@@ -48,8 +57,27 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
     @Published var outlineRows: [OutlineRow] = []
     @Published var annotationRows: [AnnotationRow] = []
     @Published var logMessages: [String] = []
+    @Published var validationStatus: String?
+    @Published var isFullValidationRunning: Bool = false
 
     weak var pdfView: PDFView?
+    private var sanitizeJob: PDFDocumentSanitizer.Job?
+    private var snapshotGenerationID = UUID()
+    private var snapshotOperation: PageSnapshotRenderOperation?
+    private let snapshotQueue: OperationQueue = {
+        let queue = OperationQueue()
+        queue.qualityOfService = .userInitiated
+        queue.maxConcurrentOperationCount = 1
+        return queue
+    }()
+    private let snapshotTargetSize = CGSize(width: 140, height: 180)
+    private enum ValidationMode { case idle, quick, full }
+    private var validationMode: ValidationMode = .idle
+
+    deinit {
+        sanitizeJob?.cancel()
+        snapshotOperation?.cancel()
+    }
 
     func attach(pdfView: PDFView) {
         self.pdfView = pdfView
@@ -61,38 +89,45 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
     }
 
     func open(url: URL) {
+        sanitizeJob?.cancel()
         do {
-            let doc = try PDFDocumentSanitizer.loadDocument(at: url)
-            document = doc
+            guard let rawDoc = PDFDocument(url: url) else {
+                throw PDFDocumentSanitizerError.unableToOpen(url)
+            }
+            document = rawDoc
             currentURL = url
-            pdfView?.document = doc
+            pdfView?.document = rawDoc
             refreshAll()
             pushLog("Opened \(url.lastPathComponent)")
+            validationStatus = nil
+            validationMode = .idle
+            isFullValidationRunning = false
+            scheduleValidation(for: url, pageLimit: 10, mode: .quick)
         } catch {
             document = nil
             pdfView?.document = nil
+            currentURL = nil
+            validationStatus = nil
+            validationMode = .idle
+            isFullValidationRunning = false
             pushLog("⚠️ \(error.localizedDescription)")
             present(error)
         }
     }
 
     func setDocument(_ document: PDFDocument?, url: URL? = nil) {
-        var sanitized: PDFDocument?
-        if let document {
-            do {
-                sanitized = try PDFDocumentSanitizer.sanitize(document: document)
-            } catch {
-                pushLog("⚠️ \(error.localizedDescription)")
-                present(error)
-                sanitized = nil
-            }
-        }
-        self.document = sanitized
+        sanitizeJob?.cancel()
+        self.document = document
         if let url {
             currentURL = url
         }
-        pdfView?.document = sanitized
+        pdfView?.document = document
         refreshAll()
+    }
+
+    func runFullValidation() {
+        guard let url = currentURL, document != nil, !isFullValidationRunning else { return }
+        scheduleValidation(for: url, pageLimit: nil, mode: .full)
     }
 
     func refreshAll() {
@@ -102,21 +137,35 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
     }
 
     func refreshPages() {
+        snapshotOperation?.cancel()
+        snapshotGenerationID = UUID()
+
         guard let doc = document else {
             pageSnapshots = []
             return
         }
 
-        var items: [PageSnapshot] = []
-        for index in 0..<doc.pageCount {
-            guard let page = doc.page(at: index) else { continue }
-            let thumbnail = page.thumbnail(of: NSSize(width: 140, height: 180), for: .mediaBox)
-            items.append(PageSnapshot(id: index,
-                                      index: index,
-                                      thumbnail: thumbnail,
-                                      label: "Page \(index + 1)"))
+        let pageCount = doc.pageCount
+        guard pageCount > 0 else {
+            pageSnapshots = []
+            return
         }
-        pageSnapshots = items
+
+        guard let cgDocument = makeCGDocument(for: doc) else {
+            pageSnapshots = makeSnapshotsSynchronously(document: doc, targetSize: snapshotTargetSize)
+            return
+        }
+
+        let token = snapshotGenerationID
+        let operation = PageSnapshotRenderOperation(cgDocument: cgDocument,
+                                                    pageCount: pageCount,
+                                                    targetSize: snapshotTargetSize) { [weak self] snapshots in
+            guard let self else { return }
+            guard token == self.snapshotGenerationID else { return }
+            self.pageSnapshots = snapshots
+        }
+        snapshotOperation = operation
+        snapshotQueue.addOperation(operation)
     }
 
     func refreshOutline() {
@@ -402,6 +451,95 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
         return data
     }
 
+    private func scheduleValidation(for url: URL, pageLimit: Int?, mode: ValidationMode) {
+        sanitizeJob?.cancel()
+        let options = PDFDocumentSanitizer.Options(validationPageLimit: pageLimit)
+        validationMode = mode
+        isFullValidationRunning = (mode == .full)
+        updateValidationStatus(processed: 0, total: pageLimit ?? (document?.pageCount ?? 0))
+
+        var pendingJob: PDFDocumentSanitizer.Job?
+        let job = PDFDocumentSanitizer.loadDocumentAsync(at: url,
+                                                         options: options,
+                                                         progress: { [weak self] processed, total in
+                                                             guard let self = self, self.currentURL == url else { return }
+                                                             self.updateValidationStatus(processed: processed, total: total)
+                                                         },
+                                                         completion: { [weak self] result in
+                                                             guard let self = self, self.currentURL == url else { return }
+                                                             if let current = self.sanitizeJob, let pending = pendingJob, current === pending {
+                                                                 self.sanitizeJob = nil
+                                                             }
+                                                             self.validationMode = .idle
+                                                             self.isFullValidationRunning = false
+                                                             self.validationStatus = nil
+                                                             switch result {
+                                                             case .success(let sanitized):
+                                                                 let targetIndex = self.currentDisplayedPageIndex() ?? 0
+                                                                 self.document = sanitized
+                                                                 self.pdfView?.document = sanitized
+                                                                 if let page = sanitized.page(at: targetIndex) {
+                                                                     self.pdfView?.go(to: page)
+                                                                 }
+                                                                 self.refreshAll()
+                                                                 self.pushLog("Validated \(sanitized.pageCount) pages")
+                                                             case .failure(let error):
+                                                                 if case PDFDocumentSanitizerError.cancelled = error { return }
+                                                                 self.pushLog("⚠️ \(error.localizedDescription)")
+                                                                 self.present(error)
+                                                             }
+                                                         })
+        pendingJob = job
+        sanitizeJob = job
+    }
+
+    private func updateValidationStatus(processed: Int, total: Int) {
+        guard validationMode != .idle else {
+            validationStatus = nil
+            return
+        }
+        let prefix = (validationMode == .quick) ? "Quick check" : "Validating"
+        if total > 0 {
+            validationStatus = "\(prefix) \(min(processed, total))/\(total)"
+        } else {
+            validationStatus = prefix
+        }
+    }
+
+    private func currentDisplayedPageIndex() -> Int? {
+        guard let view = pdfView, let doc = document, let current = view.currentPage else { return nil }
+        let index = doc.index(for: current)
+        return index >= 0 ? index : nil
+    }
+
+    private func makeCGDocument(for document: PDFDocument) -> CGPDFDocument? {
+        if let url = document.documentURL,
+           let provider = CGDataProvider(url: url as CFURL),
+           let cgDoc = CGPDFDocument(provider) {
+            return cgDoc
+        }
+        if let data = document.dataRepresentation(),
+           let provider = CGDataProvider(data: data as CFData) {
+            return CGPDFDocument(provider)
+        }
+        return nil
+    }
+
+    private func makeSnapshotsSynchronously(document: PDFDocument, targetSize: CGSize) -> [PageSnapshot] {
+        var items: [PageSnapshot] = []
+        items.reserveCapacity(document.pageCount)
+        for index in 0..<document.pageCount {
+            guard let page = document.page(at: index) else { continue }
+            let nsImage = page.thumbnail(of: NSSize(width: targetSize.width, height: targetSize.height), for: .mediaBox)
+            guard let cgImage = nsImage.cgImage(forProposedRect: nil, context: nil, hints: nil) else { continue }
+            items.append(PageSnapshot(id: index,
+                                      index: index,
+                                      thumbnail: cgImage,
+                                      label: "Page \(index + 1)"))
+        }
+        return items
+    }
+
     func pushLog(_ message: String) {
         let timestamp = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium)
         logMessages.append("[\(timestamp)] \(message)")
@@ -417,3 +555,74 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
         }
     }
 }
+
+private final class PageSnapshotRenderOperation: Operation {
+    private let cgDocument: CGPDFDocument
+    private let pageCount: Int
+    private let targetSize: CGSize
+    private let chunkSize: Int = 8
+    private let completion: ([PageSnapshot]) -> Void
+
+    init(cgDocument: CGPDFDocument,
+         pageCount: Int,
+         targetSize: CGSize,
+         completion: @escaping ([PageSnapshot]) -> Void) {
+        self.cgDocument = cgDocument
+        self.pageCount = pageCount
+        self.targetSize = targetSize
+        self.completion = completion
+    }
+
+    override func main() {
+        var snapshots: [PageSnapshot] = []
+        snapshots.reserveCapacity(pageCount)
+
+        for index in 0..<pageCount {
+            if isCancelled { return }
+            guard let page = cgDocument.page(at: index + 1),
+                  let image = Self.renderThumbnail(for: page, targetSize: targetSize) else { continue }
+            snapshots.append(PageSnapshot(id: index,
+                                          index: index,
+                                          thumbnail: image,
+                                          label: "Page \(index + 1)"))
+            if isCancelled { return }
+            if index % chunkSize == chunkSize - 1 || index == pageCount - 1 {
+                let snapshotCopy = snapshots
+                DispatchQueue.main.async { [snapshotCopy] in
+                    self.completion(snapshotCopy)
+                }
+            }
+        }
+    }
+
+    private static func renderThumbnail(for page: CGPDFPage, targetSize: CGSize) -> CGImage? {
+        let mediaBox = page.getBoxRect(.mediaBox)
+        let safeWidth = max(mediaBox.width, 1)
+        let safeHeight = max(mediaBox.height, 1)
+        let scale = min(targetSize.width / safeWidth, targetSize.height / safeHeight, 1)
+        let width = max(Int(safeWidth * scale), 1)
+        let height = max(Int(safeHeight * scale), 1)
+
+        guard let ctx = CGContext(data: nil,
+                                  width: width,
+                                  height: height,
+                                  bitsPerComponent: 8,
+                                  bytesPerRow: 0,
+                                  space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        ctx.interpolationQuality = .high
+        ctx.setFillColor(gray: 1, alpha: 1)
+        ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+
+        ctx.saveGState()
+        ctx.scaleBy(x: scale, y: scale)
+        ctx.translateBy(x: 0, y: mediaBox.height)
+        ctx.scaleBy(x: 1, y: -1)
+        ctx.drawPDFPage(page)
+        ctx.restoreGState()
+
+        return ctx.makeImage()
+    }
+}
+
+extension PageSnapshotRenderOperation: @unchecked Sendable {}

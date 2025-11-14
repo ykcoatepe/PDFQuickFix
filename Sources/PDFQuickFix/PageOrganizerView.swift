@@ -31,7 +31,7 @@ struct PageOrganizerView: View {
             List(selection: $controller.selectedPageIDs) {
                 ForEach(controller.pageSnapshots) { snapshot in
                     HStack(alignment: .center, spacing: 12) {
-                        Image(nsImage: snapshot.thumbnail)
+                        Image(decorative: snapshot.thumbnail, scale: 1, orientation: .up)
                             .resizable()
                             .aspectRatio(contentMode: .fit)
                             .frame(width: 60, height: 80)

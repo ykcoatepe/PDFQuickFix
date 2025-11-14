@@ -17,6 +17,14 @@ struct ReaderTabView: View {
     @State private var showAlert: Bool = false
     @State private var alertMsg: String = ""
     @State private var debounceWorkItem: DispatchWorkItem?
+    @State private var sanitizeJob: PDFDocumentSanitizer.Job?
+    @State private var isValidating = false
+    @State private var validationCompletedPages = 0
+    @State private var validationTotalPages = 0
+    @State private var validationMode: ValidationMode = .idle
+    @State private var isSearching = false
+    @State private var searchObservers: [NSObjectProtocol] = []
+    @State private var searchToken = UUID()
     
     var body: some View {
         VStack(spacing: 0) {
@@ -26,9 +34,12 @@ struct ReaderTabView: View {
                 printAction: { printDoc() },
                 ocrRepairAction: { repairOCR() },
                 applyRedactionsAction: { applyManualRedactions() },
+                validateAction: { validateCurrentDocumentFully() },
                 tool: $tool,
                 showSignaturePad: $showSignaturePad,
-                signatureImage: $signatureImage
+                signatureImage: $signatureImage,
+                validationStatus: validationStatus,
+                isValidateDisabled: isFullValidationInFlight
             )
             HStack(spacing: 0) {
                 if let pdfCanvasView {
@@ -71,27 +82,108 @@ struct ReaderTabView: View {
         } message: {
             Text(alertMsg)
         }
+        .onDisappear {
+            cancelValidationJob(resetState: true)
+            cancelSearch()
+        }
     }
     
     private var searchStatus: String {
+        if isSearching { return "Searching…" }
         guard !matches.isEmpty else { return "0 results" }
         return "\(currentMatchIndex+1) / \(matches.count)"
+    }
+
+    private var validationStatus: String? {
+        guard isValidating else { return nil }
+        let prefix: String
+        switch validationMode {
+        case .idle:
+            return nil
+        case .quick:
+            prefix = "Quick check"
+        case .full:
+            prefix = "Validating"
+        }
+        guard validationTotalPages > 0 else { return prefix }
+        return "\(prefix) \(validationCompletedPages)/\(validationTotalPages)"
+    }
+
+    private var isFullValidationInFlight: Bool {
+        isValidating && validationMode == .full
     }
     
     private func openDoc() { showOpen = true }
     private func open(_ url: URL) {
+        cancelValidationJob(resetState: true)
+        cancelSearch()
         do {
-            let doc = try PDFDocumentSanitizer.loadDocument(at: url)
+            guard let doc = PDFDocument(url: url) else {
+                throw PDFDocumentSanitizerError.unableToOpen(url)
+            }
             self.docURL = url
             self.pdfDoc = doc
             self.matches = []
             self.currentMatchIndex = 0
             self.manualRedactions.removeAll()
+            scheduleValidation(for: url, pageLimit: 10, mode: .quick)
         } catch {
             self.docURL = nil
             self.pdfDoc = nil
             self.alert("Open failed: \(error.localizedDescription)")
         }
+    }
+
+    private func scheduleValidation(for url: URL, pageLimit: Int?, mode: ValidationMode) {
+        sanitizeJob?.cancel()
+        let options = PDFDocumentSanitizer.Options(validationPageLimit: pageLimit)
+        validationMode = mode
+        validationCompletedPages = 0
+        validationTotalPages = pageLimit ?? (pdfDoc?.pageCount ?? 0)
+        isValidating = true
+
+        var pendingJob: PDFDocumentSanitizer.Job?
+        let job = PDFDocumentSanitizer.loadDocumentAsync(at: url,
+                                                         options: options,
+                                                         progress: { processed, total in
+                                                             guard self.docURL == url else { return }
+                                                             self.validationCompletedPages = processed
+                                                             self.validationTotalPages = total
+                                                         },
+                                                         completion: { result in
+                                                             guard self.docURL == url else { return }
+                                                             if let current = self.sanitizeJob, let pending = pendingJob, current === pending {
+                                                                 self.sanitizeJob = nil
+                                                             }
+                                                             self.isValidating = false
+                                                             self.validationMode = .idle
+                                                             switch result {
+                                                             case .success(let sanitized):
+                                                                 self.pdfDoc = sanitized
+                                                             case .failure(let error):
+                                                                 if case PDFDocumentSanitizerError.cancelled = error { return }
+                                                                 self.alert("Validation failed: \(error.localizedDescription)")
+                                                             }
+                                                         })
+        pendingJob = job
+        sanitizeJob = job
+    }
+
+    private func cancelValidationJob(resetState: Bool) {
+        sanitizeJob?.cancel()
+        sanitizeJob = nil
+        if resetState {
+            isValidating = false
+            validationMode = .idle
+            validationCompletedPages = 0
+            validationTotalPages = 0
+        }
+    }
+
+    private func validateCurrentDocumentFully() {
+        guard let url = docURL else { alert("Open a PDF first."); return }
+        if isFullValidationInFlight { return }
+        scheduleValidation(for: url, pageLimit: nil, mode: .full)
     }
     
     private func saveAs() {
@@ -122,23 +214,55 @@ struct ReaderTabView: View {
     private func performSearch() {
         matches.removeAll()
         currentMatchIndex = 0
-        guard let pdfDoc, !searchText.isEmpty else { return }
-        let options: NSString.CompareOptions = [.caseInsensitive]
-        for index in 0..<pdfDoc.pageCount {
-            guard let page = pdfDoc.page(at: index), let pageString = page.string else { continue }
-            let nsString = pageString as NSString
-            var searchLocation = 0
-            while searchLocation < nsString.length {
-                let range = NSRange(location: searchLocation, length: nsString.length - searchLocation)
-                let foundRange = nsString.range(of: searchText, options: options, range: range)
-                if foundRange.location == NSNotFound { break }
-                if let selection = page.selection(for: foundRange) {
-                    matches.append(selection)
-                }
-                searchLocation = foundRange.location + max(foundRange.length, 1)
+        teardownSearchObservers()
+        guard let pdfDoc else { return }
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return }
+
+        isSearching = true
+        let token = UUID()
+        searchToken = token
+
+        let foundObserver = NotificationCenter.default.addObserver(
+            forName: .PDFDocumentDidFindMatch,
+            object: pdfDoc,
+            queue: .main
+        ) { note in
+            guard token == self.searchToken else { return }
+            guard let selection = note.userInfo?["PDFDocumentFoundSelection"] as? PDFSelection else { return }
+            self.matches.append(selection)
+            if self.matches.count == 1 {
+                self.focusMatch(index: 0)
             }
         }
-        if !matches.isEmpty { focusMatch(index: 0) }
+
+        let endObserver = NotificationCenter.default.addObserver(
+            forName: .PDFDocumentDidEndFind,
+            object: pdfDoc,
+            queue: .main
+        ) { _ in
+            guard token == self.searchToken else { return }
+            self.isSearching = false
+            self.teardownSearchObservers()
+        }
+
+        searchObservers = [foundObserver, endObserver]
+        pdfDoc.cancelFindString()
+        pdfDoc.beginFindString(query, withOptions: [.caseInsensitive])
+    }
+
+    private func teardownSearchObservers() {
+        for observer in searchObservers {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        searchObservers.removeAll()
+    }
+
+    private func cancelSearch() {
+        pdfDoc?.cancelFindString()
+        isSearching = false
+        searchToken = UUID()
+        teardownSearchObservers()
     }
     
     private func nextMatch() {
@@ -160,6 +284,13 @@ struct ReaderTabView: View {
     
     private func debounceSearch() {
         debounceWorkItem?.cancel()
+        let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            matches.removeAll()
+            currentMatchIndex = 0
+            cancelSearch()
+            return
+        }
         let workItem = DispatchWorkItem { performSearch() }
         debounceWorkItem = workItem
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: workItem)
@@ -202,15 +333,24 @@ enum AnnotationTool {
     case redactBox
 }
 
+private enum ValidationMode {
+    case idle
+    case quick
+    case full
+}
+
 struct ReaderToolbar: View {
     let openAction: () -> Void
     let saveAsAction: () -> Void
     let printAction: () -> Void
     let ocrRepairAction: () -> Void
     let applyRedactionsAction: () -> Void
+    let validateAction: () -> Void
     @Binding var tool: AnnotationTool
     @Binding var showSignaturePad: Bool
     @Binding var signatureImage: NSImage?
+    let validationStatus: String?
+    let isValidateDisabled: Bool
     
     var body: some View {
         HStack {
@@ -220,6 +360,8 @@ struct ReaderToolbar: View {
             Divider()
             Button("OCR Repair", action: ocrRepairAction)
             Button("Apply Permanent Redactions", action: applyRedactionsAction)
+            Button("Validate PDF", action: validateAction)
+                .disabled(isValidateDisabled)
             Divider()
             Picker("Tool", selection: $tool) {
                 Text("Select").tag(AnnotationTool.select)
@@ -230,6 +372,11 @@ struct ReaderToolbar: View {
                 Text("Redact box").tag(AnnotationTool.redactBox)
             }.pickerStyle(.segmented)
             Spacer()
+            if let validationStatus {
+                Text(validationStatus)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             Button("Signature…") { showSignaturePad = true }
                 .popover(isPresented: $showSignaturePad) {
                     SignatureCaptureView(image: $signatureImage)
@@ -269,9 +416,13 @@ struct ThumbsSidebar: NSViewRepresentable {
 
     func makeNSView(context: Context) -> PDFThumbnailView {
         let view = PDFThumbnailView()
-        view.thumbnailSize = CGSize(width: 120, height: 160)
+        view.thumbnailSize = CGSize(width: 72, height: 108)
         view.maximumNumberOfColumns = 1
         view.pdfView = pdfViewProvider()
+        DispatchQueue.main.async {
+            guard view.window != nil else { return }
+            view.thumbnailSize = CGSize(width: 120, height: 160)
+        }
         return view
     }
 

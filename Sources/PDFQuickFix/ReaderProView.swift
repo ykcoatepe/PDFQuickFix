@@ -11,31 +11,55 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFViewDelegate {
     @Published var isSidebarVisible: Bool = true
     @Published var isProcessing: Bool = false
     @Published var log: String = ""
-    
+    @Published var validationStatus: String?
+    @Published var isFullValidationRunning: Bool = false
+    @Published private(set) var currentURL: URL?
+
     weak var pdfView: PDFView?
-    
+
     private var findObserver: NSObjectProtocol?
-    
+    private var sanitizeJob: PDFDocumentSanitizer.Job?
+    private enum ValidationMode { case idle, quick, full }
+    private var validationMode: ValidationMode = .idle
+
     deinit {
         if let observer = findObserver {
             NotificationCenter.default.removeObserver(observer)
         }
+        sanitizeJob?.cancel()
     }
-    
+
     func open(url: URL) {
+        sanitizeJob?.cancel()
         do {
-            let doc = try PDFDocumentSanitizer.loadDocument(at: url)
-            document = doc
-            pdfView?.document = doc
+            guard let rawDoc = PDFDocument(url: url) else {
+                throw PDFDocumentSanitizerError.unableToOpen(url)
+            }
+            currentURL = url
+            document = rawDoc
+            pdfView?.document = rawDoc
             configurePDFView()
             currentPageIndex = 0
             searchMatches.removeAll()
+            validationStatus = nil
+            validationMode = .idle
+            isFullValidationRunning = false
+            scheduleValidation(for: url, pageLimit: 10, mode: .quick)
         } catch {
             document = nil
             pdfView?.document = nil
+            currentURL = nil
+            validationStatus = nil
+            isFullValidationRunning = false
+            validationMode = .idle
             log = "❌ \(error.localizedDescription)"
             present(error)
         }
+    }
+
+    func validateFully() {
+        guard let url = currentURL, !isFullValidationRunning else { return }
+        scheduleValidation(for: url, pageLimit: nil, mode: .full)
     }
     
     func saveCopy() {
@@ -164,6 +188,67 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFViewDelegate {
         if !rects.isEmpty { return rects }
         let fallback = selection.bounds(for: page)
         return fallback.isEmpty ? [] : [fallback]
+    }
+
+    private func scheduleValidation(for url: URL, pageLimit: Int?, mode: ValidationMode) {
+        sanitizeJob?.cancel()
+        let options = PDFDocumentSanitizer.Options(validationPageLimit: pageLimit)
+        validationMode = mode
+        isFullValidationRunning = (mode == .full)
+        updateValidationStatus(processed: 0, total: pageLimit ?? (document?.pageCount ?? 0))
+
+        var pendingJob: PDFDocumentSanitizer.Job?
+        let job = PDFDocumentSanitizer.loadDocumentAsync(at: url,
+                                                         options: options,
+                                                         progress: { [weak self] processed, total in
+                                                             guard let self = self, self.currentURL == url else { return }
+                                                             self.updateValidationStatus(processed: processed, total: total)
+                                                         },
+                                                         completion: { [weak self] result in
+                                                             guard let self = self, self.currentURL == url else { return }
+                                                             if let current = self.sanitizeJob, let pending = pendingJob, current === pending {
+                                                                 self.sanitizeJob = nil
+                                                             }
+                                                             self.validationMode = .idle
+                                                             self.isFullValidationRunning = false
+                                                             self.validationStatus = nil
+                                                             switch result {
+                                                             case .success(let sanitized):
+                                                                 let targetIndex = self.currentDisplayedPageIndex() ?? 0
+                                                                 self.document = sanitized
+                                                                 self.pdfView?.document = sanitized
+                                                                 if let page = sanitized.page(at: targetIndex) {
+                                                                     self.pdfView?.go(to: page)
+                                                                 }
+                                                                 self.currentPageIndex = targetIndex
+                                                                 self.searchMatches.removeAll()
+                                                             case .failure(let error):
+                                                                 if case PDFDocumentSanitizerError.cancelled = error { return }
+                                                                 self.log = "❌ \(error.localizedDescription)"
+                                                                 self.present(error)
+                                                             }
+                                                         })
+        pendingJob = job
+        sanitizeJob = job
+    }
+
+    private func updateValidationStatus(processed: Int, total: Int) {
+        guard validationMode != .idle else {
+            validationStatus = nil
+            return
+        }
+        let prefix = (validationMode == .quick) ? "Quick check" : "Validating"
+        if total > 0 {
+            validationStatus = "\(prefix) \(min(processed, total))/\(total)"
+        } else {
+            validationStatus = prefix
+        }
+    }
+
+    private func currentDisplayedPageIndex() -> Int? {
+        guard let view = pdfView, let doc = document, let current = view.currentPage else { return nil }
+        let index = doc.index(for: current)
+        return index >= 0 ? index : nil
     }
 
     private func present(_ error: Error) {
@@ -331,6 +416,20 @@ struct ReaderProView: View {
             }
             .disabled(controller.document == nil)
             
+            Button {
+                controller.validateFully()
+            } label: {
+                Label("Validate", systemImage: "checkmark.shield")
+            }
+            .disabled(controller.document == nil || controller.isFullValidationRunning)
+            .help("Run full validation/sanitization in the background")
+            
+            if let status = controller.validationStatus {
+                Text(status)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Spacer()
             
             Toggle(isOn: $controller.isSidebarVisible) {

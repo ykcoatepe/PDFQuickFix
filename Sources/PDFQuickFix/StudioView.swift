@@ -248,6 +248,20 @@ struct StudioView: View {
             }
             .disabled(controller.pdfView == nil)
 
+            Button {
+                controller.runFullValidation()
+            } label: {
+                Label("Validate", systemImage: "checkmark.shield")
+            }
+            .disabled(controller.document == nil || controller.isFullValidationRunning)
+            .help("Run full validation/sanitization")
+
+            if let status = controller.validationStatus {
+                Text(status)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Spacer()
 
             Toggle(isOn: $showInspector) {
