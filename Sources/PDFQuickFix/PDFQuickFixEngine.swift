@@ -113,8 +113,8 @@ final class PDFQuickFixEngine {
         for ob in textObservations {
             guard let best = ob.topCandidates(1).first else { continue }
             let text = best.string
-            let nsText = text as NSString
-            let fullRange = NSRange(location: 0, length: nsText.length)
+            let textLength = text.utf16.count
+            let fullRange = NSRange(location: 0, length: textLength)
             
             // ranges for redactions
             var redactionRanges: [NSRange] = []
@@ -140,18 +140,19 @@ final class PDFQuickFixEngine {
             var cursor = 0
             var special: [(start: Int, end: Int, kind: RecognizedRun.Kind)] = []
             special += redactionRanges.map { ( $0.location, $0.location+$0.length, .skip ) }
-            special += replacements.map { ( $0.range.location, $0.range.location+$0.range.length, .replace(ruleReplacement(text: nsText.substring(with: $0.range), repl: $0.replacement)) ) }
+            special += replacements.map { ( $0.range.location, $0.range.location+$0.range.length, .replace(ruleReplacement(text: substring(forRange: $0.range, in: text), repl: $0.replacement)) ) }
             special.sort { $0.start < $1.start }
             
             var segments: [(start: Int, end: Int, kind: RecognizedRun.Kind)] = []
             var idx = 0
-            while cursor < nsText.length {
+            while cursor < textLength {
                 if idx < special.count {
                     let s = special[idx].start
                     let e = special[idx].end
                     let kind = special[idx].kind
                     if s > cursor {
-                        let substr = nsText.substring(with: NSRange(location: cursor, length: s - cursor))
+                        let substrRange = NSRange(location: cursor, length: s - cursor)
+                        let substr = substring(forRange: substrRange, in: text)
                         segments.append((cursor, s, .keep(substr)))
                         cursor = s
                     } else {
@@ -160,15 +161,16 @@ final class PDFQuickFixEngine {
                         idx += 1
                     }
                 } else {
-                    let substr = nsText.substring(with: NSRange(location: cursor, length: nsText.length - cursor))
-                    segments.append((cursor, nsText.length, .keep(substr)))
-                    cursor = nsText.length
+                    let substrRange = NSRange(location: cursor, length: textLength - cursor)
+                    let substr = substring(forRange: substrRange, in: text)
+                    segments.append((cursor, textLength, .keep(substr)))
+                    cursor = textLength
                 }
             }
             
             // Convert segments to runs with rectangles
             for seg in segments {
-                let r = NSRange(location: seg.start, length: seg.end - seg.start)
+                    let r = NSRange(location: seg.start, length: seg.end - seg.start)
                 if let range = Range(r, in: text), let box = try? best.boundingBox(for: range) {
                     let rectPx = visionRectToPixelRect(box.boundingBox, imageSize: CGSize(width: baseImage.width, height: baseImage.height))
                     switch seg.kind {
@@ -247,7 +249,12 @@ final class PDFQuickFixEngine {
     private func ruleReplacement(text: String, repl: String) -> String {
         return repl // basic: ignore capture groups; could extend.
     }
-    
+
+    private func substring(forRange range: NSRange, in text: String) -> String {
+        guard let swiftRange = Range(range, in: text) else { return "" }
+        return String(text[swiftRange])
+    }
+
     private func recognizeText(cgImage: CGImage) throws -> [VNRecognizedTextObservation] {
         let request = VNRecognizeTextRequest()
         request.minimumTextHeight = 0.01
