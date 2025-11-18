@@ -4,17 +4,9 @@ import AppKit
 struct QuickFixTab: View {
     @State private var inputURL: URL?
     @State private var outputURL: URL?
-    @State private var doOCR: Bool = true
-    @State private var useDefaults: Bool = true
-    @State private var customRegexText: String = ""
-    @State private var findText: String = ""
-    @State private var replaceText: String = ""
+    @StateObject private var optionsModel = QuickFixOptionsModel()
     @State private var isProcessing: Bool = false
     @State private var log: String = ""
-    @State private var dpi: Double = 300
-    @State private var padding: Double = 2.0
-    @State private var langTR: Bool = true
-    @State private var langEN: Bool = true
     
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -29,37 +21,12 @@ struct QuickFixTab: View {
                     Text("No file selected").foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button("Process") {
-                    Task { await runProcess() }
-                }
+                Button("Process", action: runProcess)
                 .disabled(inputURL == nil || isProcessing)
             }
             
             GroupBox("Options") {
-                VStack(alignment: .leading, spacing: 8) {
-                    Toggle("Repair OCR / add searchable text layer", isOn: $doOCR)
-                    Toggle("Redact defaults (IBAN, TCKN, PNR, tail)", isOn: $useDefaults)
-                    HStack {
-                        Text("Custom regex (comma-separated)")
-                        TextField(#"(e.g. \bU\d{6,8}\b, \b[A-Z]{2}\d{8}\b)"#, text: $customRegexText)
-                            .textFieldStyle(.roundedBorder)
-                    }
-                    HStack {
-                        Text("Find")
-                        TextField("AYT", text: $findText).textFieldStyle(.roundedBorder).frame(width: 160)
-                        Text("→ Replace")
-                        TextField("ESB", text: $replaceText).textFieldStyle(.roundedBorder).frame(width: 160)
-                    }
-                    HStack {
-                        Stepper("DPI: \(Int(dpi))", value: $dpi, in: 150...600, step: 50)
-                        Stepper("Redaction padding: \(String(format: "%.1f", padding)) px", value: $padding, in: 0...8, step: 0.5)
-                    }
-                    HStack {
-                        Text("OCR languages:")
-                        Toggle("TR", isOn: $langTR)
-                        Toggle("EN", isOn: $langEN)
-                    }
-                }
+                QuickFixOptionsForm(model: optionsModel)
             }
             
             DropAreaView(inputURL: $inputURL)
@@ -94,38 +61,26 @@ struct QuickFixTab: View {
         }
     }
     
-    private func runProcess() async {
-        guard let inputURL else { return }
+    private func runProcess() {
+        guard !isProcessing, let inputURL else { return }
         isProcessing = true
         log = "Processing \(inputURL.lastPathComponent)…\n"
-        defer { isProcessing = false }
         
-        var patterns: [RedactionPattern] = []
-        if useDefaults { patterns.append(contentsOf: DefaultPatterns.defaults()) }
-        let customs: [NSRegularExpression] = customRegexText
-            .split(separator: ",")
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .compactMap { try? NSRegularExpression(pattern: $0, options: .caseInsensitive) }
-        var rules: [FindReplaceRule] = []
-        if !findText.isEmpty {
-            rules.append(.init(find: findText, replace: replaceText))
-        }
-        
-        let langs: [String] = {
-            var arr: [String] = []
-            if langTR { arr.append("tr-TR") }
-            if langEN { arr.append("en-US") }
-            if arr.isEmpty { arr = ["en-US"] }
-            return arr
-        }()
-        
-        let engine = PDFQuickFixEngine(options: QuickFixOptions(doOCR: doOCR, dpi: CGFloat(dpi), redactionPadding: CGFloat(padding)), languages: langs)
-        do {
-            let out = try engine.process(inputURL: inputURL, outputURL: nil, redactionPatterns: patterns, customRegexes: customs, findReplace: rules)
-            outputURL = out
-            log += "✅ Done → \(out.path)\n"
-        } catch {
-            log += "❌ Error: \(error.localizedDescription)\n"
+        let model = optionsModel
+        Task.detached(priority: .userInitiated) {
+            do {
+                let out = try model.runQuickFix(inputURL: inputURL)
+                await MainActor.run {
+                    self.outputURL = out
+                    self.log += "✅ Done → \(out.path)\n"
+                    self.isProcessing = false
+                }
+            } catch {
+                await MainActor.run {
+                    self.log += "❌ Error: \(error.localizedDescription)\n"
+                    self.isProcessing = false
+                }
+            }
         }
     }
 }

@@ -17,7 +17,7 @@ struct ReaderTabView: View {
     @State private var showAlert: Bool = false
     @State private var alertMsg: String = ""
     @State private var debounceWorkItem: DispatchWorkItem?
-    @State private var sanitizeJob: PDFDocumentSanitizer.Job?
+    @StateObject private var validationRunner = DocumentValidationRunner()
     @State private var isValidating = false
     @State private var validationCompletedPages = 0
     @State private var validationTotalPages = 0
@@ -25,6 +25,11 @@ struct ReaderTabView: View {
     @State private var isSearching = false
     @State private var searchObservers: [NSObjectProtocol] = []
     @State private var searchToken = UUID()
+    @State private var isDocumentLoading = false
+    @State private var loadingStatus: String?
+    @State private var isQuickFixProcessing = false
+    @State private var quickFixStatus: String?
+    @State private var quickFixTask: Task<Void, Never>?
     
     var body: some View {
         VStack(spacing: 0) {
@@ -39,7 +44,9 @@ struct ReaderTabView: View {
                 showSignaturePad: $showSignaturePad,
                 signatureImage: $signatureImage,
                 validationStatus: validationStatus,
-                isValidateDisabled: isFullValidationInFlight
+                isValidateDisabled: isFullValidationInFlight,
+                isQuickFixProcessing: isQuickFixProcessing,
+                quickFixStatus: quickFixStatus
             )
             HStack(spacing: 0) {
                 if let pdfCanvasView {
@@ -56,15 +63,31 @@ struct ReaderTabView: View {
                         status: searchStatus
                     )
                     Divider()
-                    PDFKitContainerView(
-                        pdfDocument: $pdfDoc,
-                        tool: $tool,
-                        signatureImage: $signatureImage,
-                        manualRedactions: $manualRedactions,
-                        didCreate: { view in
-                            pdfCanvasView = view
+                    ZStack {
+                        PDFKitContainerView(
+                            pdfDocument: $pdfDoc,
+                            tool: $tool,
+                            signatureImage: $signatureImage,
+                            manualRedactions: $manualRedactions,
+                            didCreate: { view in
+                                pdfCanvasView = view
+                            }
+                        )
+                        if isDocumentLoading {
+                            ZStack {
+                                Color.black.opacity(0.08)
+                                    .ignoresSafeArea()
+                                LoadingOverlayView(status: loadingStatus ?? "Loading…")
+                            }
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .allowsHitTesting(false)
+                        } else if pdfDoc == nil {
+                            Text("Open a PDF to get started.")
+                                .foregroundStyle(.secondary)
+                                .padding()
+                                .allowsHitTesting(false)
                         }
-                    )
+                    }
                 }
             }
         }
@@ -85,6 +108,10 @@ struct ReaderTabView: View {
         .onDisappear {
             cancelValidationJob(resetState: true)
             cancelSearch()
+            validationRunner.cancelAll()
+            isDocumentLoading = false
+            loadingStatus = nil
+            quickFixTask?.cancel()
         }
     }
     
@@ -117,61 +144,69 @@ struct ReaderTabView: View {
     private func open(_ url: URL) {
         cancelValidationJob(resetState: true)
         cancelSearch()
-        do {
-            guard let doc = PDFDocument(url: url) else {
-                throw PDFDocumentSanitizerError.unableToOpen(url)
-            }
-            self.docURL = url
-            self.pdfDoc = doc
-            self.matches = []
-            self.currentMatchIndex = 0
-            self.manualRedactions.removeAll()
-            scheduleValidation(for: url, pageLimit: 10, mode: .quick)
-        } catch {
-            self.docURL = nil
-            self.pdfDoc = nil
-            self.alert("Open failed: \(error.localizedDescription)")
-        }
+        validationRunner.cancelOpen()
+        isDocumentLoading = true
+        loadingStatus = "Opening \(url.lastPathComponent)…"
+
+        validationRunner.openDocument(at: url,
+                                      progress: { processed, total in
+                                          guard total > 0 else { return }
+                                          let clamped = min(processed, total)
+                                          self.loadingStatus = "Validating \(clamped)/\(total)"
+                                      },
+                                      completion: { result in
+                                          self.isDocumentLoading = false
+                                          self.loadingStatus = nil
+                                          switch result {
+                                          case .success(let doc):
+                                              self.applyOpenedDocument(doc, url: url)
+                                          case .failure(let error):
+                                              self.docURL = nil
+                                              self.pdfDoc = nil
+                                              self.alert("Open failed: \(error.localizedDescription)")
+                                          }
+                                      })
+    }
+
+    private func applyOpenedDocument(_ doc: PDFDocument, url: URL) {
+        self.docURL = url
+        self.pdfDoc = doc
+        self.matches = []
+        self.currentMatchIndex = 0
+        self.manualRedactions.removeAll()
+        scheduleValidation(for: url, pageLimit: 10, mode: .quick)
     }
 
     private func scheduleValidation(for url: URL, pageLimit: Int?, mode: ValidationMode) {
-        sanitizeJob?.cancel()
+        validationRunner.cancelValidation()
         let options = PDFDocumentSanitizer.Options(validationPageLimit: pageLimit)
         validationMode = mode
         validationCompletedPages = 0
         validationTotalPages = pageLimit ?? (pdfDoc?.pageCount ?? 0)
         isValidating = true
-
-        var pendingJob: PDFDocumentSanitizer.Job?
-        let job = PDFDocumentSanitizer.loadDocumentAsync(at: url,
-                                                         options: options,
-                                                         progress: { processed, total in
-                                                             guard self.docURL == url else { return }
-                                                             self.validationCompletedPages = processed
-                                                             self.validationTotalPages = total
-                                                         },
-                                                         completion: { result in
-                                                             guard self.docURL == url else { return }
-                                                             if let current = self.sanitizeJob, let pending = pendingJob, current === pending {
-                                                                 self.sanitizeJob = nil
-                                                             }
-                                                             self.isValidating = false
-                                                             self.validationMode = .idle
-                                                             switch result {
-                                                             case .success(let sanitized):
-                                                                 self.pdfDoc = sanitized
-                                                             case .failure(let error):
-                                                                 if case PDFDocumentSanitizerError.cancelled = error { return }
-                                                                 self.alert("Validation failed: \(error.localizedDescription)")
-                                                             }
-                                                         })
-        pendingJob = job
-        sanitizeJob = job
+        validationRunner.validateDocument(at: url,
+                                          pageLimit: pageLimit,
+                                          progress: { processed, total in
+                                              guard self.docURL == url else { return }
+                                              self.validationCompletedPages = processed
+                                              self.validationTotalPages = total
+                                          },
+                                          completion: { result in
+                                              guard self.docURL == url else { return }
+                                              self.isValidating = false
+                                              self.validationMode = .idle
+                                              switch result {
+                                              case .success:
+                                                  break
+                                              case .failure(let error):
+                                                  if case PDFDocumentSanitizerError.cancelled = error { return }
+                                                  self.alert("Validation failed: \(error.localizedDescription)")
+                                              }
+                                          })
     }
 
     private func cancelValidationJob(resetState: Bool) {
-        sanitizeJob?.cancel()
-        sanitizeJob = nil
+        validationRunner.cancelValidation()
         if resetState {
             isValidating = false
             validationMode = .idle
@@ -194,6 +229,7 @@ struct ReaderTabView: View {
         if panel.runModal() == .OK, let out = panel.url {
             if pdfDoc.write(to: out) {
                 self.alert("Saved to \(out.lastPathComponent)")
+                self.docURL = out
             } else {
                 self.alert("Save failed.")
             }
@@ -297,27 +333,57 @@ struct ReaderTabView: View {
     }
     
     private func repairOCR() {
-        guard let url = docURL else { alert("Open a PDF first."); return }
-        do {
-            let engine = PDFQuickFixEngine(options: .init(), languages: ["tr-TR","en-US"])
-            let out = try engine.process(inputURL: url, outputURL: nil, redactionPatterns: [], customRegexes: [], findReplace: [], manualRedactions: [:])
-            self.open(out)
-            self.alert("OCR layer added and file cleaned.")
-        } catch {
-            alert("OCR repair failed: \(error.localizedDescription)")
-        }
+        performQuickFix(manualRedactions: [:],
+                        statusText: "Repairing OCR…",
+                        successMessage: "OCR layer added and file cleaned.",
+                        failureMessage: "OCR repair failed")
     }
-    
+
     private func applyManualRedactions() {
+        guard !manualRedactions.isEmpty else { alert("No manual redaction boxes were added."); return }
+        performQuickFix(manualRedactions: manualRedactions,
+                        statusText: "Applying redactions…",
+                        successMessage: "Permanent redactions applied.",
+                        failureMessage: "Redaction failed")
+    }
+
+    private func performQuickFix(manualRedactions: [Int:[CGRect]],
+                                 statusText: String,
+                                 successMessage: String,
+                                 failureMessage: String) {
         guard let url = docURL else { alert("Open a PDF first."); return }
-        if manualRedactions.isEmpty { alert("No manual redaction boxes were added."); return }
-        do {
+        if isQuickFixProcessing { return }
+
+        let manualCopy = manualRedactions
+        quickFixTask?.cancel()
+        isQuickFixProcessing = true
+        quickFixStatus = statusText
+
+        quickFixTask = Task.detached(priority: .userInitiated) {
             let engine = PDFQuickFixEngine(options: .init(), languages: ["tr-TR","en-US"])
-            let out = try engine.process(inputURL: url, outputURL: nil, redactionPatterns: [], customRegexes: [], findReplace: [], manualRedactions: manualRedactions)
-            self.open(out)
-            self.alert("Permanent redactions applied.")
-        } catch {
-            alert("Redaction failed: \(error.localizedDescription)")
+            do {
+                let output = try engine.process(inputURL: url,
+                                                outputURL: nil,
+                                                redactionPatterns: [],
+                                                customRegexes: [],
+                                                findReplace: [],
+                                                manualRedactions: manualCopy)
+                await MainActor.run {
+                    self.isQuickFixProcessing = false
+                    self.quickFixStatus = nil
+                    self.quickFixTask = nil
+                    self.open(output)
+                    self.alert(successMessage)
+                }
+            } catch {
+                if Task.isCancelled { return }
+                await MainActor.run {
+                    self.isQuickFixProcessing = false
+                    self.quickFixStatus = nil
+                    self.quickFixTask = nil
+                    self.alert("\(failureMessage): \(error.localizedDescription)")
+                }
+            }
         }
     }
     
@@ -351,6 +417,8 @@ struct ReaderToolbar: View {
     @Binding var signatureImage: NSImage?
     let validationStatus: String?
     let isValidateDisabled: Bool
+    let isQuickFixProcessing: Bool
+    let quickFixStatus: String?
     
     var body: some View {
         HStack {
@@ -359,7 +427,9 @@ struct ReaderToolbar: View {
             Button("Print", action: printAction)
             Divider()
             Button("OCR Repair", action: ocrRepairAction)
+                .disabled(isQuickFixProcessing)
             Button("Apply Permanent Redactions", action: applyRedactionsAction)
+                .disabled(isQuickFixProcessing)
             Button("Validate PDF", action: validateAction)
                 .disabled(isValidateDisabled)
             Divider()
@@ -383,6 +453,15 @@ struct ReaderToolbar: View {
                         .frame(width: 420, height: 260)
                         .padding()
                 }
+            if isQuickFixProcessing {
+                HStack(spacing: 6) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text(quickFixStatus ?? "Processing…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
         .padding(8)
     }

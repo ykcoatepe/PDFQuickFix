@@ -14,11 +14,13 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFViewDelegate {
     @Published var validationStatus: String?
     @Published var isFullValidationRunning: Bool = false
     @Published private(set) var currentURL: URL?
+    @Published var isLoadingDocument: Bool = false
+    @Published var loadingStatus: String?
 
     weak var pdfView: PDFView?
 
     private var findObserver: NSObjectProtocol?
-    private var sanitizeJob: PDFDocumentSanitizer.Job?
+    private let validationRunner = DocumentValidationRunner()
     private enum ValidationMode { case idle, quick, full }
     private var validationMode: ValidationMode = .idle
 
@@ -26,35 +28,57 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFViewDelegate {
         if let observer = findObserver {
             NotificationCenter.default.removeObserver(observer)
         }
-        sanitizeJob?.cancel()
+        validationRunner.cancelAll()
     }
 
     func open(url: URL) {
-        sanitizeJob?.cancel()
-        do {
-            guard let rawDoc = PDFDocument(url: url) else {
-                throw PDFDocumentSanitizerError.unableToOpen(url)
-            }
-            currentURL = url
-            document = rawDoc
-            pdfView?.document = rawDoc
-            configurePDFView()
-            currentPageIndex = 0
-            searchMatches.removeAll()
-            validationStatus = nil
-            validationMode = .idle
-            isFullValidationRunning = false
-            scheduleValidation(for: url, pageLimit: 10, mode: .quick)
-        } catch {
-            document = nil
-            pdfView?.document = nil
-            currentURL = nil
-            validationStatus = nil
-            isFullValidationRunning = false
-            validationMode = .idle
-            log = "❌ \(error.localizedDescription)"
-            present(error)
-        }
+        validationRunner.cancelValidation()
+        validationRunner.cancelOpen()
+        isLoadingDocument = true
+        loadingStatus = "Opening \(url.lastPathComponent)…"
+
+        validationRunner.openDocument(at: url,
+                                      progress: { [weak self] processed, total in
+                                          guard let self = self else { return }
+                                          guard total > 0 else { return }
+                                          let clamped = min(processed, total)
+                                          self.loadingStatus = "Validating \(clamped)/\(total)"
+                                      },
+                                      completion: { [weak self] result in
+                                          guard let self = self else { return }
+                                          self.isLoadingDocument = false
+                                          self.loadingStatus = nil
+                                          switch result {
+                                          case .success(let doc):
+                                              self.finishOpen(document: doc, url: url)
+                                          case .failure(let error):
+                                              self.handleOpenError(error)
+                                          }
+                                      })
+    }
+
+    private func finishOpen(document newDocument: PDFDocument, url: URL) {
+        currentURL = url
+        document = newDocument
+        pdfView?.document = newDocument
+        configurePDFView()
+        currentPageIndex = 0
+        searchMatches.removeAll()
+        validationStatus = nil
+        validationMode = .idle
+        isFullValidationRunning = false
+        scheduleValidation(for: url, pageLimit: 10, mode: .quick)
+    }
+
+    private func handleOpenError(_ error: Error) {
+        document = nil
+        pdfView?.document = nil
+        currentURL = nil
+        validationStatus = nil
+        isFullValidationRunning = false
+        validationMode = .idle
+        log = "❌ \(error.localizedDescription)"
+        present(error)
     }
 
     func validateFully() {
@@ -191,45 +215,32 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFViewDelegate {
     }
 
     private func scheduleValidation(for url: URL, pageLimit: Int?, mode: ValidationMode) {
-        sanitizeJob?.cancel()
+        validationRunner.cancelValidation()
         let options = PDFDocumentSanitizer.Options(validationPageLimit: pageLimit)
         validationMode = mode
         isFullValidationRunning = (mode == .full)
         updateValidationStatus(processed: 0, total: pageLimit ?? (document?.pageCount ?? 0))
-
-        var pendingJob: PDFDocumentSanitizer.Job?
-        let job = PDFDocumentSanitizer.loadDocumentAsync(at: url,
-                                                         options: options,
-                                                         progress: { [weak self] processed, total in
-                                                             guard let self = self, self.currentURL == url else { return }
-                                                             self.updateValidationStatus(processed: processed, total: total)
-                                                         },
-                                                         completion: { [weak self] result in
-                                                             guard let self = self, self.currentURL == url else { return }
-                                                             if let current = self.sanitizeJob, let pending = pendingJob, current === pending {
-                                                                 self.sanitizeJob = nil
-                                                             }
-                                                             self.validationMode = .idle
-                                                             self.isFullValidationRunning = false
-                                                             self.validationStatus = nil
-                                                             switch result {
-                                                             case .success(let sanitized):
-                                                                 let targetIndex = self.currentDisplayedPageIndex() ?? 0
-                                                                 self.document = sanitized
-                                                                 self.pdfView?.document = sanitized
-                                                                 if let page = sanitized.page(at: targetIndex) {
-                                                                     self.pdfView?.go(to: page)
-                                                                 }
-                                                                 self.currentPageIndex = targetIndex
-                                                                 self.searchMatches.removeAll()
-                                                             case .failure(let error):
-                                                                 if case PDFDocumentSanitizerError.cancelled = error { return }
-                                                                 self.log = "❌ \(error.localizedDescription)"
-                                                                 self.present(error)
-                                                             }
-                                                         })
-        pendingJob = job
-        sanitizeJob = job
+        validationRunner.validateDocument(at: url,
+                                          pageLimit: pageLimit,
+                                          progress: { [weak self] processed, total in
+                                              guard let self = self, self.currentURL == url else { return }
+                                              self.updateValidationStatus(processed: processed, total: total)
+                                          },
+                                          completion: { [weak self] result in
+                                              guard let self = self, self.currentURL == url else { return }
+                                              self.validationMode = .idle
+                                              self.isFullValidationRunning = false
+                                              self.validationStatus = nil
+                                              switch result {
+                                              case .success:
+                                                  self.currentPageIndex = self.currentDisplayedPageIndex() ?? self.currentPageIndex
+                                                  self.searchMatches.removeAll()
+                                              case .failure(let error):
+                                                  if case PDFDocumentSanitizerError.cancelled = error { return }
+                                                  self.log = "❌ \(error.localizedDescription)"
+                                                  self.present(error)
+                                              }
+                                          })
     }
 
     private func updateValidationStatus(processed: Int, total: Int) {
@@ -266,7 +277,8 @@ struct ReaderProView: View {
     @StateObject private var controller = ReaderControllerPro()
     @State private var quickFixPresented = false
     @State private var lastOpenedURL: URL?
-    
+    @State private var droppedURL: URL?
+
     @State private var showEncrypt = false
     @State private var userPassword = ""
     @State private var ownerPassword = ""
@@ -281,10 +293,25 @@ struct ReaderProView: View {
                         .frame(width: 220)
                         .background(.thinMaterial)
                 }
-                PDFViewProRepresented(document: controller.document) { view in
-                    controller.pdfView = view
+                ZStack {
+                    PDFViewProRepresented(document: controller.document) { view in
+                        controller.pdfView = view
+                    }
+                    .background(Color(NSColor.textBackgroundColor))
+                    if controller.isLoadingDocument {
+                        ZStack {
+                            Color.black.opacity(0.08)
+                            LoadingOverlayView(status: controller.loadingStatus ?? "Loading…")
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .allowsHitTesting(false)
+                    } else if controller.document == nil {
+                        Text("Open or drop a PDF to begin.")
+                            .foregroundStyle(.secondary)
+                            .padding()
+                            .allowsHitTesting(false)
+                    }
                 }
-                .background(Color(NSColor.textBackgroundColor))
             }
         }
         .onDrop(of: [.fileURL], isTargeted: nil) { providers in
@@ -292,12 +319,17 @@ struct ReaderProView: View {
                 _ = provider.loadObject(ofClass: URL.self) { url, _ in
                     guard let url, url.pathExtension.lowercased() == "pdf" else { return }
                     DispatchQueue.main.async {
-                        lastOpenedURL = url
-                        controller.open(url: url)
+                        droppedURL = url
                     }
                 }
             }
             return true
+        }
+        .onChange(of: droppedURL) { newValue in
+            guard let url = newValue else { return }
+            droppedURL = nil
+            lastOpenedURL = url
+            controller.open(url: url)
         }
         .sheet(isPresented: $quickFixPresented) {
             QuickFixSheet(inputURL: $lastOpenedURL) { output in
