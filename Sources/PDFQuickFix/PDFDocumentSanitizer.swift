@@ -400,7 +400,7 @@ enum PDFDocumentSanitizer {
             "_setShouldEmitStructureTree:",
             "setShouldNotEmitStructureTree:"
         ]
-        let argument = NSNumber(value: false)
+        let argument = "false" as NSString
         for name in selectors {
             let selector = NSSelectorFromString(name)
             guard document.responds(to: selector) else { continue }

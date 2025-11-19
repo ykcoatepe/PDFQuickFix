@@ -19,12 +19,12 @@ enum PDFKitWorkarounds {
         let falseKeys = ["PDFDocumentEmitStructureTree", "PDFDocumentEmitTaggedStructure", "PDFDocumentEmitTextStructure"]
         let trueKeys = ["PDFViewUseRenderingEngineLegacy", "PDFViewDisableFastPathRendering", "PDFViewDisableAsyncRendering"]
 
-        defaults.setVolatileDomain(Dictionary(uniqueKeysWithValues: falseKeys.map { ($0, false) }), forName: UserDefaults.registrationDomain)
-        defaults.register(defaults: Dictionary(uniqueKeysWithValues: falseKeys.map { ($0, false) }))
+        defaults.setVolatileDomain(Dictionary(uniqueKeysWithValues: falseKeys.map { ($0, "false") }), forName: UserDefaults.registrationDomain)
+        defaults.register(defaults: Dictionary(uniqueKeysWithValues: falseKeys.map { ($0, "false") }))
         for key in falseKeys {
-            defaults.set(false, forKey: key)
+            defaults.set("false", forKey: key)
             setenv(key, "0", 1)
-            CFPreferencesSetAppValue(key as CFString, kCFBooleanFalse, kCFPreferencesCurrentApplication)
+            CFPreferencesSetAppValue(key as CFString, "false" as CFString, kCFPreferencesCurrentApplication)
         }
 
         for key in trueKeys {

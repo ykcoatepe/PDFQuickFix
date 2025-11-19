@@ -4,12 +4,13 @@ import AppKit
 enum EditingTools {
     static func addFreeText(in view: PDFView?, text: String = "Text") {
         guard let page = view?.currentPage else { return }
+        let sanitizedText = PDFStringNormalizer.normalizedNonEmpty(text, context: "free text annotation") ?? "Text"
         let bounds = page.bounds(for: .cropBox)
         let rect = CGRect(x: bounds.midX - 100, y: bounds.midY - 18, width: 200, height: 36)
         let annotation = PDFAnnotation(bounds: rect, forType: .freeText, withProperties: nil)
         annotation.font = NSFont.systemFont(ofSize: 14, weight: .regular)
         annotation.color = .black
-        annotation.contents = text
+        annotation.contents = sanitizedText
         annotation.backgroundColor = NSColor.white.withAlphaComponent(0.0001)
         page.addAnnotation(annotation)
     }

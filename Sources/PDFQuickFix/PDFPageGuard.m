@@ -79,6 +79,22 @@ static BOOL PDFQFDrawPageUsingCoreGraphics(PDFPage *page, PDFDisplayBox box, CGC
 
 @end
 
+@implementation NSNumber (PDFQuickFixCrashGuard)
+
+- (NSUInteger)length {
+    return [[self stringValue] length];
+}
+
+- (void)_getCString:(char *)buffer maxLength:(NSUInteger)maxLength encoding:(NSUInteger)encoding {
+    [[self stringValue] getCString:buffer maxLength:maxLength encoding:encoding];
+}
+
+- (BOOL)isEqualToString:(NSString *)aString {
+    return [[self stringValue] isEqualToString:aString];
+}
+
+@end
+
 void PDFQFInstallPDFPageGuard(void) {
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{

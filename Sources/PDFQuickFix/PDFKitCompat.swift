@@ -1,3 +1,4 @@
+import Foundation
 import PDFKit
 
 extension PDFWidgetControlType {
@@ -29,7 +30,7 @@ enum PDFFormBuilder {
     static func makeTextField(name: String, rect: CGRect) -> PDFAnnotation {
         let annotation = PDFAnnotation(bounds: rect, forType: .widget, withProperties: nil)
         annotation.widgetFieldType = .text
-        annotation.fieldName = name
+        annotation.fieldName = sanitizedFieldName(name, context: "text field name")
         annotation.backgroundColor = .white
         return annotation
     }
@@ -37,7 +38,7 @@ enum PDFFormBuilder {
     static func makeCheckbox(name: String, rect: CGRect) -> PDFAnnotation {
         let annotation = PDFAnnotation(bounds: rect, forType: .widget, withProperties: nil)
         annotation.widgetFieldType = .button
-        annotation.fieldName = name
+        annotation.fieldName = sanitizedFieldName(name, context: "checkbox field name")
         if let control = PDFWidgetControlType.checkBoxSafe {
             annotation.widgetControlType = control
         }
@@ -51,7 +52,7 @@ enum PDFFormBuilder {
     static func makeRadio(name: String, rect: CGRect) -> PDFAnnotation {
         let annotation = PDFAnnotation(bounds: rect, forType: .widget, withProperties: nil)
         annotation.widgetFieldType = .button
-        annotation.fieldName = name
+        annotation.fieldName = sanitizedFieldName(name, context: "radio field name")
         if let control = PDFWidgetControlType.radioSafe {
             annotation.widgetControlType = control
         }
@@ -64,7 +65,7 @@ enum PDFFormBuilder {
     static func makeChoice(name: String, rect: CGRect, isList: Bool) -> PDFAnnotation {
         let annotation = PDFAnnotation(bounds: rect, forType: .widget, withProperties: nil)
         annotation.widgetFieldType = .choice
-        annotation.fieldName = name
+        annotation.fieldName = sanitizedFieldName(name, context: "choice field name")
         annotation.isListChoice = isList
         return annotation
     }
@@ -72,7 +73,11 @@ enum PDFFormBuilder {
     static func makeSignature(name: String, rect: CGRect) -> PDFAnnotation {
         let annotation = PDFAnnotation(bounds: rect, forType: .widget, withProperties: nil)
         annotation.widgetFieldType = .signature
-        annotation.fieldName = name
+        annotation.fieldName = sanitizedFieldName(name, context: "signature field name")
         return annotation
+    }
+
+    private static func sanitizedFieldName(_ name: String, context: String) -> String {
+        PDFStringNormalizer.normalize(name, context: context) ?? ""
     }
 }

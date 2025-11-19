@@ -6,7 +6,7 @@ enum PDFMerge {
         guard let firstURL = urls.first else {
             throw NSError(domain: "PDFQuickFix", code: -50, userInfo: [NSLocalizedDescriptionKey: "No PDFs selected"])
         }
-        var baseDocument = try PDFDocumentSanitizer.loadDocument(at: firstURL)
+        let baseDocument = try PDFDocumentSanitizer.loadDocument(at: firstURL)
 
         for url in urls.dropFirst() {
             guard let document = try? PDFDocumentSanitizer.loadDocument(at: url) else { continue }

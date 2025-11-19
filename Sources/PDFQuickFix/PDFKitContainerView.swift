@@ -20,7 +20,9 @@ struct PDFKitContainerView: NSViewRepresentable {
         return v
     }
     func updateNSView(_ nsView: PDFCanvasView, context: Context) {
-        nsView.document = pdfDocument
+        if nsView.document !== pdfDocument {
+            nsView.document = pdfDocument
+        }
         nsView.currentTool = tool
         nsView.signatureImage = signatureImage
         nsView.manualRedactionsBinding = $manualRedactions
@@ -96,6 +98,9 @@ final class PDFCanvasView: PDFView {
         NotificationCenter.default.addObserver(self, selector: #selector(onJumpToSelection(_:)), name: .PDFQuickFixJumpToSelection, object: nil)
     }
     required init?(coder: NSCoder) { fatalError() }
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
     
     @objc private func onJumpToSelection(_ n: Notification) {
         guard let sel = n.object as? PDFSelection else { return }

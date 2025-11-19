@@ -87,6 +87,20 @@ struct StudioView: View {
                         MeasureOverlay()
                             .padding()
                     }
+
+                    if controller.isDocumentLoading {
+                        ZStack {
+                            Color.black.opacity(0.08)
+                            LoadingOverlayView(status: controller.loadingStatus ?? "Loading…")
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .allowsHitTesting(false)
+                    } else if controller.document == nil {
+                        Text("Open or drop a PDF to begin.")
+                            .foregroundStyle(.secondary)
+                            .padding()
+                            .allowsHitTesting(false)
+                    }
                 }
 
                 if showInspector && selectedTool != .measure {

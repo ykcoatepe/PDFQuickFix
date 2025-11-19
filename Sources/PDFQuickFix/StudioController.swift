@@ -335,9 +335,11 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
     }
 
     func renameOutline(_ row: OutlineRow, title: String) {
-        row.outline.label = title
+        let sanitized = PDFStringNormalizer.normalize(title, context: "outline rename") ?? ""
+        row.outline.label = sanitized
         refreshOutline()
-        pushLog("Renamed bookmark to \"\(title)\"")
+        let loggedTitle = sanitized.isEmpty ? "Untitled" : sanitized
+        pushLog("Renamed bookmark to \"\(loggedTitle)\"")
     }
 
     func deleteOutline(_ row: OutlineRow) {
@@ -349,17 +351,20 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
     func addOutline(title: String) {
         guard let doc = document else { return }
         guard let page = pdfView?.currentPage ?? doc.page(at: 0) else { return }
+        let sanitizedTitle = PDFStringNormalizer.normalizedNonEmpty(title, context: "new outline title") ?? "Untitled"
         let destination = PDFDestination(page: page,
                                          at: CGPoint(x: 0, y: page.bounds(for: .mediaBox).maxY))
         let outline = PDFOutline()
-        outline.label = title.isEmpty ? "Untitled" : title
+        outline.label = sanitizedTitle
         outline.destination = destination
 
         if let root = doc.outlineRoot {
             root.insertChild(outline, at: root.numberOfChildren)
         } else {
             let root = PDFOutline()
-            root.label = doc.documentURL?.lastPathComponent ?? "Bookmarks"
+            let rootLabel = PDFStringNormalizer.normalizedNonEmpty(doc.documentURL?.lastPathComponent,
+                                                                   context: "outline root title") ?? "Bookmarks"
+            root.label = rootLabel
             root.insertChild(outline, at: 0)
             doc.outlineRoot = root
         }
@@ -384,7 +389,8 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
     func addFormField(kind: FormFieldKind, name: String, rect: CGRect) {
         guard let doc = document else { return }
         guard let page = pdfView?.currentPage ?? doc.page(at: 0) else { return }
-        let fieldName = name.isEmpty ? kind.rawValue : name
+        let requestedName = PDFStringNormalizer.normalize(name, context: "form field name") ?? ""
+        let fieldName = requestedName.isEmpty ? kind.rawValue : requestedName
         let annotation: PDFAnnotation
         switch kind {
         case .text:

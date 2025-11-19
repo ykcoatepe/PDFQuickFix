@@ -83,7 +83,7 @@ enum PDFOps {
         position: WatermarkPosition,
         margin: CGFloat
     ) {
-        guard !text.isEmpty else { return }
+        guard let watermarkText = PDFStringNormalizer.normalizedNonEmpty(text, context: "watermark text") else { return }
         let font = NSFont.systemFont(ofSize: fontSize, weight: .bold)
         let attributes: [NSAttributedString.Key: Any] = [
             .font: font
@@ -94,14 +94,14 @@ enum PDFOps {
         for index in 0..<document.pageCount {
             guard let page = document.page(at: index) else { continue }
             let bounds = page.bounds(for: .mediaBox)
-            let size = (text as NSString).size(withAttributes: attributes)
+            let size = (watermarkText as NSString).size(withAttributes: attributes)
             let origin = position.origin(for: size, in: bounds, margin: margin)
             let annotationBounds = CGRect(origin: origin, size: size)
 
             let annotation = PDFAnnotation(bounds: annotationBounds,
                                            forType: .freeText,
                                            withProperties: nil)
-            annotation.contents = text
+            annotation.contents = watermarkText
             annotation.font = font
             annotation.fontColor = color.withAlphaComponent(opacity)
             annotation.color = NSColor.clear
@@ -118,7 +118,9 @@ enum PDFOps {
         margin: CGFloat,
         fontSize: CGFloat
     ) {
-        guard !header.isEmpty || !footer.isEmpty else { return }
+        let headerText = PDFStringNormalizer.normalizedNonEmpty(header, context: "header text")
+        let footerText = PDFStringNormalizer.normalizedNonEmpty(footer, context: "footer text")
+        guard headerText != nil || footerText != nil else { return }
         let font = NSFont.systemFont(ofSize: fontSize, weight: .medium)
         let lineHeight = font.pointSize * 1.4
         for index in 0..<document.pageCount {
@@ -127,11 +129,11 @@ enum PDFOps {
             let topY = bounds.maxY - margin - font.ascender
             let bottomY = bounds.minY + margin
 
-            if !header.isEmpty {
+            if let headerText {
                 let headerAnnotation = PDFAnnotation(bounds: CGRect(x: bounds.midX - 200, y: topY, width: 400, height: lineHeight),
                                                      forType: .freeText,
                                                      withProperties: nil)
-                headerAnnotation.contents = header
+                headerAnnotation.contents = headerText
                 headerAnnotation.font = font
                 headerAnnotation.fontColor = NSColor.labelColor.withAlphaComponent(0.85)
                 headerAnnotation.color = NSColor.clear
@@ -139,11 +141,11 @@ enum PDFOps {
                 page.addAnnotation(headerAnnotation)
             }
 
-            if !footer.isEmpty {
+            if let footerText {
                 let footerAnnotation = PDFAnnotation(bounds: CGRect(x: bounds.midX - 200, y: bottomY, width: 400, height: lineHeight),
                                                      forType: .freeText,
                                                      withProperties: nil)
-                footerAnnotation.contents = footer
+                footerAnnotation.contents = footerText
                 footerAnnotation.font = font
                 footerAnnotation.fontColor = NSColor.labelColor.withAlphaComponent(0.85)
                 footerAnnotation.color = NSColor.clear
@@ -162,6 +164,7 @@ enum PDFOps {
         margin: CGFloat,
         fontSize: CGFloat
     ) {
+        let sanitizedPrefix = PDFStringNormalizer.normalize(prefix, context: "Bates prefix") ?? ""
         let font = NSFont.monospacedDigitSystemFont(ofSize: fontSize, weight: .regular)
         let lineHeight = font.pointSize * 1.3
         for index in 0..<document.pageCount {
@@ -169,7 +172,7 @@ enum PDFOps {
             let bounds = page.bounds(for: .mediaBox)
             // Build format safely — avoid the "*" width argument which can crash when digits underflow
             let fmt = "%@%0\(max(1, digits))d"
-            let number = String(format: fmt, prefix, start + index)
+            let number = String(format: fmt, sanitizedPrefix, start + index)
 
             let y: CGFloat
             switch placement {
