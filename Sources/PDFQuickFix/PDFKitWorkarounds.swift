@@ -22,19 +22,21 @@ enum PDFKitWorkarounds {
         defaults.setVolatileDomain(Dictionary(uniqueKeysWithValues: falseKeys.map { ($0, "false") }), forName: UserDefaults.registrationDomain)
         defaults.register(defaults: Dictionary(uniqueKeysWithValues: falseKeys.map { ($0, "false") }))
         for key in falseKeys {
+            defaults.removeObject(forKey: key)
             defaults.set("false", forKey: key)
             setenv(key, "0", 1)
             CFPreferencesSetAppValue(key as CFString, "false" as CFString, kCFPreferencesCurrentApplication)
         }
 
         for key in trueKeys {
-            defaults.set(true, forKey: key)
+            defaults.removeObject(forKey: key)
+            defaults.set("true", forKey: key)
             setenv(key, "1", 1)
-            CFPreferencesSetAppValue(key as CFString, kCFBooleanTrue, kCFPreferencesCurrentApplication)
+            CFPreferencesSetAppValue(key as CFString, "true" as CFString, kCFPreferencesCurrentApplication)
         }
 
-        defaults.set(true, forKey: "CGDisableAcceleratedPDFDrawing")
-        defaults.set(true, forKey: "PDFViewDisableMetal")
+        defaults.set("true", forKey: "CGDisableAcceleratedPDFDrawing")
+        defaults.set("true", forKey: "PDFViewDisableMetal")
         setenv("CGDisableAcceleratedPDFDrawing", "1", 1)
         setenv("PDFViewDisableMetal", "1", 1)
 

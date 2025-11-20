@@ -49,65 +49,87 @@ struct StudioView: View {
         VStack(spacing: 0) {
             toolbar
             Divider()
-            HStack(spacing: 0) {
-                VStack(spacing: 8) {
-                    ForEach(StudioTool.allCases) { tool in
-                        Button {
-                            selectedTool = tool
-                            if tool == .measure {
-                                showInspector = false
+            ZStack {
+                HStack(spacing: 0) {
+                    VStack(spacing: 12) {
+                        ForEach(StudioTool.allCases) { tool in
+                            Button {
+                                selectedTool = tool
+                                if tool == .measure {
+                                    showInspector = false
+                                }
+                            } label: {
+                                VStack(spacing: 6) {
+                                    Image(systemName: tool.systemImage)
+                                        .font(.system(size: 24))
+                                    Text(tool.rawValue)
+                                        .font(.caption2)
+                                        .fontWeight(.medium)
+                                }
+                                .frame(width: 72, height: 72)
+                                .contentShape(Rectangle())
                             }
-                        } label: {
-                            VStack {
-                                Image(systemName: tool.systemImage)
-                                Text(tool.rawValue)
-                                    .font(.caption2)
-                            }
-                            .frame(width: 72, height: 72)
-                            .padding(6)
-                            .background(selectedTool == tool ? Color.accentColor.opacity(0.15) : Color.clear)
-                            .cornerRadius(8)
+                            .buttonStyle(.plain)
+                            .background(selectedTool == tool ? AppColors.primary.opacity(0.1) : Color.clear)
+                            .foregroundColor(selectedTool == tool ? AppColors.primary : .secondary)
+                            .cornerRadius(12)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke(selectedTool == tool ? AppColors.primary.opacity(0.2) : Color.clear, lineWidth: 1)
+                            )
                         }
-                        .buttonStyle(.plain)
+                        Spacer()
                     }
-                    Spacer()
-                }
-                .padding(8)
-                .frame(width: 88)
+                    .padding(12)
+                    .frame(width: 96)
+                    .background(AppColors.surface)
 
-                Divider()
-
-                ZStack {
-                    StudioPDFViewRepresented(document: controller.document) { view in
-                        controller.attach(pdfView: view)
-                    }
-                    .background(Color(NSColor.textBackgroundColor))
-
-                    if selectedTool == .measure {
-                        MeasureOverlay()
-                            .padding()
-                    }
-
-                    if controller.isDocumentLoading {
-                        ZStack {
-                            Color.black.opacity(0.08)
-                            LoadingOverlayView(status: controller.loadingStatus ?? "Loading…")
-                        }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .allowsHitTesting(false)
-                    } else if controller.document == nil {
-                        Text("Open or drop a PDF to begin.")
-                            .foregroundStyle(.secondary)
-                            .padding()
-                            .allowsHitTesting(false)
-                    }
-                }
-
-                if showInspector && selectedTool != .measure {
                     Divider()
-                    inspectorPanel
-                        .frame(width: 320)
-                        .background(Color(NSColor.underPageBackgroundColor))
+
+                    ZStack {
+                        StudioPDFViewRepresented(document: controller.document) { view in
+                            controller.attach(pdfView: view)
+                        }
+                        .background(Color(NSColor.textBackgroundColor))
+                        .contentShape(Rectangle())
+
+                        if selectedTool == .measure {
+                            MeasureOverlay()
+                                .padding()
+                        }
+
+                        if controller.isDocumentLoading {
+                            ZStack {
+                                Color.black.opacity(0.08)
+                                LoadingOverlayView(status: controller.loadingStatus ?? "Loading…")
+                            }
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .allowsHitTesting(false)
+                        } else if controller.document == nil {
+                            VStack(spacing: 16) {
+                                Image(systemName: "doc.badge.gearshape")
+                                    .font(.system(size: 48))
+                                    .foregroundStyle(AppColors.primary.opacity(0.5))
+                                Text("Open or drop a PDF to begin")
+                                    .appFont(.title3)
+                                    .foregroundStyle(.secondary)
+                                Button("Open File", action: openFile)
+                                    .buttonStyle(PrimaryButtonStyle())
+                            }
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .background(AppColors.background)
+                        }
+                    }
+
+                    if showInspector && selectedTool != .measure {
+                        Divider()
+                        inspectorPanel
+                            .frame(width: 320)
+                            .background(Color(NSColor.underPageBackgroundColor))
+                    }
+                }
+                FullscreenPDFDropView { url in
+                    controller.open(url: url)
                 }
             }
 
@@ -186,40 +208,45 @@ struct StudioView: View {
             Text(message)
         }
         .environmentObject(controller)
+        .onDrop(of: [.fileURL, .pdf], isTargeted: nil) { providers in
+            handlePDFDrop(providers) { url in
+                controller.open(url: url)
+            }
+        }
     }
 
     private var toolbar: some View {
         HStack(spacing: 12) {
-            Button {
-                openFile()
-            } label: {
-                Label("Open", systemImage: "folder")
+            HStack(spacing: 0) {
+                Button(action: openFile) {
+                    Label("Open", systemImage: "folder")
+                }
+                .buttonStyle(GhostButtonStyle())
+                
+                Button(action: save) {
+                    Label("Save", systemImage: "square.and.arrow.down")
+                }
+                .buttonStyle(GhostButtonStyle())
+                .disabled(controller.document == nil)
+                
+                Button(action: saveAs) {
+                    Label("Save As…", systemImage: "square.and.arrow.up")
+                }
+                .buttonStyle(GhostButtonStyle())
+                .disabled(controller.document == nil)
             }
-
-            Button {
-                save()
-            } label: {
-                Label("Save", systemImage: "square.and.arrow.down")
-            }
-            .disabled(controller.document == nil)
-
-            Button {
-                saveAs()
-            } label: {
-                Label("Save As…", systemImage: "square.and.arrow.up")
-            }
-            .disabled(controller.document == nil)
-
-            Divider().frame(height: 22)
-
-            Button {
+            
+            Divider().frame(height: 20)
+            
+            Button(action: {
                 quickFixURL = controller.currentURL
                 showQuickFix = true
-            } label: {
+            }) {
                 Label("QuickFix…", systemImage: "wand.and.sparkles")
             }
+            .buttonStyle(GhostButtonStyle())
             .disabled(controller.currentURL == nil)
-
+            
             Menu {
                 Button("Watermark…") { showingWatermarkSheet = true }
                     .disabled(controller.document == nil)
@@ -237,7 +264,9 @@ struct StudioView: View {
             } label: {
                 Label("Tools", systemImage: "slider.horizontal.3")
             }
-
+            .menuStyle(.borderlessButton)
+            .frame(height: 28)
+            
             Menu("Edit Tools") {
                 Button("Add FreeText") { EditingTools.addFreeText(in: controller.pdfView) }
                 Button("Add Rectangle") { EditingTools.addRectangle(in: controller.pdfView) }
@@ -260,24 +289,31 @@ struct StudioView: View {
                 }
                 Button("Add Ink (sample)") { EditingTools.addSampleInk(in: controller.pdfView) }
             }
+            .menuStyle(.borderlessButton)
             .disabled(controller.pdfView == nil)
-
-            Button {
+            .frame(height: 28)
+            
+            Button(action: {
                 controller.runFullValidation()
-            } label: {
+            }) {
                 Label("Validate", systemImage: "checkmark.shield")
             }
+            .buttonStyle(GhostButtonStyle())
             .disabled(controller.document == nil || controller.isFullValidationRunning)
             .help("Run full validation/sanitization")
-
+            
             if let status = controller.validationStatus {
                 Text(status)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(AppColors.surface)
+                    .cornerRadius(4)
             }
-
+            
             Spacer()
-
+            
             Toggle(isOn: $showInspector) {
                 Image(systemName: "sidebar.right")
             }
@@ -286,6 +322,13 @@ struct StudioView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+        .background(AppColors.surface)
+        .overlay(
+            Rectangle()
+                .frame(height: 1)
+                .foregroundColor(AppColors.border),
+            alignment: .bottom
+        )
     }
 
     @ViewBuilder

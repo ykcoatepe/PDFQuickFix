@@ -31,11 +31,13 @@ targets:
       properties:
         com.apple.security.app-sandbox: true
         com.apple.security.files.user-selected.read-write: true
+        com.apple.security.network.client: true
     settings:
       base:
         CODE_SIGNING_ALLOWED: NO
         PRODUCT_BUNDLE_IDENTIFIER: com.yordamkocatepe.PDFQuickFix
         SWIFT_OBJC_BRIDGING_HEADER: Sources/PDFQuickFix/Bridging-Header.h
+        ASSETCATALOG_COMPILER_APPICON_NAME: PDFQuickFixIcon
   PDFQuickFixTests:
     type: bundle.unit-test
     platform: macOS

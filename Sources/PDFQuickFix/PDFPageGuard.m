@@ -89,10 +89,6 @@ static BOOL PDFQFDrawPageUsingCoreGraphics(PDFPage *page, PDFDisplayBox box, CGC
     [[self stringValue] getCString:buffer maxLength:maxLength encoding:encoding];
 }
 
-- (BOOL)isEqualToString:(NSString *)aString {
-    return [[self stringValue] isEqualToString:aString];
-}
-
 @end
 
 void PDFQFInstallPDFPageGuard(void) {

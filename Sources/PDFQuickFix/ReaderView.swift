@@ -1,6 +1,7 @@
 import SwiftUI
 import PDFKit
 import AppKit
+import UniformTypeIdentifiers
 
 struct ReaderTabView: View {
     @State private var docURL: URL?
@@ -32,63 +33,81 @@ struct ReaderTabView: View {
     @State private var quickFixTask: Task<Void, Never>?
     
     var body: some View {
-        VStack(spacing: 0) {
-            ReaderToolbar(
-                openAction: { openDoc() },
-                saveAsAction: { saveAs() },
-                printAction: { printDoc() },
-                ocrRepairAction: { repairOCR() },
-                applyRedactionsAction: { applyManualRedactions() },
-                validateAction: { validateCurrentDocumentFully() },
-                tool: $tool,
-                showSignaturePad: $showSignaturePad,
-                signatureImage: $signatureImage,
-                validationStatus: validationStatus,
-                isValidateDisabled: isFullValidationInFlight,
-                isQuickFixProcessing: isQuickFixProcessing,
-                quickFixStatus: quickFixStatus
-            )
-            HStack(spacing: 0) {
-                if let pdfCanvasView {
-                    ThumbsSidebar(pdfViewProvider: { pdfCanvasView })
-                        .frame(width: 160)
-                        .background(.quaternary.opacity(0.1))
-                }
-                VStack(spacing: 0) {
-                    ReaderSearchBar(
-                        text: $searchText,
-                        onSearch: { performSearch() },
-                        onPrev: { prevMatch() },
-                        onNext: { nextMatch() },
-                        status: searchStatus
-                    )
-                    Divider()
-                    ZStack {
-                        PDFKitContainerView(
-                            pdfDocument: $pdfDoc,
-                            tool: $tool,
-                            signatureImage: $signatureImage,
-                            manualRedactions: $manualRedactions,
-                            didCreate: { view in
-                                pdfCanvasView = view
-                            }
+        ZStack {
+            VStack(spacing: 0) {
+                ReaderToolbar(
+                    openAction: { openDoc() },
+                    saveAsAction: { saveAs() },
+                    printAction: { printDoc() },
+                    ocrRepairAction: { repairOCR() },
+                    applyRedactionsAction: { applyManualRedactions() },
+                    validateAction: { validateCurrentDocumentFully() },
+                    tool: $tool,
+                    showSignaturePad: $showSignaturePad,
+                    signatureImage: $signatureImage,
+                    validationStatus: validationStatus,
+                    isValidateDisabled: isFullValidationInFlight,
+                    isQuickFixProcessing: isQuickFixProcessing,
+                    quickFixStatus: quickFixStatus
+                )
+                HStack(spacing: 0) {
+                    if let pdfCanvasView {
+                        ThumbsSidebar(pdfViewProvider: { pdfCanvasView })
+                            .frame(width: 160)
+                            .background(.quaternary.opacity(0.1))
+                    }
+                    VStack(spacing: 0) {
+                        ReaderSearchBar(
+                            text: $searchText,
+                            onSearch: { performSearch() },
+                            onPrev: { prevMatch() },
+                            onNext: { nextMatch() },
+                            status: searchStatus
                         )
-                        if isDocumentLoading {
-                            ZStack {
-                                Color.black.opacity(0.08)
-                                    .ignoresSafeArea()
-                                LoadingOverlayView(status: loadingStatus ?? "Loading…")
-                            }
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .allowsHitTesting(false)
-                        } else if pdfDoc == nil {
-                            Text("Open a PDF to get started.")
-                                .foregroundStyle(.secondary)
-                                .padding()
+                        Divider()
+                        ZStack {
+                            PDFKitContainerView(
+                                pdfDocument: $pdfDoc,
+                                tool: $tool,
+                                signatureImage: $signatureImage,
+                                manualRedactions: $manualRedactions,
+                                didCreate: { view in
+                                    pdfCanvasView = view
+                                }
+                            )
+                            .contentShape(Rectangle())
+                            if isDocumentLoading {
+                                ZStack {
+                                    Color.black.opacity(0.08)
+                                        .ignoresSafeArea()
+                                    LoadingOverlayView(status: loadingStatus ?? "Loading…")
+                                }
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
                                 .allowsHitTesting(false)
+                            } else if pdfDoc == nil {
+                                VStack(spacing: 20) {
+                                    Image(systemName: "doc.viewfinder")
+                                        .font(.system(size: 64))
+                                        .foregroundStyle(AppColors.primary.opacity(0.5))
+                                    VStack(spacing: 8) {
+                                        Text("No Document Open")
+                                            .appFont(.title2, weight: .bold)
+                                        Text("Open a PDF to start reading, validating, or editing.")
+                                            .appFont(.body)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    Button("Open PDF…", action: openDoc)
+                                        .buttonStyle(PrimaryButtonStyle())
+                                }
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .background(AppColors.background)
+                            }
                         }
                     }
                 }
+            }
+            FullscreenPDFDropView { url in
+                open(url)
             }
         }
         .onChange(of: searchText) { _ in debounceSearch() }
@@ -421,38 +440,84 @@ struct ReaderToolbar: View {
     let quickFixStatus: String?
     
     var body: some View {
-        HStack {
-            Button("Open…", action: openAction)
-            Button("Save As…", action: saveAsAction)
-            Button("Print", action: printAction)
-            Divider()
-            Button("OCR Repair", action: ocrRepairAction)
+        HStack(spacing: 12) {
+            HStack(spacing: 0) {
+                Button(action: openAction) {
+                    Label("Open", systemImage: "folder")
+                }
+                .buttonStyle(GhostButtonStyle())
+                
+                Button(action: saveAsAction) {
+                    Label("Save", systemImage: "square.and.arrow.down")
+                }
+                .buttonStyle(GhostButtonStyle())
+                
+                Button(action: printAction) {
+                    Label("Print", systemImage: "printer")
+                }
+                .buttonStyle(GhostButtonStyle())
+            }
+            
+            Divider().frame(height: 20)
+            
+            HStack(spacing: 0) {
+                Button(action: ocrRepairAction) {
+                    Label("OCR", systemImage: "text.viewfinder")
+                }
+                .buttonStyle(GhostButtonStyle())
                 .disabled(isQuickFixProcessing)
-            Button("Apply Permanent Redactions", action: applyRedactionsAction)
+                
+                Button(action: applyRedactionsAction) {
+                    Label("Redact", systemImage: "eye.slash")
+                }
+                .buttonStyle(GhostButtonStyle())
                 .disabled(isQuickFixProcessing)
-            Button("Validate PDF", action: validateAction)
+                
+                Button(action: validateAction) {
+                    Label("Validate", systemImage: "checkmark.shield")
+                }
+                .buttonStyle(GhostButtonStyle())
                 .disabled(isValidateDisabled)
-            Divider()
+            }
+            
+            Divider().frame(height: 20)
+            
             Picker("Tool", selection: $tool) {
                 Text("Select").tag(AnnotationTool.select)
                 Text("Note").tag(AnnotationTool.note)
                 Text("Rectangle").tag(AnnotationTool.rect)
-                Text("Highlight selection").tag(AnnotationTool.highlightSelection)
+                Text("Highlight").tag(AnnotationTool.highlightSelection)
                 Text("Stamp").tag(AnnotationTool.stamp)
-                Text("Redact box").tag(AnnotationTool.redactBox)
-            }.pickerStyle(.segmented)
-            Spacer()
-            if let validationStatus {
-                Text(validationStatus)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Text("Redact").tag(AnnotationTool.redactBox)
             }
-            Button("Signature…") { showSignaturePad = true }
-                .popover(isPresented: $showSignaturePad) {
-                    SignatureCaptureView(image: $signatureImage)
-                        .frame(width: 420, height: 260)
-                        .padding()
+            .pickerStyle(.segmented)
+            .frame(width: 320)
+            
+            Spacer()
+            
+            if let validationStatus {
+                HStack(spacing: 4) {
+                    ProgressView().controlSize(.small)
+                    Text(validationStatus)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(AppColors.surface)
+                .cornerRadius(4)
+            }
+            
+            Button(action: { showSignaturePad = true }) {
+                Label("Sign", systemImage: "signature")
+            }
+            .buttonStyle(GhostButtonStyle())
+            .popover(isPresented: $showSignaturePad) {
+                SignatureCaptureView(image: $signatureImage)
+                    .frame(width: 420, height: 260)
+                    .padding()
+            }
+            
             if isQuickFixProcessing {
                 HStack(spacing: 6) {
                     ProgressView()
@@ -463,7 +528,15 @@ struct ReaderToolbar: View {
                 }
             }
         }
-        .padding(8)
+        .padding(.vertical, 8)
+        .padding(.horizontal, 12)
+        .background(AppColors.surface)
+        .overlay(
+            Rectangle()
+                .frame(height: 1)
+                .foregroundColor(AppColors.border),
+            alignment: .bottom
+        )
     }
 }
 

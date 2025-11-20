@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 
 struct QuickFixTab: View {
     @State private var inputURL: URL?
@@ -9,46 +10,112 @@ struct QuickFixTab: View {
     @State private var log: String = ""
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("PDF QuickFix").font(.largeTitle).bold()
-            Text("Inline edit, secure redaction, and OCR repair. All on your Mac.").foregroundStyle(.secondary)
-            
-            HStack(spacing: 12) {
-                Button("Choose PDF…") { pickInput() }
-                if let inputURL {
-                    Text(inputURL.lastPathComponent).lineLimit(1).truncationMode(.middle)
-                } else {
-                    Text("No file selected").foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button("Process", action: runProcess)
-                .disabled(inputURL == nil || isProcessing)
+        VStack(alignment: .leading, spacing: 24) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("PDF QuickFix")
+                    .appFont(.largeTitle, weight: .bold)
+                Text("Inline edit, secure redaction, and OCR repair. All on your Mac.")
+                    .appFont(.body)
+                    .foregroundStyle(.secondary)
             }
             
-            GroupBox("Options") {
+            VStack(spacing: 16) {
+                HStack(spacing: 12) {
+                    Button(action: pickInput) {
+                        Label("Choose PDF…", systemImage: "doc.text.magnifyingglass")
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
+                    
+                    if let inputURL {
+                        HStack {
+                            Image(systemName: "doc.fill")
+                                .foregroundStyle(AppColors.primary)
+                            Text(inputURL.lastPathComponent)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(AppColors.surface)
+                        .cornerRadius(8)
+                    } else {
+                        Text("No file selected")
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 8)
+                    }
+                    
+                    Spacer()
+                    
+                    Button(action: runProcess) {
+                        if isProcessing {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Label("Process", systemImage: "gearshape.2.fill")
+                        }
+                    }
+                    .buttonStyle(PrimaryButtonStyle(isDisabled: inputURL == nil || isProcessing))
+                    .disabled(inputURL == nil || isProcessing)
+                }
+                
+                DropAreaView(inputURL: $inputURL)
+                    .frame(maxWidth: .infinity, minHeight: 140)
+            }
+            .cardStyle()
+            
+            GroupBox {
                 QuickFixOptionsForm(model: optionsModel)
+                    .padding(8)
+            } label: {
+                Label("Options", systemImage: "slider.horizontal.3")
+                    .appFont(.headline)
             }
             
-            DropAreaView(inputURL: $inputURL)
-                .frame(maxWidth: .infinity, minHeight: 120)
-            
-            if isProcessing {
-                ProgressView().progressViewStyle(.linear)
-            }
-            
-            ScrollView {
-                Text(log).font(.caption.monospaced()).frame(maxWidth: .infinity, alignment: .leading)
-            }.frame(minHeight: 120)
-            
-            HStack {
-                if let outputURL {
-                    Button("Reveal Output in Finder") { NSWorkspace.shared.activateFileViewerSelecting([outputURL]) }
-                    Text(outputURL.lastPathComponent).lineLimit(1).truncationMode(.middle)
+            if !log.isEmpty {
+                ScrollView {
+                    Text(log)
+                        .font(.caption.monospaced())
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding()
                 }
-                Spacer()
+                .frame(height: 120)
+                .background(AppColors.surface)
+                .cornerRadius(AppLayout.smallCornerRadius)
+                .overlay(
+                    RoundedRectangle(cornerRadius: AppLayout.smallCornerRadius)
+                        .stroke(AppColors.border, lineWidth: 0.5)
+                )
             }
+            
+            if let outputURL {
+                HStack {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(AppColors.success)
+                        .font(.title2)
+                    
+                    VStack(alignment: .leading) {
+                        Text("Processing Complete")
+                            .appFont(.headline)
+                        Text(outputURL.lastPathComponent)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    
+                    Spacer()
+                    
+                    Button("Reveal in Finder") {
+                        NSWorkspace.shared.activateFileViewerSelecting([outputURL])
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
+                }
+                .padding()
+                .background(AppColors.success.opacity(0.1))
+                .cornerRadius(AppLayout.cornerRadius)
+            }
+            
+            Spacer()
         }
-        .padding(20)
+        .padding(24)
+        .background(AppColors.background)
     }
     
     private func pickInput() {
@@ -92,24 +159,29 @@ struct DropAreaView: View {
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(style: StrokeStyle(lineWidth: 2, dash: [6]))
-                .foregroundStyle(isDragging ? Color.accentColor : Color.secondary)
-            VStack(spacing: 6) {
-                Text("Drop a PDF here")
-                Text("or click “Choose PDF…”").foregroundStyle(.secondary).font(.footnote)
-            }
-        }
-        .onDrop(of: [.fileURL], isTargeted: $isDragging) { providers in
-            for item in providers {
-                _ = item.loadObject(ofClass: URL.self) { url, _ in
-                    if let url, url.pathExtension.lowercased() == "pdf" {
-                        DispatchQueue.main.async {
-                            self.inputURL = url
-                        }
-                    }
+                .stroke(style: StrokeStyle(lineWidth: 2, dash: [6]))
+                .foregroundStyle(isDragging ? AppColors.primary : AppColors.border)
+                .background(isDragging ? AppColors.primary.opacity(0.05) : Color.clear)
+            
+            VStack(spacing: 12) {
+                Image(systemName: "arrow.down.doc")
+                    .font(.system(size: 32))
+                    .foregroundStyle(isDragging ? AppColors.primary : .secondary)
+                
+                VStack(spacing: 4) {
+                    Text("Drop a PDF here")
+                        .appFont(.headline)
+                    Text("or click “Choose PDF…” above")
+                        .appFont(.subheadline)
+                        .foregroundStyle(.secondary)
                 }
             }
-            return true
         }
+        .onDrop(of: [.fileURL, .pdf], isTargeted: $isDragging) { providers in
+            handlePDFDrop(providers) { url in
+                inputURL = url
+            }
+        }
+        .animation(.easeInOut, value: isDragging)
     }
 }

@@ -1,6 +1,7 @@
 import SwiftUI
 import PDFKit
 import AppKit
+import UniformTypeIdentifiers
 
 // Controller coordinating PDF viewing, search, and page operations.
 final class ReaderControllerPro: NSObject, ObservableObject, PDFViewDelegate {
@@ -287,44 +288,42 @@ struct ReaderProView: View {
         VStack(spacing: 0) {
             toolbar
             Divider()
-            HStack(spacing: 0) {
-                if controller.isSidebarVisible, controller.document != nil {
-                    ThumbnailProRepresentedView(pdfViewGetter: { controller.pdfView })
-                        .frame(width: 220)
-                        .background(.thinMaterial)
-                }
-                ZStack {
-                    PDFViewProRepresented(document: controller.document) { view in
-                        controller.pdfView = view
+            ZStack {
+                HStack(spacing: 0) {
+                    if controller.isSidebarVisible, controller.document != nil {
+                        ThumbnailProRepresentedView(pdfViewGetter: { controller.pdfView })
+                            .frame(width: 220)
+                            .background(.thinMaterial)
                     }
-                    .background(Color(NSColor.textBackgroundColor))
-                    if controller.isLoadingDocument {
-                        ZStack {
-                            Color.black.opacity(0.08)
-                            LoadingOverlayView(status: controller.loadingStatus ?? "Loading…")
+                    ZStack {
+                        PDFViewProRepresented(document: controller.document) { view in
+                            controller.pdfView = view
                         }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .allowsHitTesting(false)
-                    } else if controller.document == nil {
-                        Text("Open or drop a PDF to begin.")
-                            .foregroundStyle(.secondary)
-                            .padding()
+                        .background(Color(NSColor.textBackgroundColor))
+                        .contentShape(Rectangle())
+                        if controller.isLoadingDocument {
+                            ZStack {
+                                Color.black.opacity(0.08)
+                                LoadingOverlayView(status: controller.loadingStatus ?? "Loading…")
+                            }
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .allowsHitTesting(false)
+                        } else if controller.document == nil {
+                            Text("Open or drop a PDF to begin.")
+                                .foregroundStyle(.secondary)
+                                .padding()
+                                .allowsHitTesting(false)
+                        }
                     }
+                }
+                FullscreenPDFDropView { url in
+                    droppedURL = url
                 }
             }
         }
-        .onDrop(of: [.fileURL], isTargeted: nil) { providers in
-            for provider in providers {
-                _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                    guard let url, url.pathExtension.lowercased() == "pdf" else { return }
-                    DispatchQueue.main.async {
-                        droppedURL = url
-                    }
-                }
-            }
-            return true
-        }
+        .onDrop(of: [.fileURL, .url, .pdf], delegate: PDFURLDropDelegate { url in
+            droppedURL = url
+        })
         .onChange(of: droppedURL) { newValue in
             guard let url = newValue else { return }
             droppedURL = nil
