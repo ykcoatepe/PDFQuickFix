@@ -3,6 +3,7 @@ import Combine
 import PDFKit
 @testable import PDFQuickFix
 
+@MainActor
 final class ReaderLoadingTests: XCTestCase {
     private var cancellables: Set<AnyCancellable> = []
 

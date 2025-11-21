@@ -28,6 +28,39 @@ enum TestPDFBuilder {
         document.write(to: url)
         return url
     }
+
+    static func makeMultipagePDF(pageCount: Int,
+                                 textPrefix: String = "Page",
+                                 size: CGSize = CGSize(width: 20, height: 20)) throws -> URL {
+        precondition(pageCount > 0, "pageCount must be positive")
+        let document = PDFDocument()
+
+        for index in 0..<pageCount {
+            autoreleasepool {
+                let image = NSImage(size: size)
+                image.lockFocus()
+                NSColor.white.setFill()
+                NSRect(origin: .zero, size: size).fill()
+                let attrs: [NSAttributedString.Key: Any] = [
+                    .font: NSFont.systemFont(ofSize: 8, weight: .regular),
+                    .foregroundColor: NSColor.black
+                ]
+                let text = "\(textPrefix) \(index + 1)"
+                NSAttributedString(string: text, attributes: attrs)
+                    .draw(in: CGRect(x: 2, y: 6, width: size.width - 4, height: 8))
+                image.unlockFocus()
+                if let page = PDFPage(image: image) {
+                    document.insert(page, at: document.pageCount)
+                }
+            }
+        }
+
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("pdf")
+        document.write(to: url)
+        return url
+    }
 }
 
 enum TestPDFRenderer {

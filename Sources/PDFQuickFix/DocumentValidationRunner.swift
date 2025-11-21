@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import PDFKit
 
@@ -17,9 +18,14 @@ final class DocumentValidationRunner: ObservableObject {
 
     @discardableResult
     func openDocument(at url: URL,
+                      quickValidationPageLimit: Int = 10,
                       progress: ((Int, Int) -> Void)? = nil,
                       completion: @escaping (Result<PDFDocument, Error>) -> Void) -> UUID {
-        start(kind: .open, url: url, options: .quickOpen, progress: progress, completion: completion)
+        start(kind: .open,
+              url: url,
+              options: .quickOpen(limit: quickValidationPageLimit),
+              progress: progress,
+              completion: completion)
     }
 
     @discardableResult
@@ -27,7 +33,15 @@ final class DocumentValidationRunner: ObservableObject {
                           pageLimit: Int?,
                           progress: ((Int, Int) -> Void)? = nil,
                           completion: @escaping (Result<PDFDocument, Error>) -> Void) -> UUID {
-        let options = PDFDocumentSanitizer.Options(validationPageLimit: pageLimit)
+        let options: PDFDocumentSanitizer.Options
+        if let pageLimit {
+            options = PDFDocumentSanitizer.Options(rebuildMode: .never,
+                                                   validationPageLimit: pageLimit,
+                                                   sanitizeAnnotations: false,
+                                                   sanitizeOutline: false)
+        } else {
+            options = PDFDocumentSanitizer.Options(rebuildMode: .never, validationPageLimit: nil)
+        }
         return start(kind: .validation, url: url, options: options, progress: progress, completion: completion)
     }
 
@@ -78,5 +92,22 @@ final class DocumentValidationRunner: ObservableObject {
     private func isActive(token: UUID, kind: Kind, url: URL) -> Bool {
         guard let context = jobs[kind] else { return false }
         return context.token == token && context.url == url
+    }
+}
+
+extension DocumentValidationRunner {
+    static var largeDocumentPageThreshold: Int { 1000 }
+    static var massiveDocumentPageThreshold: Int { 3000 }
+
+    static func estimatedPageCount(at url: URL) -> Int? {
+        guard let provider = CGDataProvider(url: url as CFURL),
+              let doc = CGPDFDocument(provider) else { return nil }
+        return doc.numberOfPages
+    }
+
+    static func shouldSkipQuickValidation(estimatedPages: Int?, resolvedPageCount: Int?) -> Bool {
+        let estimate = estimatedPages ?? 0
+        let resolved = resolvedPageCount ?? 0
+        return max(estimate, resolved) >= massiveDocumentPageThreshold
     }
 }

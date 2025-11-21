@@ -17,7 +17,8 @@ enum PDFKitWorkarounds {
         let defaults = UserDefaults.standard
 
         let falseKeys = ["PDFDocumentEmitStructureTree", "PDFDocumentEmitTaggedStructure", "PDFDocumentEmitTextStructure"]
-        let trueKeys = ["PDFViewUseRenderingEngineLegacy", "PDFViewDisableFastPathRendering", "PDFViewDisableAsyncRendering"]
+        // Removed aggressive disabling of async/metal rendering as it causes freezes on large docs.
+        // let trueKeys = ["PDFViewUseRenderingEngineLegacy", "PDFViewDisableFastPathRendering", "PDFViewDisableAsyncRendering"]
 
         defaults.setVolatileDomain(Dictionary(uniqueKeysWithValues: falseKeys.map { ($0, "false") }), forName: UserDefaults.registrationDomain)
         defaults.register(defaults: Dictionary(uniqueKeysWithValues: falseKeys.map { ($0, "false") }))
@@ -28,17 +29,11 @@ enum PDFKitWorkarounds {
             CFPreferencesSetAppValue(key as CFString, "false" as CFString, kCFPreferencesCurrentApplication)
         }
 
-        for key in trueKeys {
-            defaults.removeObject(forKey: key)
-            defaults.set("true", forKey: key)
-            setenv(key, "1", 1)
-            CFPreferencesSetAppValue(key as CFString, "true" as CFString, kCFPreferencesCurrentApplication)
-        }
-
-        defaults.set("true", forKey: "CGDisableAcceleratedPDFDrawing")
-        defaults.set("true", forKey: "PDFViewDisableMetal")
-        setenv("CGDisableAcceleratedPDFDrawing", "1", 1)
-        setenv("PDFViewDisableMetal", "1", 1)
+        // We rely on PDFPageGuard to handle specific crashes instead of disabling the entire engine.
+        // defaults.set("true", forKey: "CGDisableAcceleratedPDFDrawing")
+        // defaults.set("true", forKey: "PDFViewDisableMetal")
+        // setenv("CGDisableAcceleratedPDFDrawing", "1", 1)
+        // setenv("PDFViewDisableMetal", "1", 1)
 
         defaults.synchronize()
         CFPreferencesAppSynchronize(kCFPreferencesCurrentApplication)

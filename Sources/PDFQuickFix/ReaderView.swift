@@ -31,6 +31,8 @@ struct ReaderTabView: View {
     @State private var isQuickFixProcessing = false
     @State private var quickFixStatus: String?
     @State private var quickFixTask: Task<Void, Never>?
+    @State private var isLargeDocument = false
+    @State private var displayMode: PDFDisplayMode = .singlePageContinuous
     
     var body: some View {
         ZStack {
@@ -51,7 +53,7 @@ struct ReaderTabView: View {
                     quickFixStatus: quickFixStatus
                 )
                 HStack(spacing: 0) {
-                    if let pdfCanvasView {
+                    if let pdfCanvasView, !isLargeDocument {
                         ThumbsSidebar(pdfViewProvider: { pdfCanvasView })
                             .frame(width: 160)
                             .background(.quaternary.opacity(0.1))
@@ -71,6 +73,8 @@ struct ReaderTabView: View {
                                 tool: $tool,
                                 signatureImage: $signatureImage,
                                 manualRedactions: $manualRedactions,
+                                isLargeDocument: isLargeDocument,
+                                displayMode: $displayMode,
                                 didCreate: { view in
                                     pdfCanvasView = view
                                 }
@@ -193,12 +197,20 @@ struct ReaderTabView: View {
         self.matches = []
         self.currentMatchIndex = 0
         self.manualRedactions.removeAll()
-        scheduleValidation(for: url, pageLimit: 10, mode: .quick)
+        
+        let pageCount = doc.pageCount
+        self.isLargeDocument = pageCount > DocumentValidationRunner.largeDocumentPageThreshold
+        self.displayMode = self.isLargeDocument ? .singlePage : .singlePageContinuous
+
+        let skipAutoValidation = DocumentValidationRunner.shouldSkipQuickValidation(estimatedPages: nil,
+                                                                                   resolvedPageCount: pageCount)
+        if !skipAutoValidation {
+            scheduleValidation(for: url, pageLimit: 10, mode: .quick)
+        }
     }
 
     private func scheduleValidation(for url: URL, pageLimit: Int?, mode: ValidationMode) {
         validationRunner.cancelValidation()
-        let options = PDFDocumentSanitizer.Options(validationPageLimit: pageLimit)
         validationMode = mode
         validationCompletedPages = 0
         validationTotalPages = pageLimit ?? (pdfDoc?.pageCount ?? 0)
@@ -273,6 +285,10 @@ struct ReaderTabView: View {
         guard let pdfDoc else { return }
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return }
+        if isLargeDocument && pdfDoc.pageCount >= DocumentValidationRunner.massiveDocumentPageThreshold {
+            alert("Search disabled for massive documents (too many pages).")
+            return
+        }
 
         isSearching = true
         let token = UUID()
@@ -568,13 +584,9 @@ struct ThumbsSidebar: NSViewRepresentable {
 
     func makeNSView(context: Context) -> PDFThumbnailView {
         let view = PDFThumbnailView()
-        view.thumbnailSize = CGSize(width: 72, height: 108)
+        view.thumbnailSize = CGSize(width: 96, height: 128)
         view.maximumNumberOfColumns = 1
         view.pdfView = pdfViewProvider()
-        DispatchQueue.main.async {
-            guard view.window != nil else { return }
-            view.thumbnailSize = CGSize(width: 120, height: 160)
-        }
         return view
     }
 

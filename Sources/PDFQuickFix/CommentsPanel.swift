@@ -20,14 +20,20 @@ struct CommentsPanel: View {
             Text("Annotations")
                 .font(.headline)
 
-            TextField("Filter comments", text: $filterText)
-                .textFieldStyle(.roundedBorder)
+            if controller.isLargeDocument {
+                Text("Annotation listing is disabled for large documents to keep things responsive. Jump to specific pages to inspect annotations.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else {
+                TextField("Filter comments", text: $filterText)
+                    .textFieldStyle(.roundedBorder)
 
-            List {
-                ForEach(filteredAnnotations) { row in
-                    CommentRow(row: row,
-                               focus: controller.focus,
-                               delete: controller.delete)
+                List {
+                    ForEach(filteredAnnotations) { row in
+                        CommentRow(row: row,
+                                   focus: controller.focus,
+                                   delete: controller.delete)
+                    }
                 }
             }
         }

@@ -28,16 +28,34 @@ struct PageOrganizerView: View {
                 .disabled(controller.selectedPageIDs.isEmpty)
             }
 
+            if controller.isLargeDocument {
+                Text("Thumbnails are disabled for large documents to keep the app responsive. Use page numbers to navigate and reorder.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
             ZStack {
                 List(selection: $controller.selectedPageIDs) {
                     ForEach(controller.pageSnapshots) { snapshot in
                         HStack(alignment: .center, spacing: 12) {
-                            Image(decorative: snapshot.thumbnail, scale: 1, orientation: .up)
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
+                            if let thumbnail = snapshot.thumbnail {
+                                Image(decorative: thumbnail, scale: 1, orientation: .up)
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(width: 60, height: 80)
+                                    .cornerRadius(4)
+                                    .shadow(radius: 1, y: 1)
+                            } else {
+                                ZStack {
+                                    RoundedRectangle(cornerRadius: 4)
+                                        .fill(Color.secondary.opacity(0.08))
+                                        .shadow(radius: 1, y: 1)
+                                    Text("\(snapshot.index + 1)")
+                                        .font(.footnote).bold()
+                                        .foregroundStyle(.secondary)
+                                }
                                 .frame(width: 60, height: 80)
-                                .cornerRadius(4)
-                                .shadow(radius: 1, y: 1)
+                            }
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(snapshot.label)
                                     .font(.subheadline)
@@ -75,6 +93,11 @@ struct PageOrganizerView: View {
                         }
                         .tag(snapshot.id)
                         .padding(.vertical, 4)
+                        .onAppear {
+                            if !controller.isLargeDocument {
+                                controller.ensureThumbnail(for: snapshot.index)
+                            }
+                        }
                         .onDrag {
                             let provider = NSItemProvider()
                             provider.registerDataRepresentation(forTypeIdentifier: UTType.plainText.identifier,

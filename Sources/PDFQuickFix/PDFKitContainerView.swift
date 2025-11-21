@@ -7,22 +7,32 @@ struct PDFKitContainerView: NSViewRepresentable {
     @Binding var tool: AnnotationTool
     @Binding var signatureImage: NSImage?
     @Binding var manualRedactions: [Int:[CGRect]]
+    var isLargeDocument: Bool
+    @Binding var displayMode: PDFDisplayMode
     var didCreate: ((PDFCanvasView) -> Void)? = nil
     
     func makeNSView(context: Context) -> PDFCanvasView {
         let v = PDFCanvasView()
         v.autoScales = true
-        v.displayMode = .singlePageContinuous
+        v.displayMode = displayMode
         v.displaysPageBreaks = true
         v.backgroundColor = .windowBackgroundColor
+        v.enableDataDetectors = false
         v.delegateProxy = context.coordinator
+        v.applyPerformanceTuning(isLargeDocument: isLargeDocument,
+                                 desiredDisplayMode: displayMode,
+                                 resetScale: true)
         didCreate?(v)
         return v
     }
     func updateNSView(_ nsView: PDFCanvasView, context: Context) {
-        if nsView.document !== pdfDocument {
+        let documentChanged = nsView.document !== pdfDocument
+        if documentChanged {
             nsView.document = pdfDocument
         }
+        nsView.applyPerformanceTuning(isLargeDocument: isLargeDocument,
+                                      desiredDisplayMode: displayMode,
+                                      resetScale: documentChanged)
         nsView.currentTool = tool
         nsView.signatureImage = signatureImage
         nsView.manualRedactionsBinding = $manualRedactions
@@ -35,6 +45,34 @@ struct PDFKitContainerView: NSViewRepresentable {
         func jumpTo(selection: PDFSelection, on view: PDFCanvasView, page: PDFPage) {
             view.go(to: selection)
             view.setCurrentSelection(selection, animate: true)
+        }
+    }
+}
+
+extension PDFView {
+    /// Keeps PDFView responsive when dealing with very large documents by reducing layout and scaling work.
+    func applyPerformanceTuning(isLargeDocument: Bool,
+                                desiredDisplayMode: PDFDisplayMode,
+                                resetScale: Bool) {
+        displayDirection = .vertical
+        displaysPageBreaks = !isLargeDocument
+
+        let modeToApply: PDFDisplayMode = isLargeDocument ? .singlePage : desiredDisplayMode
+        if displayMode != modeToApply {
+            displayMode = modeToApply
+        }
+
+        if isLargeDocument {
+            autoScales = false
+            guard resetScale, document != nil else { return }
+            let fitScale = scaleFactorForSizeToFit
+            minScaleFactor = fitScale
+            maxScaleFactor = max(maxScaleFactor, fitScale * 2)
+            scaleFactor = fitScale
+        } else {
+            autoScales = true
+            guard resetScale, document != nil else { return }
+            scaleFactor = scaleFactorForSizeToFit
         }
     }
 }

@@ -24,7 +24,9 @@ final class PDFQuickFixEngine {
         
         let doc: PDFDocument
         do {
-            doc = try PDFDocumentSanitizer.loadDocument(at: inputURL)
+            // Load without rebuilding, as the engine will process/rasterize pages anyway.
+            let loadOptions = PDFDocumentSanitizer.Options(rebuildMode: .never, sanitizeAnnotations: false, sanitizeOutline: false)
+            doc = try PDFDocumentSanitizer.loadDocument(at: inputURL, options: loadOptions)
         } catch {
             throw NSError(domain: "PDFQuickFix", code: -1, userInfo: [NSLocalizedDescriptionKey: error.localizedDescription])
         }

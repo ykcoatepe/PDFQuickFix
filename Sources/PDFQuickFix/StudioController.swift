@@ -6,7 +6,7 @@ import CoreGraphics
 struct PageSnapshot: Identifiable, Hashable {
     let id: Int
     let index: Int
-    let thumbnail: CGImage
+    let thumbnail: CGImage?
     let label: String
 
     func hash(into hasher: inout Hasher) {
@@ -62,11 +62,20 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
     @Published var isThumbnailsLoading: Bool = false
     @Published var isDocumentLoading: Bool = false
     @Published var loadingStatus: String?
+    @Published var isLargeDocument: Bool = false
 
     weak var pdfView: PDFView?
     private let validationRunner = DocumentValidationRunner()
     private var snapshotGenerationID = UUID()
     private var snapshotOperation: PageSnapshotRenderOperation?
+    private let thumbnailCache: NSCache<NSNumber, CGImage> = {
+        let cache = NSCache<NSNumber, CGImage>()
+        cache.countLimit = 200
+        return cache
+    }()
+    private let thumbnailQueue = DispatchQueue(label: "com.pdfquickfix.thumbnails", qos: .userInitiated)
+    private var inflightThumbnails: Set<Int> = []
+    private let inflightLock = NSLock()
     private let snapshotQueue: OperationQueue = {
         let queue = OperationQueue()
         queue.qualityOfService = .userInitiated
@@ -74,6 +83,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
         return queue
     }()
     private let snapshotTargetSize = CGSize(width: 140, height: 180)
+    private let largeDocumentPageThreshold = DocumentValidationRunner.largeDocumentPageThreshold
     private enum ValidationMode { case idle, quick, full }
     private var validationMode: ValidationMode = .idle
 
@@ -84,11 +94,9 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
 
     func attach(pdfView: PDFView) {
         self.pdfView = pdfView
-        pdfView.autoScales = true
-        pdfView.displayMode = .singlePageContinuous
-        pdfView.displayDirection = .vertical
         pdfView.delegate = self
         pdfView.document = document
+        applyPDFViewConfiguration()
     }
 
     func open(url: URL) {
@@ -120,19 +128,29 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
     private func finishOpen(document newDocument: PDFDocument, url: URL) {
         document = newDocument
         currentURL = url
+        isLargeDocument = newDocument.pageCount > largeDocumentPageThreshold
+        resetThumbnailState()
         pdfView?.document = newDocument
+        applyPDFViewConfiguration()
         refreshAll()
         pushLog("Opened \(url.lastPathComponent)")
         validationStatus = nil
         validationMode = .idle
         isFullValidationRunning = false
-        scheduleValidation(for: url, pageLimit: 10, mode: .quick)
+
+        let shouldSkipAutoValidation = DocumentValidationRunner.shouldSkipQuickValidation(estimatedPages: nil,
+                                                                                          resolvedPageCount: newDocument.pageCount)
+        if !shouldSkipAutoValidation {
+            scheduleValidation(for: url, pageLimit: 10, mode: .quick)
+        }
     }
 
     private func handleOpenError(_ error: Error) {
         document = nil
         pdfView?.document = nil
         currentURL = nil
+        isLargeDocument = false
+        resetThumbnailState()
         validationStatus = nil
         validationMode = .idle
         isFullValidationRunning = false
@@ -151,7 +169,10 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
         if let url {
             currentURL = url
         }
+        isLargeDocument = (document?.pageCount ?? 0) > largeDocumentPageThreshold
+        resetThumbnailState()
         pdfView?.document = document
+        applyPDFViewConfiguration()
         refreshAll()
     }
 
@@ -177,11 +198,34 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
             isThumbnailsLoading = false
             return
         }
+        if doc.pageCount >= DocumentValidationRunner.massiveDocumentPageThreshold {
+            let count = doc.pageCount
+            pageSnapshots = (0..<count).map { index in
+                PageSnapshot(id: index,
+                             index: index,
+                             thumbnail: nil,
+                             label: "Page \(index + 1)")
+            }
+            isThumbnailsLoading = false
+            snapshotOperation = nil
+            return
+        }
 
         let pageCount = doc.pageCount
         guard pageCount > 0 else {
             snapshotOperation = nil
             pageSnapshots = []
+            isThumbnailsLoading = false
+            return
+        }
+
+        if isLargeDocument {
+            pageSnapshots = (0..<pageCount).map { index in
+                PageSnapshot(id: index,
+                             index: index,
+                             thumbnail: thumbnailCache.object(forKey: NSNumber(value: index)),
+                             label: "Page \(index + 1)")
+            }
             isThumbnailsLoading = false
             return
         }
@@ -205,6 +249,11 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
     func refreshOutline() {
         guard let doc = document else {
             outlineRows = []
+            return
+        }
+        if doc.pageCount >= DocumentValidationRunner.massiveDocumentPageThreshold {
+            outlineRows = []
+            pushLog("Outline disabled for massive documents (too many pages).")
             return
         }
         guard let root = doc.outlineRoot else {
@@ -232,6 +281,10 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
 
     func refreshAnnotations() {
         guard let doc = document else {
+            annotationRows = []
+            return
+        }
+        guard !isLargeDocument else {
             annotationRows = []
             return
         }
@@ -493,7 +546,6 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
 
     private func scheduleValidation(for url: URL, pageLimit: Int?, mode: ValidationMode) {
         validationRunner.cancelValidation()
-        let options = PDFDocumentSanitizer.Options(validationPageLimit: pageLimit)
         validationMode = mode
         isFullValidationRunning = (mode == .full)
         updateValidationStatus(processed: 0, total: pageLimit ?? (document?.pageCount ?? 0))
@@ -530,6 +582,119 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
         } else {
             validationStatus = prefix
         }
+    }
+
+    private func applyPDFViewConfiguration() {
+        guard let pdfView else { return }
+        pdfView.applyPerformanceTuning(isLargeDocument: isLargeDocument,
+                                       desiredDisplayMode: .singlePageContinuous,
+                                       resetScale: true)
+    }
+
+    private func resetThumbnailState() {
+        thumbnailCache.removeAllObjects()
+        inflightThumbnails.removeAll()
+    }
+
+    func ensureThumbnail(for index: Int) {
+        guard let document else { return }
+        guard index >= 0 && index < document.pageCount else { return }
+        let key = NSNumber(value: index)
+        if let cached = thumbnailCache.object(forKey: key) {
+            updateSnapshot(at: index, thumbnail: cached)
+            return
+        }
+
+        inflightLock.lock()
+        if inflightThumbnails.contains(index) {
+            inflightLock.unlock(); return
+        }
+        inflightThumbnails.insert(index)
+        inflightLock.unlock()
+
+        let targetSize = snapshotTargetSize
+        let docURL = document.documentURL
+        let docData: Data?
+        if document.pageCount < DocumentValidationRunner.massiveDocumentPageThreshold {
+            docData = document.dataRepresentation()
+        } else {
+            docData = nil
+        }
+        thumbnailQueue.async { [weak self] in
+            guard let self else { return }
+            let image = Self.renderThumbnail(pageIndex: index,
+                                             targetSize: targetSize,
+                                             url: docURL,
+                                             data: docData)
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.inflightLock.lock(); self.inflightThumbnails.remove(index); self.inflightLock.unlock()
+                guard let image else { return }
+                self.thumbnailCache.setObject(image, forKey: key)
+                self.updateSnapshot(at: index, thumbnail: image)
+            }
+        }
+    }
+
+    nonisolated private static func renderThumbnail(pageIndex: Int,
+                                                    targetSize: CGSize,
+                                                    url: URL?,
+                                                    data: Data?) -> CGImage? {
+        guard let page = makeCGPage(index: pageIndex, url: url, data: data) else { return nil }
+        let mediaBox = page.getBoxRect(.mediaBox)
+        let safeWidth = max(mediaBox.width, 1)
+        let safeHeight = max(mediaBox.height, 1)
+        let scale = min(targetSize.width / safeWidth, targetSize.height / safeHeight, 1)
+        let width = max(Int(safeWidth * scale), 1)
+        let height = max(Int(safeHeight * scale), 1)
+
+        guard let ctx = CGContext(data: nil,
+                                  width: width,
+                                  height: height,
+                                  bitsPerComponent: 8,
+                                  bytesPerRow: 0,
+                                  space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        ctx.interpolationQuality = .high
+        ctx.setFillColor(gray: 1, alpha: 1)
+        ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+
+        ctx.saveGState()
+        ctx.scaleBy(x: scale, y: scale)
+        ctx.translateBy(x: 0, y: mediaBox.height)
+        ctx.scaleBy(x: 1, y: -1)
+        ctx.drawPDFPage(page)
+        ctx.restoreGState()
+
+        return ctx.makeImage()
+    }
+
+    nonisolated private static func makeCGPage(index: Int, url: URL?, data: Data?) -> CGPDFPage? {
+        if let url,
+           let provider = CGDataProvider(url: url as CFURL),
+           let cgDoc = CGPDFDocument(provider),
+           index < cgDoc.numberOfPages {
+            return cgDoc.page(at: index + 1)
+        }
+        if let data,
+           let provider = CGDataProvider(data: data as CFData),
+           let cgDoc = CGPDFDocument(provider),
+           index < cgDoc.numberOfPages {
+            return cgDoc.page(at: index + 1)
+        }
+        return nil
+    }
+
+    private func updateSnapshot(at index: Int, thumbnail: CGImage) {
+        guard index >= 0 && index < pageSnapshots.count else { return }
+        var snapshots = pageSnapshots
+        let existing = snapshots[index]
+        if existing.thumbnail === thumbnail { return }
+        snapshots[index] = PageSnapshot(id: existing.id,
+                                        index: existing.index,
+                                        thumbnail: thumbnail,
+                                        label: existing.label)
+        pageSnapshots = snapshots
     }
 
     private func currentDisplayedPageIndex() -> Int? {

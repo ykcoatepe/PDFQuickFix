@@ -455,10 +455,10 @@ struct StudioPDFViewRepresented: NSViewRepresentable {
 
     func makeNSView(context: Context) -> PDFView {
         let view = PDFView()
-        view.autoScales = true
-        view.displayMode = .singlePageContinuous
-        view.displayDirection = .vertical
         view.document = document
+        view.applyPerformanceTuning(isLargeDocument: false,
+                                    desiredDisplayMode: .singlePageContinuous,
+                                    resetScale: true)
         didCreate(view)
         return view
     }

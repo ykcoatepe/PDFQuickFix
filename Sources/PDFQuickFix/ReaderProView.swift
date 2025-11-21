@@ -17,6 +17,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFViewDelegate {
     @Published private(set) var currentURL: URL?
     @Published var isLoadingDocument: Bool = false
     @Published var loadingStatus: String?
+    @Published var isLargeDocument: Bool = false
 
     weak var pdfView: PDFView?
 
@@ -24,6 +25,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFViewDelegate {
     private let validationRunner = DocumentValidationRunner()
     private enum ValidationMode { case idle, quick, full }
     private var validationMode: ValidationMode = .idle
+    private let largeDocumentPageThreshold = DocumentValidationRunner.largeDocumentPageThreshold
 
     deinit {
         if let observer = findObserver {
@@ -61,6 +63,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFViewDelegate {
     private func finishOpen(document newDocument: PDFDocument, url: URL) {
         currentURL = url
         document = newDocument
+        isLargeDocument = newDocument.pageCount > largeDocumentPageThreshold
         pdfView?.document = newDocument
         configurePDFView()
         currentPageIndex = 0
@@ -68,13 +71,19 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFViewDelegate {
         validationStatus = nil
         validationMode = .idle
         isFullValidationRunning = false
-        scheduleValidation(for: url, pageLimit: 10, mode: .quick)
+
+        let shouldSkipAutoValidation = DocumentValidationRunner.shouldSkipQuickValidation(estimatedPages: nil,
+                                                                                          resolvedPageCount: newDocument.pageCount)
+        if !shouldSkipAutoValidation {
+            scheduleValidation(for: url, pageLimit: 10, mode: .quick)
+        }
     }
 
     private func handleOpenError(_ error: Error) {
         document = nil
         pdfView?.document = nil
         currentURL = nil
+        isLargeDocument = false
         validationStatus = nil
         isFullValidationRunning = false
         validationMode = .idle
@@ -111,6 +120,10 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFViewDelegate {
     func find(_ text: String) {
         searchMatches.removeAll()
         guard let doc = document, !text.isEmpty else { return }
+        if doc.pageCount >= DocumentValidationRunner.massiveDocumentPageThreshold {
+            log = "Search disabled for massive documents (too many pages)."
+            return
+        }
         
         findObserver.flatMap { NotificationCenter.default.removeObserver($0) }
         findObserver = NotificationCenter.default.addObserver(
@@ -198,9 +211,9 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFViewDelegate {
     
     private func configurePDFView() {
         guard let view = pdfView else { return }
-        view.autoScales = true
-        view.displayMode = .singlePageContinuous
-        view.displayDirection = .vertical
+        view.applyPerformanceTuning(isLargeDocument: isLargeDocument,
+                                    desiredDisplayMode: .singlePageContinuous,
+                                    resetScale: true)
         view.delegate = self
     }
     
@@ -217,7 +230,6 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFViewDelegate {
 
     private func scheduleValidation(for url: URL, pageLimit: Int?, mode: ValidationMode) {
         validationRunner.cancelValidation()
-        let options = PDFDocumentSanitizer.Options(validationPageLimit: pageLimit)
         validationMode = mode
         isFullValidationRunning = (mode == .full)
         updateValidationStatus(processed: 0, total: pageLimit ?? (document?.pageCount ?? 0))
@@ -290,7 +302,7 @@ struct ReaderProView: View {
             Divider()
             ZStack {
                 HStack(spacing: 0) {
-                    if controller.isSidebarVisible, controller.document != nil {
+                    if controller.isSidebarVisible, controller.document != nil, !controller.isLargeDocument {
                         ThumbnailProRepresentedView(pdfViewGetter: { controller.pdfView })
                             .frame(width: 220)
                             .background(.thinMaterial)
@@ -561,12 +573,11 @@ struct PDFViewProRepresented: NSViewRepresentable {
     
     func makeNSView(context: Context) -> PDFView {
         let view = PDFView()
-        view.autoScales = true
-        view.displayMode = .singlePageContinuous
-        view.displayDirection = .vertical
-        view.displaysPageBreaks = true
         view.backgroundColor = .textBackgroundColor
         view.document = document
+        view.applyPerformanceTuning(isLargeDocument: false,
+                                    desiredDisplayMode: .singlePageContinuous,
+                                    resetScale: true)
         didCreate(view)
         return view
     }
@@ -586,7 +597,7 @@ struct ThumbnailProRepresentedView: NSViewRepresentable {
     func makeNSView(context: Context) -> PDFThumbnailView {
         let thumbnails = PDFThumbnailView()
         thumbnails.backgroundColor = .clear
-        thumbnails.thumbnailSize = NSSize(width: 160, height: 220)
+        thumbnails.thumbnailSize = NSSize(width: 120, height: 160)
         thumbnails.maximumNumberOfColumns = 1
         thumbnails.pdfView = pdfViewGetter()
         return thumbnails

@@ -30,14 +30,23 @@ enum PDFDocumentSanitizer {
 
         var rebuildMode: RebuildMode
         var validationPageLimit: Int?
+        var sanitizeAnnotations: Bool
+        var sanitizeOutline: Bool
 
-        init(rebuildMode: RebuildMode = .auto, validationPageLimit: Int? = nil) {
+        init(rebuildMode: RebuildMode = .auto, validationPageLimit: Int? = nil, sanitizeAnnotations: Bool = true, sanitizeOutline: Bool = true) {
             self.rebuildMode = rebuildMode
             self.validationPageLimit = validationPageLimit
+            self.sanitizeAnnotations = sanitizeAnnotations
+            self.sanitizeOutline = sanitizeOutline
         }
 
         static var full: Options { Options() }
-        static var quickOpen: Options { Options(validationPageLimit: 10) }
+        static func quickOpen(limit: Int = 10) -> Options {
+            Options(rebuildMode: .never,
+                    validationPageLimit: limit,
+                    sanitizeAnnotations: false,
+                    sanitizeOutline: false)
+        }
     }
 
     struct ValidationOptions {
@@ -83,7 +92,7 @@ enum PDFDocumentSanitizer {
 
     @discardableResult
     static func loadDocumentAsync(at url: URL,
-                                  options: Options = .quickOpen,
+                                  options: Options = .quickOpen(),
                                   progress: ProgressHandler? = nil,
                                   completion: @escaping (Result<PDFDocument, Error>) -> Void) -> Job {
         let job = Job()
@@ -127,8 +136,20 @@ enum PDFDocumentSanitizer {
 
         let (cleanedAttributes, attributesChanged) = sanitizeAttributes(from: original.documentAttributes)
         original.documentAttributes = cleanedAttributes
-        let outlineChanged = sanitizeOutline(original.outlineRoot)
-        let annotationsChanged = try sanitizeAnnotations(in: original, shouldCancel: shouldCancel)
+        
+        let outlineChanged: Bool
+        if options.sanitizeOutline {
+            outlineChanged = sanitizeOutline(original.outlineRoot)
+        } else {
+            outlineChanged = false
+        }
+        
+        let annotationsChanged: Bool
+        if options.sanitizeAnnotations {
+            annotationsChanged = try sanitizeAnnotations(in: original, shouldCancel: shouldCancel)
+        } else {
+            annotationsChanged = false
+        }
 
         let requiresRebuild: Bool
         switch options.rebuildMode {
