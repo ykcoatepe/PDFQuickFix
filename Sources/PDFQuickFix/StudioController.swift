@@ -68,6 +68,8 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
     private let validationRunner = DocumentValidationRunner()
     private var snapshotGenerationID = UUID()
     private var snapshotOperation: PageSnapshotRenderOperation?
+    private let renderService = PDFRenderService.shared
+    private let snapshotUpdateThrottle = AsyncThrottle(.milliseconds(80))
     private let thumbnailCache: NSCache<NSNumber, CGImage> = {
         let cache = NSCache<NSNumber, CGImage>()
         cache.countLimit = 200
@@ -97,6 +99,22 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
         pdfView.delegate = self
         pdfView.document = document
         applyPDFViewConfiguration()
+        
+        NotificationCenter.default.addObserver(self, selector: #selector(handlePageChange(_:)), name: .PDFViewPageChanged, object: pdfView)
+        
+        if let doc = document,
+           let page = pdfView.currentPage {
+            let index = doc.index(for: page)
+            prefetchThumbnails(around: index, window: 2, farWindow: 6)
+        }
+    }
+    
+    @objc private func handlePageChange(_ notification: Notification) {
+        guard let pdfView = notification.object as? PDFView,
+              let page = pdfView.currentPage,
+              let doc = document else { return }
+        let index = doc.index(for: page)
+        prefetchThumbnails(around: index, window: 2, farWindow: 6)
     }
 
     func open(url: URL) {
@@ -126,6 +144,9 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
     }
 
     private func finishOpen(document newDocument: PDFDocument, url: URL) {
+        let signpostID = PerfLog.begin("StudioOpen")
+        defer { PerfLog.end("StudioOpen", signpostID) }
+        
         document = newDocument
         currentURL = url
         isLargeDocument = newDocument.pageCount > largeDocumentPageThreshold
@@ -138,8 +159,10 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
         validationMode = .idle
         isFullValidationRunning = false
 
-        let shouldSkipAutoValidation = DocumentValidationRunner.shouldSkipQuickValidation(estimatedPages: nil,
-                                                                                          resolvedPageCount: newDocument.pageCount)
+        let shouldSkipAutoValidation = DocumentValidationRunner.shouldSkipQuickValidation(
+            estimatedPages: nil,
+            resolvedPageCount: newDocument.pageCount
+        )
         if !shouldSkipAutoValidation {
             scheduleValidation(for: url, pageLimit: 10, mode: .quick)
         }
@@ -233,17 +256,21 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
         isThumbnailsLoading = true
 
         let token = snapshotGenerationID
-        let operation = PageSnapshotRenderOperation(document: doc,
-                                                    targetSize: snapshotTargetSize) { [weak self] snapshots, isFinal in
-            guard let self = self, token == self.snapshotGenerationID else { return }
-            self.pageSnapshots = snapshots
-            if isFinal {
-                self.isThumbnailsLoading = false
-                self.snapshotOperation = nil
-            }
+        let count = pageCount
+        pageSnapshots = (0..<count).map { index in
+            PageSnapshot(id: index,
+                         index: index,
+                         thumbnail: thumbnailCache.object(forKey: NSNumber(value: index)),
+                         label: "Page \(index + 1)")
         }
-        snapshotOperation = operation
-        snapshotQueue.addOperation(operation)
+
+        // Initial prefetch around the first page.
+        prefetchThumbnails(around: 0, window: 2, farWindow: 6)
+
+        // Mark loading finished; subsequent thumbnails will arrive via ensureThumbnail + renderService.
+        if token == snapshotGenerationID {
+            isThumbnailsLoading = false
+        }
     }
 
     func refreshOutline() {
@@ -607,94 +634,134 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
 
         inflightLock.lock()
         if inflightThumbnails.contains(index) {
-            inflightLock.unlock(); return
+            inflightLock.unlock()
+            return
         }
         inflightThumbnails.insert(index)
         inflightLock.unlock()
 
+        let doc = document
+        let pageCount = doc.pageCount
+        guard index >= 0, index < pageCount else {
+            inflightLock.lock()
+            inflightThumbnails.remove(index)
+            inflightLock.unlock()
+            return
+        }
+
         let targetSize = snapshotTargetSize
-        let docURL = document.documentURL
+        let docURL = doc.documentURL
         let docData: Data?
-        if document.pageCount < DocumentValidationRunner.massiveDocumentPageThreshold {
-            docData = document.dataRepresentation()
+        if !isLargeDocument {
+            docData = doc.dataRepresentation()
         } else {
+            // For massive docs, avoid serializing the whole file again; rely on URL.
             docData = nil
         }
-        thumbnailQueue.async { [weak self] in
+
+        // Build a scale bucket to improve cache hit rate.
+        let mediaWidth = max(targetSize.width, 1)
+        let bucket = Int(mediaWidth.rounded(.toNearestOrEven))
+
+        let request = PDFRenderRequest(kind: .thumbnail,
+                                       pageIndex: index,
+                                       scaleBucket: bucket,
+                                       size: targetSize)
+
+        renderService.image(for: request,
+                            documentURL: docURL,
+                            documentData: docData,
+                            priority: .high) { [weak self] image in
             guard let self else { return }
-            let image = Self.renderThumbnail(pageIndex: index,
-                                             targetSize: targetSize,
-                                             url: docURL,
-                                             data: docData)
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                self.inflightLock.lock(); self.inflightThumbnails.remove(index); self.inflightLock.unlock()
-                guard let image else { return }
+            self.inflightLock.lock()
+            self.inflightThumbnails.remove(index)
+            self.inflightLock.unlock()
+
+            guard let image else { return }
+            self.thumbnailCache.setObject(image, forKey: key)
+            self.updateSnapshot(at: index, thumbnail: image)
+        }
+    }
+
+    func prefetchThumbnails(around centerIndex: Int,
+                            window: Int = 2,
+                            farWindow: Int = 6) {
+        guard let doc = document else { return }
+        let count = doc.pageCount
+        guard count > 0 else { return }
+
+        let targetSize = snapshotTargetSize
+        let mediaWidth = max(targetSize.width, 1)
+        let bucket = Int(mediaWidth.rounded(.toNearestOrEven))
+
+        func makeRequest(_ idx: Int) -> PDFRenderRequest? {
+            guard idx >= 0, idx < count else { return nil }
+            return PDFRenderRequest(kind: .thumbnail,
+                                    pageIndex: idx,
+                                    scaleBucket: bucket,
+                                    size: targetSize)
+        }
+
+        let docURL = doc.documentURL
+        let docData: Data? = isLargeDocument ? nil : doc.dataRepresentation()
+
+        // Near window (±window) with high priority.
+        for offset in -window...window {
+            let idx = centerIndex + offset
+            guard let request = makeRequest(idx) else { continue }
+            if thumbnailCache.object(forKey: NSNumber(value: idx)) != nil { continue }
+            renderService.image(for: request,
+                                documentURL: docURL,
+                                documentData: docData,
+                                priority: .veryHigh) { [weak self] image in
+                guard let self, let image else { return }
+                let key = NSNumber(value: idx)
                 self.thumbnailCache.setObject(image, forKey: key)
-                self.updateSnapshot(at: index, thumbnail: image)
+                self.updateSnapshot(at: idx, thumbnail: image)
+            }
+        }
+
+        // Far window (±farWindow) with lower priority.
+        for offset in -(farWindow)...farWindow {
+            if abs(offset) <= window { continue }
+            let idx = centerIndex + offset
+            guard let request = makeRequest(idx) else { continue }
+            if thumbnailCache.object(forKey: NSNumber(value: idx)) != nil { continue }
+            renderService.image(for: request,
+                                documentURL: docURL,
+                                documentData: docData,
+                                priority: .low) { [weak self] image in
+                guard let self, let image else { return }
+                let key = NSNumber(value: idx)
+                self.thumbnailCache.setObject(image, forKey: key)
+                self.updateSnapshot(at: idx, thumbnail: image)
             }
         }
     }
 
-    nonisolated private static func renderThumbnail(pageIndex: Int,
-                                                    targetSize: CGSize,
-                                                    url: URL?,
-                                                    data: Data?) -> CGImage? {
-        guard let page = makeCGPage(index: pageIndex, url: url, data: data) else { return nil }
-        let mediaBox = page.getBoxRect(.mediaBox)
-        let safeWidth = max(mediaBox.width, 1)
-        let safeHeight = max(mediaBox.height, 1)
-        let scale = min(targetSize.width / safeWidth, targetSize.height / safeHeight, 1)
-        let width = max(Int(safeWidth * scale), 1)
-        let height = max(Int(safeHeight * scale), 1)
 
-        guard let ctx = CGContext(data: nil,
-                                  width: width,
-                                  height: height,
-                                  bitsPerComponent: 8,
-                                  bytesPerRow: 0,
-                                  space: CGColorSpaceCreateDeviceRGB(),
-                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
-        ctx.interpolationQuality = .high
-        ctx.setFillColor(gray: 1, alpha: 1)
-        ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
 
-        ctx.saveGState()
-        ctx.scaleBy(x: scale, y: scale)
-        ctx.translateBy(x: 0, y: mediaBox.height)
-        ctx.scaleBy(x: 1, y: -1)
-        ctx.drawPDFPage(page)
-        ctx.restoreGState()
 
-        return ctx.makeImage()
-    }
-
-    nonisolated private static func makeCGPage(index: Int, url: URL?, data: Data?) -> CGPDFPage? {
-        if let url,
-           let provider = CGDataProvider(url: url as CFURL),
-           let cgDoc = CGPDFDocument(provider),
-           index < cgDoc.numberOfPages {
-            return cgDoc.page(at: index + 1)
-        }
-        if let data,
-           let provider = CGDataProvider(data: data as CFData),
-           let cgDoc = CGPDFDocument(provider),
-           index < cgDoc.numberOfPages {
-            return cgDoc.page(at: index + 1)
-        }
-        return nil
-    }
 
     private func updateSnapshot(at index: Int, thumbnail: CGImage) {
         guard index >= 0 && index < pageSnapshots.count else { return }
-        var snapshots = pageSnapshots
-        let existing = snapshots[index]
-        if existing.thumbnail === thumbnail { return }
-        snapshots[index] = PageSnapshot(id: existing.id,
-                                        index: existing.index,
-                                        thumbnail: thumbnail,
-                                        label: existing.label)
-        pageSnapshots = snapshots
+        
+        Task {
+            await snapshotUpdateThrottle.run { [weak self] in
+                await MainActor.run {
+                    guard let self else { return }
+                    guard index >= 0 && index < self.pageSnapshots.count else { return }
+                    var snapshots = self.pageSnapshots
+                    let existing = snapshots[index]
+                    if existing.thumbnail === thumbnail { return }
+                    snapshots[index] = PageSnapshot(id: existing.id,
+                                                    index: existing.index,
+                                                    thumbnail: thumbnail,
+                                                    label: existing.label)
+                    self.pageSnapshots = snapshots
+                }
+            }
+        }
     }
 
     private func currentDisplayedPageIndex() -> Int? {

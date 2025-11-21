@@ -72,8 +72,10 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFViewDelegate {
         validationMode = .idle
         isFullValidationRunning = false
 
-        let shouldSkipAutoValidation = DocumentValidationRunner.shouldSkipQuickValidation(estimatedPages: nil,
-                                                                                          resolvedPageCount: newDocument.pageCount)
+        let shouldSkipAutoValidation = DocumentValidationRunner.shouldSkipQuickValidation(
+            estimatedPages: nil,
+            resolvedPageCount: newDocument.pageCount
+        )
         if !shouldSkipAutoValidation {
             scheduleValidation(for: url, pageLimit: 10, mode: .quick)
         }
