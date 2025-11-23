@@ -2,6 +2,19 @@ import SwiftUI
 import PDFKit
 import AppKit
 
+enum AnnotationTool {
+    case select
+    case note
+    case rect
+    case highlightSelection
+    case stamp
+    case redactBox
+}
+
+extension Notification.Name {
+    static let PDFQuickFixJumpToSelection = Notification.Name("PDFQuickFixJumpToSelection")
+}
+
 struct PDFKitContainerView: NSViewRepresentable {
     @Binding var pdfDocument: PDFDocument?
     @Binding var tool: AnnotationTool
