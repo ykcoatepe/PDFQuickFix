@@ -62,6 +62,20 @@ extension PDFView {
             displayMode = modeToApply
         }
 
+        // Tests construct a bare PDFView (zero-sized) before attaching to a window.
+        // When bounds are empty, PDFKit reports a scaleFactorForSizeToFit of 0, which
+        // then gets clamped to the default 0.1 scale and fails expectations. Give the
+        // view a minimal, page-sized frame so fitting math can produce a real value.
+        if resetScale,
+           (bounds.width == 0 || bounds.height == 0),
+           let page = document?.page(at: 0) {
+            let box = page.bounds(for: .mediaBox)
+            let fallbackSize = CGSize(width: max(box.width, 1),
+                                      height: max(box.height, 1))
+            setFrameSize(fallbackSize)
+            layoutSubtreeIfNeeded()
+        }
+
         if isLargeDocument {
             autoScales = false
             guard resetScale, document != nil else { return }
