@@ -48,6 +48,14 @@ enum FormFieldKind: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+struct StudioDebugInfo {
+    let pageCount: Int
+    let isLargeDocument: Bool
+    let isMassiveDocument: Bool
+    let renderQueueOps: Int
+    let renderTrackedOps: Int
+}
+
 @MainActor
 final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
     @Published var document: PDFDocument?
@@ -623,6 +631,20 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
         inflightThumbnails.removeAll()
     }
 
+#if DEBUG
+    var debugInfo: StudioDebugInfo {
+        let pages = document?.pageCount ?? 0
+        let isLarge = isLargeDocument
+        let isMassive = pages >= DocumentValidationRunner.massiveDocumentPageThreshold
+        let render = renderService.debugInfo()
+        return StudioDebugInfo(pageCount: pages,
+                               isLargeDocument: isLarge,
+                               isMassiveDocument: isMassive,
+                               renderQueueOps: render.queueOperationCount,
+                               renderTrackedOps: render.trackedOperationsCount)
+    }
+#endif
+
     func ensureThumbnail(for index: Int) {
         guard let document else { return }
         guard index >= 0 && index < document.pageCount else { return }
@@ -652,10 +674,10 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
         let targetSize = snapshotTargetSize
         let docURL = doc.documentURL
         let docData: Data?
-        if !isLargeDocument {
+        if doc.pageCount < DocumentValidationRunner.massiveDocumentPageThreshold {
             docData = doc.dataRepresentation()
         } else {
-            // For massive docs, avoid serializing the whole file again; rely on URL.
+            // For very large documents, avoid serializing the entire file.
             docData = nil
         }
 
@@ -703,7 +725,12 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
         }
 
         let docURL = doc.documentURL
-        let docData: Data? = isLargeDocument ? nil : doc.dataRepresentation()
+        let docData: Data?
+        if doc.pageCount < DocumentValidationRunner.massiveDocumentPageThreshold {
+            docData = doc.dataRepresentation()
+        } else {
+            docData = nil
+        }
 
         // Near window (±window) with high priority.
         for offset in -window...window {
@@ -746,10 +773,11 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
     private func updateSnapshot(at index: Int, thumbnail: CGImage) {
         guard index >= 0 && index < pageSnapshots.count else { return }
         
-        Task {
-            await snapshotUpdateThrottle.run { [weak self] in
+        Task { [weak self] in
+            guard let self else { return }
+            await self.snapshotUpdateThrottle.run { [weak self] in
+                guard let self else { return }
                 await MainActor.run {
-                    guard let self else { return }
                     guard index >= 0 && index < self.pageSnapshots.count else { return }
                     var snapshots = self.pageSnapshots
                     let existing = snapshots[index]

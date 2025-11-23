@@ -41,7 +41,7 @@ targets:
   PDFQuickFixTests:
     type: bundle.unit-test
     platform: macOS
-    deploymentTarget: "13.0"
+    deploymentTarget: "14.0"
     sources:
       - path: Tests/PDFQuickFixTests
     dependencies:

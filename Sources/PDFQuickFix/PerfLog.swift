@@ -1,4 +1,4 @@
-import os
+import os.log
 
 enum PerfLog {
     static let log = OSLog(subsystem: "com.pdfquickfix", category: "PDF")

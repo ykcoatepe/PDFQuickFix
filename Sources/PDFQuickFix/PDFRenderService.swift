@@ -105,11 +105,11 @@ final class PDFRenderService {
         }
         op.completionBlock = { [weak self, weak op] in
             guard let self, let op else { return }
-            lock.lock()
-            if let current = operations[request], current === op {
-                operations[request] = nil
+            self.lock.lock()
+            if let current = self.operations[request], current === op {
+                self.operations[request] = nil
             }
-            lock.unlock()
+            self.lock.unlock()
         }
         op.queuePriority = priority
         operations[request] = op
@@ -130,6 +130,20 @@ final class PDFRenderService {
         operations.removeAll()
         lock.unlock()
         queue.cancelAllOperations()
+    }
+
+    struct DebugInfo {
+        let queueOperationCount: Int
+        let trackedOperationsCount: Int
+    }
+
+    func debugInfo() -> DebugInfo {
+        lock.lock()
+        let opCount = queue.operationCount
+        let tracked = operations.count
+        lock.unlock()
+        return DebugInfo(queueOperationCount: opCount,
+                         trackedOperationsCount: tracked)
     }
 }
 
