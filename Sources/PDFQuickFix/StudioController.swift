@@ -72,6 +72,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
     @Published var isDocumentLoading: Bool = false
     @Published var loadingStatus: String?
     @Published var isLargeDocument: Bool = false
+    @Published var isMassiveDocument: Bool = false
 
     weak var pdfView: PDFView?
     private let validationRunner = DocumentValidationRunner()
@@ -164,11 +165,27 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
         document = newDocument
         currentURL = url
         isLargeDocument = newDocument.pageCount > largeDocumentPageThreshold
+        isMassiveDocument = newDocument.pageCount >= DocumentValidationRunner.massiveDocumentPageThreshold
         resetThumbnailState()
         pdfView?.document = newDocument
         applyPDFViewConfiguration()
-        refreshAll()
-        pushLog("Opened \(url.lastPathComponent)")
+        let isMassive = isMassiveDocument
+        if isMassive {
+            let count = newDocument.pageCount
+            pageSnapshots = (0..<count).map { index in
+                PageSnapshot(id: index,
+                             index: index,
+                             thumbnail: nil,
+                             label: "Page \(index + 1)")
+            }
+            outlineRows = []
+            annotationRows = []
+            isThumbnailsLoading = false
+            pushLog("Opened massive document (\(count) pages); outline/annotations/validation skipped.")
+        } else {
+            refreshAll()
+            pushLog("Opened \(url.lastPathComponent)")
+        }
         validationStatus = nil
         validationMode = .idle
         isFullValidationRunning = false
@@ -177,7 +194,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
             estimatedPages: nil,
             resolvedPageCount: newDocument.pageCount
         )
-        if !shouldSkipAutoValidation {
+        if !isMassive && !shouldSkipAutoValidation {
             scheduleValidation(for: url, pageLimit: 10, mode: .quick)
         }
 
@@ -196,6 +213,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
         pdfView?.document = nil
         currentURL = nil
         isLargeDocument = false
+        isMassiveDocument = false
         resetThumbnailState()
         validationStatus = nil
         validationMode = .idle

@@ -41,27 +41,56 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFViewDelegate {
         loadingStatus = "Opening \(url.lastPathComponent)…"
         let readerOpenSP = PerfLog.begin("ReaderOpen")
 
-        validationRunner.openDocument(at: url,
-                                      quickValidationPageLimit: 0,
-                                      progress: { [weak self] processed, total in
-                                          guard let self = self else { return }
-                                          guard total > 0 else { return }
-                                          let clamped = min(processed, total)
-                                          self.loadingStatus = "Validating \(clamped)/\(total)"
-                                      },
-                                      completion: { [weak self] result in
-                                          guard let self = self else { return }
-                                          self.isLoadingDocument = false
-                                          self.loadingStatus = nil
-                                          switch result {
-                                          case .success(let doc):
-                                              self.finishOpen(document: doc, url: url)
-                                              PerfLog.end("ReaderOpen", readerOpenSP)
-                                          case .failure(let error):
-                                              self.handleOpenError(error)
-                                              PerfLog.end("ReaderOpen", readerOpenSP)
-                                          }
-                                      })
+        let massiveThreshold = DocumentValidationRunner.massiveDocumentPageThreshold
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            guard let rawDoc = PDFDocument(url: url) else {
+                DispatchQueue.main.async {
+                    self.isLoadingDocument = false
+                    self.loadingStatus = nil
+                    self.handleOpenError(PDFDocumentSanitizerError.unableToOpen(url))
+                    PerfLog.end("ReaderOpen", readerOpenSP)
+                }
+                return
+            }
+
+            let pageCount = rawDoc.pageCount
+            let isMassive = pageCount >= massiveThreshold
+
+            if isMassive {
+                DispatchQueue.main.async {
+                    self.loadingStatus = nil
+                    self.isLoadingDocument = false
+                    self.finishOpen(document: rawDoc, url: url)
+                    PerfLog.end("ReaderOpen", readerOpenSP)
+                }
+            } else {
+                DispatchQueue.main.async {
+                    self.validationRunner.openDocument(at: url,
+                                                      quickValidationPageLimit: 0,
+                                                      progress: { [weak self] processed, total in
+                                                          guard let self = self else { return }
+                                                          guard total > 0 else { return }
+                                                          let clamped = min(processed, total)
+                                                          self.loadingStatus = "Validating \(clamped)/\(total)"
+                                                      },
+                                                      completion: { [weak self] result in
+                                                          guard let self = self else { return }
+                                                          self.isLoadingDocument = false
+                                                          self.loadingStatus = nil
+                                                          switch result {
+                                                          case .success(let doc):
+                                                              self.finishOpen(document: doc, url: url)
+                                                              PerfLog.end("ReaderOpen", readerOpenSP)
+                                                          case .failure(let error):
+                                                              self.handleOpenError(error)
+                                                              PerfLog.end("ReaderOpen", readerOpenSP)
+                                                          }
+                                                      })
+                }
+            }
+        }
     }
 
     private func finishOpen(document newDocument: PDFDocument, url: URL) {
@@ -82,7 +111,8 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFViewDelegate {
             estimatedPages: nil,
             resolvedPageCount: newDocument.pageCount
         )
-        if !shouldSkipAutoValidation {
+        let isMassive = newDocument.pageCount >= DocumentValidationRunner.massiveDocumentPageThreshold
+        if !isMassive && !shouldSkipAutoValidation {
             scheduleValidation(for: url, pageLimit: 10, mode: .quick)
         }
     }
