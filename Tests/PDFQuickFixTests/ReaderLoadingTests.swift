@@ -59,7 +59,7 @@ final class ReaderLoadingTests: XCTestCase {
 
         let openExpectation = expectation(description: "Open completes")
         DispatchQueue.main.async {
-            runner.openDocument(at: pdfURL, completion: { result in
+            runner.openDocument(at: pdfURL, quickValidationPageLimit: 0, completion: { result in
                 switch result {
                 case .success(let doc):
                     XCTAssertEqual(doc.pageCount, 1)

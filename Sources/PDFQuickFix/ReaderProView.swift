@@ -41,6 +41,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFViewDelegate {
         loadingStatus = "Opening \(url.lastPathComponent)…"
 
         validationRunner.openDocument(at: url,
+                                      quickValidationPageLimit: 0,
                                       progress: { [weak self] processed, total in
                                           guard let self = self else { return }
                                           guard total > 0 else { return }
