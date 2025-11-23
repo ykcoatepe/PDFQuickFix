@@ -98,6 +98,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
     private var validationMode: ValidationMode = .idle
 
     deinit {
+        NotificationCenter.default.removeObserver(self)
         validationRunner.cancelAll()
         snapshotOperation?.cancel()
     }
