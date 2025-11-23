@@ -174,10 +174,9 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
         isLargeDocument = newDocument.pageCount > largeDocumentPageThreshold
         isMassiveDocument = newDocument.pageCount >= DocumentValidationRunner.massiveDocumentPageThreshold
         resetThumbnailState()
-        pdfView?.document = newDocument
-        applyPDFViewConfiguration()
         let isMassive = isMassiveDocument
         if isMassive {
+            pdfView?.document = nil
             let count = newDocument.pageCount
             pageSnapshots = (0..<count).map { index in
                 PageSnapshot(id: index,
@@ -188,8 +187,10 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
             outlineRows = []
             annotationRows = []
             isThumbnailsLoading = false
-            pushLog("Opened massive document (\(count) pages); outline/annotations/validation skipped.")
+            pushLog("Opened massive document (\(count) pages); Studio disabled for this file.")
         } else {
+            pdfView?.document = newDocument
+            applyPDFViewConfiguration()
             refreshAll()
             pushLog("Opened \(url.lastPathComponent)")
         }

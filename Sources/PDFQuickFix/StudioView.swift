@@ -88,24 +88,30 @@ struct StudioView: View {
                         Divider()
 
                         ZStack {
-                            StudioPDFViewRepresented(document: controller.document) { view in
-                                controller.attach(pdfView: view)
-                            }
-                            .background(Color(NSColor.textBackgroundColor))
-                            .contentShape(Rectangle())
+                            if controller.document != nil && !controller.isMassiveDocument {
+                                StudioPDFViewRepresented(document: controller.document) { view in
+                                    controller.attach(pdfView: view)
+                                }
+                                .background(Color(NSColor.textBackgroundColor))
+                                .contentShape(Rectangle())
 
-                            if selectedTool == .measure {
-                                MeasureOverlay()
-                                    .padding()
-                            }
-
-                            if controller.isDocumentLoading {
-                                ZStack {
-                                    Color.black.opacity(0.08)
-                                    LoadingOverlayView(status: controller.loadingStatus ?? "Loading…")
+                                if selectedTool == .measure {
+                                    MeasureOverlay()
+                                        .padding()
+                                }
+                            } else if controller.isMassiveDocument, let url = controller.currentURL {
+                                VStack(spacing: 12) {
+                                    Text("Studio is disabled for massive documents.")
+                                        .font(.headline)
+                                    Text("Page count: \(controller.document?.pageCount ?? 0). Use the system viewer to browse this file.")
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                    Button("Open in Preview") {
+                                        NSWorkspace.shared.open(url)
+                                    }
+                                    .buttonStyle(.borderedProminent)
                                 }
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                                .allowsHitTesting(false)
                             } else if controller.document == nil {
                                 VStack(spacing: 16) {
                                     Image(systemName: "doc.badge.gearshape")
@@ -119,6 +125,15 @@ struct StudioView: View {
                                 }
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                                 .background(AppColors.background)
+                            }
+
+                            if controller.isDocumentLoading {
+                                ZStack {
+                                    Color.black.opacity(0.08)
+                                    LoadingOverlayView(status: controller.loadingStatus ?? "Loading…")
+                                }
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .allowsHitTesting(false)
                             }
                         }
 
