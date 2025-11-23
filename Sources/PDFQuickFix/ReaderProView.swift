@@ -18,6 +18,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFViewDelegate {
     @Published var isLoadingDocument: Bool = false
     @Published var loadingStatus: String?
     @Published var isLargeDocument: Bool = false
+    @Published var isMassiveDocument: Bool = false
 
     weak var pdfView: PDFView?
 
@@ -110,8 +111,15 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFViewDelegate {
         currentURL = url
         document = newDocument
         isLargeDocument = newDocument.pageCount > largeDocumentPageThreshold
-        pdfView?.document = newDocument
-        configurePDFView()
+        isMassiveDocument = newDocument.pageCount >= DocumentValidationRunner.massiveDocumentPageThreshold
+
+        if !isMassiveDocument {
+            pdfView?.document = newDocument
+            configurePDFView()
+        } else {
+            // Massive docs: avoid attaching to PDFView to prevent UI lockups.
+            pdfView?.document = nil
+        }
         currentPageIndex = 0
         searchMatches.removeAll()
         validationStatus = nil
@@ -357,11 +365,32 @@ struct ReaderProView: View {
                             .background(.thinMaterial)
                     }
                     ZStack {
-                        PDFViewProRepresented(document: controller.document) { view in
-                            controller.pdfView = view
+                        if controller.document != nil && !controller.isMassiveDocument {
+                            PDFViewProRepresented(document: controller.document) { view in
+                                controller.pdfView = view
+                            }
+                            .background(Color(NSColor.textBackgroundColor))
+                            .contentShape(Rectangle())
+                        } else if controller.isMassiveDocument, let url = controller.currentURL {
+                            VStack(spacing: 12) {
+                                Text("This PDF is too large to view inline.")
+                                    .font(.headline)
+                                Text("Page count: \(controller.document?.pageCount ?? 0). Use the system viewer for best performance.")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                                Button("Open in Preview") {
+                                    NSWorkspace.shared.open(url)
+                                }
+                                .buttonStyle(.borderedProminent)
+                            }
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        } else if controller.document == nil {
+                            Text("Open or drop a PDF to begin.")
+                                .foregroundStyle(.secondary)
+                                .padding()
+                                .allowsHitTesting(false)
                         }
-                        .background(Color(NSColor.textBackgroundColor))
-                        .contentShape(Rectangle())
+
                         if controller.isLoadingDocument {
                             ZStack {
                                 Color.black.opacity(0.08)
@@ -369,11 +398,6 @@ struct ReaderProView: View {
                             }
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .allowsHitTesting(false)
-                        } else if controller.document == nil {
-                            Text("Open or drop a PDF to begin.")
-                                .foregroundStyle(.secondary)
-                                .padding()
-                                .allowsHitTesting(false)
                         }
                     }
                 }
