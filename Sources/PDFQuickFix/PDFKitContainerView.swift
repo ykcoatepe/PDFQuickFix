@@ -41,7 +41,9 @@ struct PDFKitContainerView: NSViewRepresentable {
     func updateNSView(_ nsView: PDFCanvasView, context: Context) {
         let documentChanged = nsView.document !== pdfDocument
         if documentChanged {
+            let sp = PerfLog.begin("PDFViewDocumentSet")
             nsView.document = pdfDocument
+            PerfLog.end("PDFViewDocumentSet", sp)
         }
         nsView.applyPerformanceTuning(isLargeDocument: isLargeDocument,
                                       desiredDisplayMode: displayMode,

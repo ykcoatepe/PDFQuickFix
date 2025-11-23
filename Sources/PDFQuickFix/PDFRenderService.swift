@@ -77,6 +77,8 @@ final class PDFRenderService {
 
         // Fast path: cache hit.
         if let cached = cachedImage(for: request) {
+            let sp = PerfLog.begin("RenderCacheHit")
+            PerfLog.end("RenderCacheHit", sp)
             completion(cached)
             return
         }

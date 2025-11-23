@@ -97,6 +97,8 @@ enum PDFDocumentSanitizer {
                                   completion: @escaping (Result<PDFDocument, Error>) -> Void) -> Job {
         let job = Job()
         sanitizerQueue.async {
+            let sp = PerfLog.begin("SanitizerOpen")
+            defer { PerfLog.end("SanitizerOpen", sp) }
             guard !job.isCancelled else { return }
             do {
                 guard let doc = PDFDocument(url: url) else {

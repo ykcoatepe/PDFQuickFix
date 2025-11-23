@@ -33,6 +33,12 @@ final class DocumentValidationRunner: ObservableObject {
                           pageLimit: Int?,
                           progress: ((Int, Int) -> Void)? = nil,
                           completion: @escaping (Result<PDFDocument, Error>) -> Void) -> UUID {
+        let name: StaticString = (pageLimit != nil) ? "ValidationQuick" : "ValidationFull"
+        let sp = PerfLog.begin(name)
+        let wrappedCompletion: (Result<PDFDocument, Error>) -> Void = { result in
+            PerfLog.end(name, sp)
+            completion(result)
+        }
         let options: PDFDocumentSanitizer.Options
         if let pageLimit {
             options = PDFDocumentSanitizer.Options(rebuildMode: .never,
@@ -42,7 +48,7 @@ final class DocumentValidationRunner: ObservableObject {
         } else {
             options = PDFDocumentSanitizer.Options(rebuildMode: .never, validationPageLimit: nil)
         }
-        return start(kind: .validation, url: url, options: options, progress: progress, completion: completion)
+        return start(kind: .validation, url: url, options: options, progress: progress, completion: wrappedCompletion)
     }
 
     func cancelOpen() {

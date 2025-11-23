@@ -2,6 +2,7 @@ import Foundation
 import PDFKit
 import AppKit
 import CoreGraphics
+import os.log
 
 struct PageSnapshot: Identifiable, Hashable {
     let id: Int
@@ -96,6 +97,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
     private let largeDocumentPageThreshold = DocumentValidationRunner.largeDocumentPageThreshold
     private enum ValidationMode { case idle, quick, full }
     private var validationMode: ValidationMode = .idle
+    private var studioOpenSignpost: OSSignpostID?
 
     deinit {
         NotificationCenter.default.removeObserver(self)
@@ -119,6 +121,8 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
     }
     
     @objc private func handlePageChange(_ notification: Notification) {
+        let sp = PerfLog.begin("StudioPageChanged")
+        defer { PerfLog.end("StudioPageChanged", sp) }
         guard let pdfView = notification.object as? PDFView,
               let page = pdfView.currentPage,
               let doc = document else { return }
@@ -131,6 +135,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
         validationRunner.cancelOpen()
         isDocumentLoading = true
         loadingStatus = "Opening \(url.lastPathComponent)…"
+        studioOpenSignpost = PerfLog.begin("StudioOpen")
 
         validationRunner.openDocument(at: url,
                                       quickValidationPageLimit: 0,
@@ -154,9 +159,8 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
     }
 
     private func finishOpen(document newDocument: PDFDocument, url: URL) {
-        let signpostID = PerfLog.begin("StudioOpen")
-        defer { PerfLog.end("StudioOpen", signpostID) }
-        
+        let sp = PerfLog.begin("StudioFinishOpen")
+        defer { PerfLog.end("StudioFinishOpen", sp) }
         document = newDocument
         currentURL = url
         isLargeDocument = newDocument.pageCount > largeDocumentPageThreshold
@@ -176,9 +180,18 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
         if !shouldSkipAutoValidation {
             scheduleValidation(for: url, pageLimit: 10, mode: .quick)
         }
+
+        if let openSP = studioOpenSignpost {
+            PerfLog.end("StudioOpen", openSP)
+            studioOpenSignpost = nil
+        }
     }
 
     private func handleOpenError(_ error: Error) {
+        if let openSP = studioOpenSignpost {
+            PerfLog.end("StudioOpen", openSP)
+            studioOpenSignpost = nil
+        }
         document = nil
         pdfView?.document = nil
         currentURL = nil
@@ -650,6 +663,8 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
     func ensureThumbnail(for index: Int) {
         guard let document else { return }
         guard index >= 0 && index < document.pageCount else { return }
+        let sp = PerfLog.begin("StudioEnsureThumbnail")
+        defer { PerfLog.end("StudioEnsureThumbnail", sp) }
         let key = NSNumber(value: index)
         if let cached = thumbnailCache.object(forKey: key) {
             updateSnapshot(at: index, thumbnail: cached)
@@ -711,6 +726,8 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
                             window: Int = 2,
                             farWindow: Int = 6) {
         guard let doc = document else { return }
+        let sp = PerfLog.begin("StudioPrefetch")
+        defer { PerfLog.end("StudioPrefetch", sp) }
         let count = doc.pageCount
         guard count > 0 else { return }
 

@@ -39,6 +39,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFViewDelegate {
         validationRunner.cancelOpen()
         isLoadingDocument = true
         loadingStatus = "Opening \(url.lastPathComponent)…"
+        let readerOpenSP = PerfLog.begin("ReaderOpen")
 
         validationRunner.openDocument(at: url,
                                       quickValidationPageLimit: 0,
@@ -55,13 +56,17 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFViewDelegate {
                                           switch result {
                                           case .success(let doc):
                                               self.finishOpen(document: doc, url: url)
+                                              PerfLog.end("ReaderOpen", readerOpenSP)
                                           case .failure(let error):
                                               self.handleOpenError(error)
+                                              PerfLog.end("ReaderOpen", readerOpenSP)
                                           }
                                       })
     }
 
     private func finishOpen(document newDocument: PDFDocument, url: URL) {
+        let sp = PerfLog.begin("ReaderApplyDocument")
+        defer { PerfLog.end("ReaderApplyDocument", sp) }
         currentURL = url
         document = newDocument
         isLargeDocument = newDocument.pageCount > largeDocumentPageThreshold
