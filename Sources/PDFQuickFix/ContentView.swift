@@ -6,6 +6,8 @@ struct ContentView: View {
         TabView {
             QuickFixTab()
                 .tabItem { Label("QuickFix", systemImage: "wand.and.rays") }
+            SplitView()
+                .tabItem { Label("Split", systemImage: "square.split.2x1") }
             ReaderProView()
                 .tabItem { Label("Reader", systemImage: "doc.text.magnifyingglass") }
             StudioView()
