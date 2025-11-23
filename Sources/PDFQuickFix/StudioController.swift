@@ -99,6 +99,9 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
     private enum ValidationMode { case idle, quick, full }
     private var validationMode: ValidationMode = .idle
     private var studioOpenSignpost: OSSignpostID?
+    #if DEBUG
+    private var studioOpenStart: Date?
+    #endif
 
     deinit {
         NotificationCenter.default.removeObserver(self)
@@ -137,6 +140,10 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
         isDocumentLoading = true
         loadingStatus = "Opening \(url.lastPathComponent)…"
         studioOpenSignpost = PerfLog.begin("StudioOpen")
+        #if DEBUG
+        PerfMetrics.shared.reset()
+        studioOpenStart = Date()
+        #endif
 
         validationRunner.openDocument(at: url,
                                       quickValidationPageLimit: 0,
@@ -202,6 +209,14 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
             PerfLog.end("StudioOpen", openSP)
             studioOpenSignpost = nil
         }
+        #if DEBUG
+        if let start = studioOpenStart {
+            let duration = Date().timeIntervalSince(start)
+            PerfMetrics.shared.recordStudioOpen(duration: duration)
+            NSLog("%@", PerfMetrics.shared.summaryString())
+            studioOpenStart = nil
+        }
+        #endif
     }
 
     private func handleOpenError(_ error: Error) {

@@ -40,6 +40,9 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFViewDelegate {
         isLoadingDocument = true
         loadingStatus = "Opening \(url.lastPathComponent)…"
         let readerOpenSP = PerfLog.begin("ReaderOpen")
+        #if DEBUG
+        let openStart = Date()
+        #endif
 
         let massiveThreshold = DocumentValidationRunner.massiveDocumentPageThreshold
 
@@ -63,6 +66,10 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFViewDelegate {
                     self.loadingStatus = nil
                     self.isLoadingDocument = false
                     self.finishOpen(document: rawDoc, url: url)
+                    #if DEBUG
+                    let duration = Date().timeIntervalSince(openStart)
+                    PerfMetrics.shared.recordReaderOpen(duration: duration)
+                    #endif
                     PerfLog.end("ReaderOpen", readerOpenSP)
                 }
             } else {
@@ -82,6 +89,10 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFViewDelegate {
                                                           switch result {
                                                           case .success(let doc):
                                                               self.finishOpen(document: doc, url: url)
+                                                              #if DEBUG
+                                                              let duration = Date().timeIntervalSince(openStart)
+                                                              PerfMetrics.shared.recordReaderOpen(duration: duration)
+                                                              #endif
                                                               PerfLog.end("ReaderOpen", readerOpenSP)
                                                           case .failure(let error):
                                                               self.handleOpenError(error)

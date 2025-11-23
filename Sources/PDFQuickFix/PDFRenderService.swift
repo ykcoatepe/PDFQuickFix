@@ -79,9 +79,17 @@ final class PDFRenderService {
         if let cached = cachedImage(for: request) {
             let sp = PerfLog.begin("RenderCacheHit")
             PerfLog.end("RenderCacheHit", sp)
+            #if DEBUG
+            PerfMetrics.shared.recordThumbnailRequest()
+            PerfMetrics.shared.recordThumbnailCacheHit()
+            #endif
             completion(cached)
             return
         }
+
+        #if DEBUG
+        PerfMetrics.shared.recordThumbnailRequest()
+        #endif
 
         // Cancel any older lower-priority operation for the same request.
         lock.lock()
@@ -100,6 +108,9 @@ final class PDFRenderService {
             PerfLog.end("RenderThumbnail", signpostID)
             if let image {
                 self.cache.setObject(image, forKey: box)
+                #if DEBUG
+                PerfMetrics.shared.recordThumbnailRender()
+                #endif
             }
             DispatchQueue.main.async {
                 completion(image)

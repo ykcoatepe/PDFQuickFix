@@ -49,3 +49,33 @@ A local, on‑device macOS app that **reads & annotates PDFs**, **redacts sensit
 - Template packs for aviation and finance docs
 
 MIT license for the starter. Verify outputs for your compliance needs.
+## Profiling large PDFs
+
+In Debug builds the app emits signposts and basic performance metrics.
+
+- Use Instruments (Points of Interest or System Trace) and filter for the subsystem `com.pdfquickfix` and signpost names like:
+  - `SanitizerOpen`
+  - `ValidationQuick` / `ValidationFull`
+  - `ReaderOpen`
+  - `ReaderApplyDocument`
+  - `StudioOpen`
+  - `StudioFinishOpen`
+  - `RenderThumbnail`
+  - `RenderCacheHit`
+  - `StudioEnsureThumbnail`
+  - `StudioPrefetch`
+  - `StudioPageChanged`
+  - `PDFViewDocumentSet`
+
+- When you open a document in the Reader/Studio (Debug), the console prints a summary like:
+
+  ```text
+  [PerfMetrics]
+  thumbnails requested: 320
+  thumbnails rendered:  280
+  thumbnail cache hits: 40
+  reader open avg:      85.2 ms (3 samples)
+  studio open avg:      120.5 ms (3 samples)
+  ```
+
+Use this to compare branches and track regressions when working on large-document performance.
