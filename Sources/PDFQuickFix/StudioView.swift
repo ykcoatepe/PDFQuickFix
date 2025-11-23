@@ -144,8 +144,10 @@ struct StudioView: View {
                                 .background(Color(NSColor.underPageBackgroundColor))
                         }
                     }
-                    FullscreenPDFDropView { url in
-                        controller.open(url: url)
+                    if !controller.isMassiveDocument {
+                        FullscreenPDFDropView { url in
+                            controller.open(url: url)
+                        }
                     }
                 }
 

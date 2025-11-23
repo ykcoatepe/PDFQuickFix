@@ -401,8 +401,10 @@ struct ReaderProView: View {
                         }
                     }
                 }
-                FullscreenPDFDropView { url in
-                    droppedURL = url
+                if !controller.isMassiveDocument {
+                    FullscreenPDFDropView { url in
+                        droppedURL = url
+                    }
                 }
             }
         }
