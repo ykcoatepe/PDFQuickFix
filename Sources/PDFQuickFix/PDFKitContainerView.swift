@@ -2,23 +2,52 @@ import SwiftUI
 import PDFKit
 import AppKit
 
+enum AnnotationTool {
+    case select
+    case note
+    case rect
+    case highlightSelection
+    case stamp
+    case redactBox
+}
+
+extension Notification.Name {
+    static let PDFQuickFixJumpToSelection = Notification.Name("PDFQuickFixJumpToSelection")
+}
+
 struct PDFKitContainerView: NSViewRepresentable {
     @Binding var pdfDocument: PDFDocument?
     @Binding var tool: AnnotationTool
     @Binding var signatureImage: NSImage?
     @Binding var manualRedactions: [Int:[CGRect]]
+    var isLargeDocument: Bool
+    @Binding var displayMode: PDFDisplayMode
+    var didCreate: ((PDFCanvasView) -> Void)? = nil
     
     func makeNSView(context: Context) -> PDFCanvasView {
         let v = PDFCanvasView()
         v.autoScales = true
-        v.displayMode = .singlePageContinuous
+        v.displayMode = displayMode
         v.displaysPageBreaks = true
         v.backgroundColor = .windowBackgroundColor
+        v.enableDataDetectors = false
         v.delegateProxy = context.coordinator
+        v.applyPerformanceTuning(isLargeDocument: isLargeDocument,
+                                 desiredDisplayMode: displayMode,
+                                 resetScale: true)
+        didCreate?(v)
         return v
     }
     func updateNSView(_ nsView: PDFCanvasView, context: Context) {
-        nsView.document = pdfDocument
+        let documentChanged = nsView.document !== pdfDocument
+        if documentChanged {
+            let sp = PerfLog.begin("PDFViewDocumentSet")
+            nsView.document = pdfDocument
+            PerfLog.end("PDFViewDocumentSet", sp)
+        }
+        nsView.applyPerformanceTuning(isLargeDocument: isLargeDocument,
+                                      desiredDisplayMode: displayMode,
+                                      resetScale: documentChanged)
         nsView.currentTool = tool
         nsView.signatureImage = signatureImage
         nsView.manualRedactionsBinding = $manualRedactions
@@ -32,6 +61,92 @@ struct PDFKitContainerView: NSViewRepresentable {
             view.go(to: selection)
             view.setCurrentSelection(selection, animate: true)
         }
+    }
+}
+
+extension PDFView {
+    /// Keeps PDFView responsive when dealing with very large documents by reducing layout and scaling work.
+    func applyPerformanceTuning(isLargeDocument: Bool,
+                                desiredDisplayMode: PDFDisplayMode,
+                                resetScale: Bool) {
+        displayDirection = .vertical
+        displaysPageBreaks = !isLargeDocument
+
+        let modeToApply: PDFDisplayMode = isLargeDocument ? .singlePage : desiredDisplayMode
+        if displayMode != modeToApply {
+            displayMode = modeToApply
+        }
+
+        // Tests construct a bare PDFView (zero-sized) before attaching to a window.
+        // When bounds are empty, PDFKit reports a scaleFactorForSizeToFit of 0, which
+        // then gets clamped to the default 0.1 scale and fails expectations. Give the
+        // view a minimal, page-sized frame so fitting math can produce a real value.
+        if resetScale,
+           (bounds.width == 0 || bounds.height == 0),
+           let page = document?.page(at: 0) {
+            let box = page.bounds(for: .mediaBox)
+            let fallbackSize = CGSize(width: max(box.width, 1),
+                                      height: max(box.height, 1))
+            setFrameSize(fallbackSize)
+            layoutSubtreeIfNeeded()
+        }
+
+        if isLargeDocument {
+            autoScales = false
+            guard resetScale, document != nil else { return }
+            let fitScale = scaleFactorForSizeToFit
+            minScaleFactor = fitScale
+            maxScaleFactor = max(maxScaleFactor, fitScale * 2)
+            scaleFactor = fitScale
+        } else {
+            autoScales = true
+            guard resetScale, document != nil else { return }
+            scaleFactor = scaleFactorForSizeToFit
+        }
+    }
+}
+
+final class ImageStampAnnotation: PDFAnnotation {
+    private let signatureImage: NSImage
+    private static let imageKey = "ImageStampAnnotationData"
+    
+    init(bounds: CGRect, image: NSImage) {
+        self.signatureImage = image
+        super.init(bounds: bounds, forType: .stamp, withProperties: nil)
+        self.color = .clear
+    }
+    
+    required init?(coder: NSCoder) {
+        guard
+            let data = coder.decodeObject(forKey: Self.imageKey) as? Data,
+            let image = NSImage(data: data)
+        else {
+            return nil
+        }
+        self.signatureImage = image
+        super.init(coder: coder)
+    }
+    
+    override func encode(with coder: NSCoder) {
+        super.encode(with: coder)
+        if let data = signatureImage.tiffRepresentation {
+            coder.encode(data, forKey: Self.imageKey)
+        }
+    }
+    
+    override func draw(with box: PDFDisplayBox, in context: CGContext) {
+        super.draw(with: box, in: context)
+        guard let cgImage = signatureImage.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
+        context.saveGState()
+        context.draw(cgImage, in: bounds)
+        context.restoreGState()
+    }
+    
+    override func copy(with zone: NSZone? = nil) -> Any {
+        let copy = ImageStampAnnotation(bounds: bounds, image: signatureImage)
+        copy.border = border
+        copy.color = color
+        return copy
     }
 }
 
@@ -50,6 +165,9 @@ final class PDFCanvasView: PDFView {
         NotificationCenter.default.addObserver(self, selector: #selector(onJumpToSelection(_:)), name: .PDFQuickFixJumpToSelection, object: nil)
     }
     required init?(coder: NSCoder) { fatalError() }
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
     
     @objc private func onJumpToSelection(_ n: Notification) {
         guard let sel = n.object as? PDFSelection else { return }
@@ -94,9 +212,7 @@ final class PDFCanvasView: PDFView {
                 let w: CGFloat = 180
                 let aspect = img.size.height / img.size.width
                 let rect = CGRect(x: pagePoint.x - w/2, y: pagePoint.y - w*aspect/2, width: w, height: w*aspect)
-                let ann = PDFAnnotation(bounds: rect, forType: .stamp, withProperties: nil)
-                ann.image = img
-                ann.color = .clear
+                let ann = ImageStampAnnotation(bounds: rect, image: img)
                 page.addAnnotation(ann)
             }
         case .redactBox:

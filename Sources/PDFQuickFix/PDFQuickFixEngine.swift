@@ -22,8 +22,13 @@ final class PDFQuickFixEngine {
                  findReplace: [FindReplaceRule] = [],
                  manualRedactions: [Int:[CGRect]] = [:]) throws -> URL {
         
-        guard let doc = PDFDocument(url: inputURL) else {
-            throw NSError(domain: "PDFQuickFix", code: -1, userInfo: [NSLocalizedDescriptionKey: "Unable to open PDF"])
+        let doc: PDFDocument
+        do {
+            // Load without rebuilding, as the engine will process/rasterize pages anyway.
+            let loadOptions = PDFDocumentSanitizer.Options(rebuildMode: .never, sanitizeAnnotations: false, sanitizeOutline: false)
+            doc = try PDFDocumentSanitizer.loadDocument(at: inputURL, options: loadOptions)
+        } catch {
+            throw NSError(domain: "PDFQuickFix", code: -1, userInfo: [NSLocalizedDescriptionKey: error.localizedDescription])
         }
         let outURL: URL = outputURL ?? inputURL.deletingPathExtension().appendingPathExtension("fixed.pdf")
         
@@ -91,15 +96,27 @@ final class PDFQuickFixEngine {
         // Build redaction rectangles and replacement runs
         let allRegexes = redactionPatterns.map { $0.regex } + customRegexes
         
+        let scaleX = CGFloat(widthPx) / mediaBox.width
+        let scaleY = CGFloat(heightPx) / mediaBox.height
         var redactionRectsPx: [CGRect] = []
         var replacementRunsPx: [(rect: CGRect, replacement: String)] = []
         var textRuns: [RecognizedRun] = []
         
+        for rect in manualRedactions {
+            let converted = CGRect(
+                x: rect.origin.x * scaleX,
+                y: rect.origin.y * scaleY,
+                width: rect.size.width * scaleX,
+                height: rect.size.height * scaleY
+            )
+            redactionRectsPx.append(converted)
+        }
+        
         for ob in textObservations {
             guard let best = ob.topCandidates(1).first else { continue }
             let text = best.string
-            let nsText = text as NSString
-            let fullRange = NSRange(location: 0, length: nsText.length)
+            let textLength = text.utf16.count
+            let fullRange = NSRange(location: 0, length: textLength)
             
             // ranges for redactions
             var redactionRanges: [NSRange] = []
@@ -125,18 +142,19 @@ final class PDFQuickFixEngine {
             var cursor = 0
             var special: [(start: Int, end: Int, kind: RecognizedRun.Kind)] = []
             special += redactionRanges.map { ( $0.location, $0.location+$0.length, .skip ) }
-            special += replacements.map { ( $0.range.location, $0.range.location+$0.range.length, .replace(ruleReplacement(text: nsText.substring(with: $0.range), repl: $0.replacement)) ) }
+            special += replacements.map { ( $0.range.location, $0.range.location+$0.range.length, .replace(ruleReplacement(text: substring(forRange: $0.range, in: text), repl: $0.replacement)) ) }
             special.sort { $0.start < $1.start }
             
             var segments: [(start: Int, end: Int, kind: RecognizedRun.Kind)] = []
             var idx = 0
-            while cursor < nsText.length {
+            while cursor < textLength {
                 if idx < special.count {
                     let s = special[idx].start
                     let e = special[idx].end
                     let kind = special[idx].kind
                     if s > cursor {
-                        let substr = nsText.substring(with: NSRange(location: cursor, length: s - cursor))
+                        let substrRange = NSRange(location: cursor, length: s - cursor)
+                        let substr = substring(forRange: substrRange, in: text)
                         segments.append((cursor, s, .keep(substr)))
                         cursor = s
                     } else {
@@ -145,17 +163,18 @@ final class PDFQuickFixEngine {
                         idx += 1
                     }
                 } else {
-                    let substr = nsText.substring(with: NSRange(location: cursor, length: nsText.length - cursor))
-                    segments.append((cursor, nsText.length, .keep(substr)))
-                    cursor = nsText.length
+                    let substrRange = NSRange(location: cursor, length: textLength - cursor)
+                    let substr = substring(forRange: substrRange, in: text)
+                    segments.append((cursor, textLength, .keep(substr)))
+                    cursor = textLength
                 }
             }
             
             // Convert segments to runs with rectangles
             for seg in segments {
-                let r = NSRange(location: seg.start, length: seg.end - seg.start)
-                if let box = try? best.boundingBox(for: r) {
-                    let rectPx = visionRectToPixelRect(box, imageSize: CGSize(width: baseImage.width, height: baseImage.height))
+                    let r = NSRange(location: seg.start, length: seg.end - seg.start)
+                if let range = Range(r, in: text), let box = try? best.boundingBox(for: range) {
+                    let rectPx = visionRectToPixelRect(box.boundingBox, imageSize: CGSize(width: baseImage.width, height: baseImage.height))
                     switch seg.kind {
                     case .skip:
                         let padded = rectPx.insetBy(dx: -options.redactionPadding, dy: -options.redactionPadding)
@@ -184,16 +203,6 @@ final class PDFQuickFixEngine {
         // redact
         editCtx.setFillColor(NSColor.black.cgColor)
         for r in redactionRectsPx { editCtx.fill(r) }
-        // manual redactions in points -> convert to pixels and fill
-        for rp in manualRedactions {
-            let rpx = CGRect(
-                x: pointsToPixels(rp.origin.x, dpi: options.dpi),
-                y: pointsToPixels(rp.origin.y, dpi: options.dpi),
-                width: pointsToPixels(rp.size.width, dpi: options.dpi),
-                height: pointsToPixels(rp.size.height, dpi: options.dpi)
-            )
-            editCtx.fill(rpx)
-        }
         
         // replace (white out then draw text)
         for run in replacementRunsPx {
@@ -242,7 +251,12 @@ final class PDFQuickFixEngine {
     private func ruleReplacement(text: String, repl: String) -> String {
         return repl // basic: ignore capture groups; could extend.
     }
-    
+
+    private func substring(forRange range: NSRange, in text: String) -> String {
+        guard let swiftRange = Range(range, in: text) else { return "" }
+        return String(text[swiftRange])
+    }
+
     private func recognizeText(cgImage: CGImage) throws -> [VNRecognizedTextObservation] {
         let request = VNRecognizeTextRequest()
         request.minimumTextHeight = 0.01
@@ -268,7 +282,7 @@ final class PDFQuickFixEngine {
         }
         
         for page in pages {
-            var box = CGRect(origin: .zero, size: page.pageSizePoints)
+            let box = CGRect(origin: .zero, size: page.pageSizePoints)
             pdfCtx.beginPDFPage([kCGPDFContextMediaBox as String: box] as CFDictionary)
             // draw raster page
             pdfCtx.draw(page.cgImage, in: box)

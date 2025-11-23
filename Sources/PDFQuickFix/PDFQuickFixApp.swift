@@ -2,6 +2,10 @@ import SwiftUI
 
 @main
 struct PDFQuickFixApp: App {
+    init() {
+        PDFKitWorkarounds.install()
+    }
+    
     var body: some Scene {
         WindowGroup {
             ContentView()
