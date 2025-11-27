@@ -139,6 +139,11 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFViewDelegate {
         if !isMassive && !shouldSkipAutoValidation {
             scheduleValidation(for: url, pageLimit: 10, mode: .quick)
         }
+        
+        // Add to Recent Files
+        DispatchQueue.main.async {
+            RecentFilesManager.shared.add(url: url, pageCount: newDocument.pageCount)
+        }
     }
 
     private func handleOpenError(_ error: Error) {
@@ -349,6 +354,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFViewDelegate {
 }
 
 struct ReaderProView: View {
+    @Binding var selectedTab: AppMode
     @StateObject private var controller = ReaderControllerPro()
     @State private var quickFixPresented = false
     @State private var lastOpenedURL: URL?
@@ -358,10 +364,20 @@ struct ReaderProView: View {
     @State private var userPassword = ""
     @State private var ownerPassword = ""
     
+    // Computed profile based on current document
+    private var profile: DocumentProfile {
+        if let doc = controller.document {
+            return DocumentProfile.from(pageCount: doc.pageCount)
+        }
+        return .empty
+    }
+    
     var body: some View {
         ReaderShellView(controller: controller,
                         quickFixPresented: $quickFixPresented,
-                        showEncrypt: $showEncrypt)
+                        showEncrypt: $showEncrypt,
+                        profile: profile,
+                        selectedTab: $selectedTab)
             .onDrop(of: [.fileURL, .url, .pdf], delegate: PDFURLDropDelegate { url in
                 droppedURL = url
             })
@@ -432,37 +448,42 @@ struct ReaderShellView: View {
     @ObservedObject var controller: ReaderControllerPro
     @Binding var quickFixPresented: Bool
     @Binding var showEncrypt: Bool
-    
-    // Computed profile based on current document
-    private var profile: DocumentProfile {
-        if let doc = controller.document {
-            return DocumentProfile.from(pageCount: doc.pageCount)
-        }
-        return .empty
-    }
-    
-    @State private var showRightPanel = false
+    let profile: DocumentProfile
+    @Binding var selectedTab: AppMode
     
     var body: some View {
         VStack(spacing: 0) {
+            // 1. Unified Toolbar
             ReaderToolbar(controller: controller,
                           profile: profile,
+                          selectedTab: $selectedTab,
                           quickFixPresented: $quickFixPresented,
                           showEncrypt: $showEncrypt)
+                .frame(height: 44)
+                .zIndex(1)
             
+            // 2. Main Content Area
             HStack(spacing: 0) {
-                // Left Sidebar
+                // Left Sidebar (Thumbnails / Outline)
                 if controller.isSidebarVisible {
                     ReaderSidebarLeft(controller: controller, profile: profile)
                         .frame(width: 260)
                         .transition(.move(edge: .leading))
+                    
+                    Divider()
                 }
                 
-                Divider()
-                
-                // Canvas
-                ReaderCanvas(controller: controller, profile: profile)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // Center Canvas
+                // Center Canvas or Home View
+                if controller.document != nil {
+                    ReaderCanvas(controller: controller, profile: profile)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(Color(NSColor.windowBackgroundColor))
+                } else {
+                    ReaderHomeView(controller: controller)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(Color(NSColor.windowBackgroundColor))
+                }
                 
                 // Right Sidebar (Slide-in)
                 if controller.isRightPanelVisible {
@@ -485,8 +506,7 @@ extension ReaderControllerPro {
     // Since ReaderControllerPro is a class, we can't easily add @Published via extension.
     // Let's assume we modify ReaderControllerPro to include isRightPanelVisible.
     // For this refactor, I will add a computed property wrapper or assume it exists.
-    // Actually, let's add it to the controller class definition in the same file if possible,
-    // or use a separate state in ShellView if we can't modify the controller easily.
+    // Actually, let's add it to the controller class in the file.
     // But the toolbar needs to toggle it.
     // Let's add it to the controller class in the file.
 }
@@ -496,138 +516,127 @@ extension ReaderControllerPro {
 struct ReaderToolbar: View {
     @ObservedObject var controller: ReaderControllerPro
     let profile: DocumentProfile
+    @Binding var selectedTab: AppMode
     @Binding var quickFixPresented: Bool
     @Binding var showEncrypt: Bool
     
     var body: some View {
-        HStack(spacing: 16) {
-            // ... (keep existing content until button)
-            // Left: Back / Title
-            HStack(spacing: 8) {
-                if let url = controller.currentURL {
-                    Image(systemName: "doc.text")
-                        .foregroundStyle(.secondary)
-                    Text(url.lastPathComponent)
-                        .font(.headline)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                } else {
-                    Text("PDFQuickFix")
-                        .font(.headline)
-                }
-            }
+        ZStack {
+            // Center: Mode Switcher
+            AppModeSwitcher(currentMode: $selectedTab)
             
-            Spacer()
-            
-            // Center: View Controls
-            HStack(spacing: 12) {
-                // Zoom
-                HStack(spacing: 0) {
-                    Button(action: { controller.pdfView?.zoomOut(nil) }) {
-                        Image(systemName: "minus")
+            // Left & Right Controls
+            HStack(spacing: 0) { // Removed spacing here, will use spacers inside groups
+                // Left Controls Group
+                HStack(spacing: 16) {
+                    // Document Navigation
+                    HStack(spacing: 0) {
+                        Button(action: { controller.pdfView?.goToPreviousPage(nil) }) {
+                            Image(systemName: "chevron.left")
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(controller.document == nil)
+                        
+                        Button(action: { controller.pdfView?.goToNextPage(nil) }) {
+                            Image(systemName: "chevron.right")
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(controller.document == nil)
                     }
-                    .buttonStyle(.plain)
-                    .frame(width: 24, height: 24)
                     
                     Text(zoomPercentage)
-                        .font(.caption.monospacedDigit())
-                        .frame(width: 48)
-                        .multilineTextAlignment(.center)
+                        .font(.subheadline)
+                        .monospacedDigit()
+                        .frame(width: 45)
                     
-                    Button(action: { controller.pdfView?.zoomIn(nil) }) {
-                        Image(systemName: "plus")
-                    }
-                    .buttonStyle(.plain)
-                    .frame(width: 24, height: 24)
-                }
-                .background(Color(NSColor.controlBackgroundColor))
-                .cornerRadius(6)
-                
-                // Page Nav
-                HStack(spacing: 4) {
-                    Text("Page")
-                        .foregroundStyle(.secondary)
-                    TextField("Page", value: $controller.currentPageIndex, formatter: NumberFormatter())
-                        .textFieldStyle(.plain)
-                        .font(.body.monospacedDigit())
-                        .multilineTextAlignment(.center)
-                        .frame(width: 32)
-                        .onSubmit {
-                            if let doc = controller.document,
-                               let page = doc.page(at: controller.currentPageIndex) {
-                                controller.pdfView?.go(to: page)
-                            }
-                        }
-                    Text("/ \(controller.document?.pageCount ?? 0)")
-                        .foregroundStyle(.secondary)
-                }
-                .font(.subheadline)
-            }
-            
-            Spacer()
-            
-            // Right: Tools & Massive Mode Badge
-            HStack(spacing: 12) {
-                if profile.isMassive {
                     HStack(spacing: 4) {
-                        Circle().fill(Color.orange).frame(width: 6, height: 6)
-                        Text("Performance Mode")
-                            .font(.caption)
-                            .fontWeight(.medium)
+                        Text("Page")
+                        TextField("", value: pageBinding, formatter: NumberFormatter())
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 48)
+                            .multilineTextAlignment(.center)
+                            .onSubmit {
+                                let target = max(pageBinding.wrappedValue - 1, 0)
+                                if let page = controller.document?.page(at: target) {
+                                    controller.pdfView?.go(to: page)
+                                }
+                            }
+                            .disabled(controller.document == nil)
+                        Text("/ \(controller.document?.pageCount ?? 0)")
+                            .foregroundStyle(.secondary)
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color.orange.opacity(0.1))
-                    .cornerRadius(12)
-                    .help("Search and thumbnails are limited for performance.")
+                    .font(.subheadline)
                 }
                 
-                if profile.searchEnabled {
-                    HStack(spacing: 6) {
+                Spacer()
+                
+                // Right Controls Group
+                HStack(spacing: 16) {
+                    // Search Bar
+                    HStack {
                         Image(systemName: "magnifyingglass")
                             .foregroundStyle(.secondary)
-                        TextField("Search", text: $controller.searchQuery, onCommit: {
-                            controller.find(controller.searchQuery)
-                            controller.findNext()
-                        })
-                        .textFieldStyle(.plain)
-                        .frame(width: 120)
+                        TextField("Search", text: $controller.searchQuery)
+                            .textFieldStyle(.plain)
+                            .onSubmit {
+                                controller.find(controller.searchQuery)
+                            }
+                            .disabled(controller.document == nil)
                     }
                     .padding(6)
                     .background(Color(NSColor.controlBackgroundColor))
                     .cornerRadius(6)
-                }
+                    .frame(width: 180)
 
-                Button {
-                    quickFixPresented = true
-                } label: {
-                    Image(systemName: "wand.and.stars")
-                }
-                .buttonStyle(.plain)
-                .help("Open QuickFix")
-
-                Button {
-                    showEncrypt = true
-                } label: {
-                    Image(systemName: "lock.doc")
-                }
-                .buttonStyle(.plain)
-                .disabled(controller.document == nil)
-                .help("Encrypt PDF")
-                
-                Button(action: {
-                    withAnimation(.sidebarTransition) {
-                        controller.toggleRightPanel()
+                    // QuickFix
+                    Button {
+                        quickFixPresented = true
+                    } label: {
+                        Image(systemName: "wand.and.stars")
                     }
-                }) {
-                    Image(systemName: "sidebar.right")
+                    .buttonStyle(.plain)
+                    .disabled(controller.document == nil)
+                    .help("Run QuickFix on the open document")
+
+                    // Encrypt
+                    Button {
+                        showEncrypt = true
+                    } label: {
+                        Image(systemName: "lock.doc")
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(controller.document == nil)
+                    .help("Encrypt PDF")
+                    
+                    // Performance Badge
+                    if profile.isMassive {
+                        HStack(spacing: 4) {
+                            Image(systemName: "bolt.fill")
+                        }
+                        .font(.caption)
+                        .padding(6)
+                        .background(Color.orange.opacity(0.2))
+                        .foregroundStyle(.orange)
+                        .cornerRadius(4)
+                        .help("Performance Mode Active")
+                    }
+                    
+                    // Right Sidebar Toggle
+                    Button(action: {
+                        withAnimation {
+                            controller.toggleRightPanel()
+                        }
+                    }) {
+                        Image(systemName: "sidebar.right")
+                            .foregroundStyle(controller.isRightPanelVisible ? .blue : .primary)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(controller.document == nil)
                 }
-                .buttonStyle(.plain)
-                .help("Toggle Info/Comments")
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
         .background(Color(NSColor.windowBackgroundColor))
         .overlay(Divider(), alignment: .bottom)
     }
@@ -636,55 +645,77 @@ struct ReaderToolbar: View {
         guard let scale = controller.pdfView?.scaleFactor else { return "100%" }
         return "\(Int(scale * 100))%"
     }
+
+    /// One-based page binding for UI while keeping controller zero-based state.
+    private var pageBinding: Binding<Int> {
+        Binding<Int>(
+            get: {
+                let count = max((controller.document?.pageCount ?? 1), 1)
+                let current = controller.currentPageIndex + 1
+                return min(max(current, 1), count)
+            },
+            set: { newValue in
+                let target = max(newValue - 1, 0)
+                controller.currentPageIndex = target
+                if let page = controller.document?.page(at: target) {
+                    controller.pdfView?.go(to: page)
+                }
+            }
+        )
+    }
 }
 
 // MARK: - Reader Sidebar Left (Pages / Outline)
 struct ReaderSidebarLeft: View {
     @ObservedObject var controller: ReaderControllerPro
     let profile: DocumentProfile
-    @State private var selection: SidebarTab = .pages
-    
-    enum SidebarTab { case pages, outline }
+    @State private var selection: Int = 0
+    @State private var hoveredIndex: Int? = nil
     
     var body: some View {
         VStack(spacing: 0) {
+            // Segmented Control
             Picker("", selection: $selection) {
-                Image(systemName: "square.grid.2x2").tag(SidebarTab.pages)
-                Image(systemName: "list.bullet").tag(SidebarTab.outline)
+                Text("Pages").tag(0)
+                Text("Outline").tag(1)
             }
             .pickerStyle(.segmented)
-            .padding(8)
+            .padding(10)
             
             Divider()
             
-            if selection == .pages {
-                if profile.thumbnailsEnabled {
-                    ThumbnailProRepresentedView(pdfViewGetter: { controller.pdfView })
-                } else {
-                    List(0..<(controller.document?.pageCount ?? 0), id: \.self) { index in
-                        Text("Page \(index + 1)")
-                            .font(.caption)
-                            .onTapGesture {
-                                if let page = controller.document?.page(at: index) {
-                                    controller.pdfView?.go(to: page)
-                                }
-                            }
-                    }
-                }
-            } else {
-                if profile.outlineEnabled {
-                    if let outline = controller.document?.outlineRoot {
-                        OutlineView(root: outline, controller: controller)
-                    } else {
-                        Text("No Outline")
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    }
-                } else {
-                    Text("Outline disabled")
-                        .font(.caption)
+            if controller.document == nil {
+                VStack(spacing: 12) {
+                    Spacer()
+                    Image(systemName: "doc.on.doc")
+                        .font(.largeTitle)
                         .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    Text("No pages yet")
+                        .font(.headline)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity)
+            } else {
+                if selection == 0 {
+                    // Thumbnails
+                    PDFThumbnailViewRepresentable(pdfView: controller.pdfView ?? PDFView())
+                        .background(Color(NSColor.controlBackgroundColor))
+                } else {
+                    // Outline
+                    if let root = controller.document?.outlineRoot {
+                        List {
+                            OutlineNode(node: root, controller: controller)
+                        }
+                        .listStyle(.sidebar)
+                    } else {
+                        VStack {
+                            Spacer()
+                            Text("No Outline Available")
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                        }
+                    }
                 }
             }
         }
@@ -711,71 +742,81 @@ struct OutlineNode: View {
     var body: some View {
         let count = node.numberOfChildren
         if count > 0 {
-            // TODO: Fix OutlineNode recursion
-            Text("Outline Children Placeholder")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .padding(.leading, 10)
+            let children = (0..<count).compactMap { node.child(at: $0) }
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(children, id: \.self) { child in
+                    ReaderOutlineRow(child: child, controller: controller)
+                }
+            }
         }
     }
 }
 
+struct ReaderOutlineRow: View {
+    let child: PDFOutline
+    let controller: ReaderControllerPro
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(child.label ?? "Untitled")
+                .font(.caption)
+                .padding(.leading, CGFloat(child.level) * 10)
+                .padding(.vertical, 4)
+                .padding(.horizontal, 4)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    if let dest = child.destination {
+                        controller.pdfView?.go(to: dest)
+                    }
+                }
+            // Recursive call
+            OutlineNode(node: child, controller: controller)
+        }
+    }
+}
 
 // MARK: - Reader Sidebar Right (Comments / Info)
 struct ReaderSidebarRight: View {
     @ObservedObject var controller: ReaderControllerPro
     let profile: DocumentProfile
-    @State private var selection: RightPanelTab = .info
+    @State private var selectedTab: RightTab = .info
     
-    enum RightPanelTab { case comments, info }
+    enum RightTab { case info, comments }
     
     var body: some View {
         VStack(spacing: 0) {
-            Picker("", selection: $selection) {
-                Text("Info").tag(RightPanelTab.info)
-                Text("Comments").tag(RightPanelTab.comments)
+            Picker("", selection: $selectedTab) {
+                Image(systemName: "info.circle").tag(RightTab.info)
+                Image(systemName: "text.bubble").tag(RightTab.comments)
             }
             .pickerStyle(.segmented)
             .padding(8)
             
             Divider()
             
-            if selection == .info {
+            if selectedTab == .info {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
                         InfoRow(label: "File", value: controller.currentURL?.lastPathComponent ?? "-")
                         InfoRow(label: "Pages", value: "\(controller.document?.pageCount ?? 0)")
-                        InfoRow(label: "Size", value: "Calculating...") // Placeholder
-                        InfoRow(label: "Security", value: controller.document?.isEncrypted == true ? "Encrypted" : "None")
-                        
-                        Divider()
-                        
-                        if let status = controller.validationStatus {
-                            Text("Validation")
-                                .font(.headline)
-                            Text(status)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                        InfoRow(label: "PDF Version", value: "\(controller.document?.majorVersion ?? 1).\(controller.document?.minorVersion ?? 0)")
+                        if let attrs = controller.document?.documentAttributes {
+                            InfoRow(label: "Author", value: attrs["Author"] as? String ?? "-")
+                            InfoRow(label: "Creator", value: attrs["Creator"] as? String ?? "-")
                         }
                     }
                     .padding()
                 }
             } else {
-                if profile.globalAnnotationsEnabled {
-                    Text("Comments List Placeholder")
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    Text("Comments disabled for performance")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
+                Text("No Comments")
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .background(Color(NSColor.controlBackgroundColor))
     }
 }
+
 
 struct InfoRow: View {
     let label: String
@@ -897,5 +938,249 @@ struct ThumbnailProRepresentedView: NSViewRepresentable {
     
     func updateNSView(_ nsView: PDFThumbnailView, context: Context) {
         nsView.pdfView = pdfViewGetter()
+    }
+}
+
+struct ReaderHomeView: View {
+    @ObservedObject var controller: ReaderControllerPro
+    @StateObject private var recentFiles = RecentFilesManager.shared
+    @State private var isDragging = false
+    
+    // Custom Colors - Adjusted to match target lighter grey tones
+    private let bgDark = Color(red: 0.13, green: 0.13, blue: 0.13) // ~#212121
+    private let cardBg = Color(red: 0.2, green: 0.2, blue: 0.2) // ~#333333
+    private let dropZoneStroke = Color(white: 0.25)
+    
+    // Grid layout for recent files (2 columns)
+    private let columns = [
+        GridItem(.flexible(), spacing: 16),
+        GridItem(.flexible(), spacing: 16)
+    ]
+    
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 40) {
+                Spacer()
+                    .frame(height: 60)
+                
+                // Drop Zone
+                Button(action: {
+                    chooseFile()
+                }) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 16)
+                            .stroke(style: StrokeStyle(lineWidth: 2, dash: [10]))
+                            .foregroundStyle(isDragging ? Color.accentColor : dropZoneStroke)
+                            .background(isDragging ? Color.accentColor.opacity(0.1) : Color.clear)
+                        
+                        VStack(spacing: 20) {
+                            Image(systemName: "folder.badge.plus")
+                                .font(.system(size: 64))
+                                .foregroundStyle(.secondary)
+                            
+                            VStack(spacing: 8) {
+                                Text("Drop PDF here")
+                                    .font(.system(size: 24, weight: .bold))
+                                    .foregroundStyle(.white)
+                                Text("or click to browse files")
+                                    .font(.body)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    .frame(height: 320)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .onDrop(of: [.fileURL, .url, .pdf], isTargeted: $isDragging) { providers in
+                    guard let provider = providers.first else { return false }
+                    _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                        if let url = url {
+                            DispatchQueue.main.async {
+                                controller.open(url: url)
+                            }
+                        }
+                    }
+                    return true
+                }
+                
+                // Recent Files
+                if !recentFiles.recentFiles.isEmpty {
+                    VStack(alignment: .leading, spacing: 16) {
+                        HStack {
+                            Text("Recent Files")
+                                .font(.title3)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(.white)
+                            Spacer()
+                            Button("Show All") {
+                                // Action for showing all files
+                            }
+                            .buttonStyle(.link)
+                            .foregroundStyle(.secondary)
+                        }
+                        
+                        LazyVGrid(columns: columns, spacing: 16) {
+                            ForEach(recentFiles.recentFiles.prefix(6)) { file in
+                                Button(action: {
+                                    controller.open(url: file.url)
+                                }) {
+                                    HStack(spacing: 16) {
+                                        // Thumbnail / Icon
+                                        ZStack {
+                                            RoundedRectangle(cornerRadius: 6)
+                                                .fill(Color.white)
+                                                .frame(width: 48, height: 64)
+                                                .shadow(color: .black.opacity(0.1), radius: 2, x: 0, y: 1)
+                                            
+                                            // Simplified content lines (just one block)
+                                            VStack(alignment: .leading, spacing: 4) {
+                                                RoundedRectangle(cornerRadius: 1)
+                                                    .fill(Color.gray.opacity(0.2))
+                                                    .frame(width: 32, height: 4)
+                                                
+                                                RoundedRectangle(cornerRadius: 1)
+                                                    .fill(Color.gray.opacity(0.2))
+                                                    .frame(width: 24, height: 4)
+                                                
+                                                Spacer()
+                                            }
+                                            .padding(8)
+                                        }
+                                        
+                                        // Info
+                                        VStack(alignment: .leading, spacing: 6) {
+                                            Text(file.name)
+                                                .font(.headline)
+                                                .fontWeight(.medium)
+                                                .foregroundStyle(.white)
+                                                .lineLimit(1)
+                                                .truncationMode(.middle)
+                                            
+                                            Text("Last opened: \(file.date.formatted(date: .abbreviated, time: .shortened))")
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        Spacer()
+                                    }
+                                    .padding(16)
+                                    .background(cardBg)
+                                    .cornerRadius(12)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 12)
+                                            .stroke(Color.white.opacity(0.05), lineWidth: 1)
+                                    )
+                                    .shadow(color: .black.opacity(0.2), radius: 4, x: 0, y: 2)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                }
+                
+                Spacer()
+            }
+            .padding(.horizontal)
+            .frame(maxWidth: 800)
+            .frame(maxWidth: .infinity)
+        }
+        .background(bgDark)
+    }
+    
+    private func chooseFile() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.pdf]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        if panel.runModal() == .OK, let url = panel.url {
+            controller.open(url: url)
+        }
+    }
+}
+
+
+// MARK: - Extensions
+
+extension PDFOutline {
+    var level: Int {
+        var lvl = 0
+        var p = parent
+        while p != nil {
+            lvl += 1
+            p = p?.parent
+        }
+        return lvl
+    }
+}
+
+struct PDFThumbnailViewRepresentable: NSViewRepresentable {
+    let pdfView: PDFView
+    
+    func makeNSView(context: Context) -> PDFThumbnailView {
+        let thumbnailView = PDFThumbnailView()
+        thumbnailView.pdfView = pdfView
+        thumbnailView.thumbnailSize = CGSize(width: 60, height: 80)
+
+        thumbnailView.backgroundColor = NSColor.controlBackgroundColor
+        return thumbnailView
+    }
+    
+    func updateNSView(_ nsView: PDFThumbnailView, context: Context) {
+        nsView.pdfView = pdfView
+    }
+}
+
+
+
+struct RecentFile: Identifiable, Codable {
+    var id: UUID = UUID()
+    let url: URL
+    let date: Date
+    let pageCount: Int
+    
+    var name: String {
+        url.lastPathComponent
+    }
+}
+
+class RecentFilesManager: ObservableObject {
+    static let shared = RecentFilesManager()
+    
+    @Published var recentFiles: [RecentFile] = []
+    
+    private let maxRecentFiles = 10
+    private let storageKey = "PDFQuickFix_RecentFiles"
+    
+    private init() {
+        load()
+    }
+    
+    func add(url: URL, pageCount: Int) {
+        // Remove existing entry if present
+        recentFiles.removeAll { $0.url == url }
+        
+        // Add new entry to top
+        let newFile = RecentFile(url: url, date: Date(), pageCount: pageCount)
+        recentFiles.insert(newFile, at: 0)
+        
+        // Trim
+        if recentFiles.count > maxRecentFiles {
+            recentFiles = Array(recentFiles.prefix(maxRecentFiles))
+        }
+        
+        save()
+    }
+    
+    private func save() {
+        if let data = try? JSONEncoder().encode(recentFiles) {
+            UserDefaults.standard.set(data, forKey: storageKey)
+        }
+    }
+    
+    private func load() {
+        if let data = UserDefaults.standard.data(forKey: storageKey),
+           let decoded = try? JSONDecoder().decode([RecentFile].self, from: data) {
+            recentFiles = decoded
+        }
     }
 }
