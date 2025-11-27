@@ -3,6 +3,8 @@ APP := PDFQuickFix
 SCHEME := PDFQuickFix
 DERIVED := build
 PROJECT := $(APP).xcodeproj
+USER ?= $(shell id -un)
+export USER
 
 .PHONY: bootstrap generate build run clean dmg debug release
 

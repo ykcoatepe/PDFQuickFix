@@ -28,6 +28,7 @@ struct SplitView: View {
                 fileSection
                 modeSection
                 destinationSection
+                historySection
                 footer
             }
             .padding(24)
@@ -64,6 +65,45 @@ struct SplitView: View {
             .frame(maxWidth: .infinity, minHeight: 160)
         }
         .cardStyle()
+    }
+
+    private var historySection: some View {
+        Group {
+            if !controller.history.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("History")
+                        .font(.headline)
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(Array(controller.history.suffix(5))) { job in
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(job.sourceDescription)
+                                        .font(.subheadline.weight(.semibold))
+                                    Text("\(job.fileCount) input file(s) → \(job.outputCount) output(s) in \(job.destinationFolder)")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                    Text("\(job.modeDescription) · \(job.date.formatted(date: .abbreviated, time: .shortened))")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                    if let err = job.errorSummary, !err.isEmpty {
+                                        Text("Errors: \(err)")
+                                            .font(.caption2)
+                                            .foregroundColor(.red)
+                                    }
+                                }
+                                .padding(6)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .fill(Color.secondary.opacity(0.06))
+                                )
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 140)
+                }
+                .cardStyle()
+            }
+        }
     }
 
     private var modeSection: some View {
@@ -140,6 +180,17 @@ struct SplitView: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
+            case .outlineChapters:
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Chapters from outline")
+                        .appFont(.body)
+                    Text("Splits at top-level outline entries (chapters).")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    Text("If the PDF has no outline, the split will fail with an error.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .cardStyle()
@@ -165,6 +216,11 @@ struct SplitView: View {
                 Button("Choose…") { chooseDestination() }
                     .buttonStyle(SecondaryButtonStyle())
             }
+
+            Toggle(isOn: $controller.applyToAllPDFsInFolder) {
+                Text("Apply to all PDFs in this folder")
+            }
+            .disabled(controller.sourceURL == nil)
         }
         .cardStyle()
     }

@@ -6,6 +6,7 @@ enum PDFSplitMode {
     case numberOfParts(Int)        // e.g. split into 10 parts
     case explicitBreaks([Int])     // 1-based page indices where a new part starts (must include 1)
     case approxTargetSizeMB(Double)    // approximate target size in megabytes per part
+    case outlineChapters               // split at top-level outline entries
 }
 
 extension PDFSplitter {
@@ -68,9 +69,16 @@ final class PDFSplitter {
             throw PDFSplitError.noPages
         }
 
-        let effectiveMode = try resolvedMode(for: options.mode,
+        let effectiveMode: PDFSplitMode
+        switch options.mode {
+        case .outlineChapters:
+            let breaks = try makeOutlineBreaks(document: sourceDoc, pageCount: pageCount)
+            effectiveMode = .explicitBreaks(breaks)
+        default:
+            effectiveMode = try resolvedMode(for: options.mode,
                                              pageCount: pageCount,
                                              sourceURL: options.sourceURL)
+        }
         let ranges = try makeRanges(pageCount: pageCount, mode: effectiveMode)
         let outputURLs = try writeParts(source: sourceDoc,
                                         ranges: ranges,
@@ -156,6 +164,9 @@ final class PDFSplitter {
         case .approxTargetSizeMB:
             // Should be transformed to maxPagesPerPart before reaching here.
             throw PDFSplitError.invalidMode("approxTargetSizeMB must be resolved before range calculation")
+        case .outlineChapters:
+            // Should be transformed to explicitBreaks before range calculation.
+            throw PDFSplitError.invalidMode("outlineChapters must be resolved before range calculation")
         }
     }
 
@@ -251,5 +262,52 @@ final class PDFSplitter {
         default:
             return mode
         }
+    }
+
+    // MARK: - Outline handling
+
+    private func makeOutlineBreaks(document: PDFDocument, pageCount: Int) throws -> [Int] {
+        guard let root = document.outlineRoot else {
+            throw PDFSplitError.invalidMode("Source document has no outline.")
+        }
+
+        var startPages: [Int] = []
+
+        // Map top-level children to their target page indices.
+        for i in 0..<root.numberOfChildren {
+            guard let child = root.child(at: i) else { continue }
+
+            // Prefer outline destination; fall back to action destination if needed.
+            let destination = child.destination ?? (child.action as? PDFActionGoTo)?.destination
+            guard let page = destination?.page else { continue }
+
+            let idx = document.index(for: page)
+            if idx != NSNotFound {
+                // Store 1-based page numbers.
+                startPages.append(idx + 1)
+            }
+        }
+
+        // Ensure we have at least one start page and that page 1 is included.
+        if startPages.isEmpty {
+            throw PDFSplitError.invalidMode("Outline has no valid page destinations.")
+        }
+
+        // Deduplicate, sort.
+        let uniqueSorted = Array(Set(startPages)).sorted()
+
+        var breaks = uniqueSorted
+        if !breaks.contains(1) {
+            breaks.insert(1, at: 0)
+        }
+
+        // Clamp any breaks beyond the page count.
+        breaks = breaks.filter { $0 >= 1 && $0 <= pageCount }
+
+        if breaks.isEmpty {
+            breaks = [1]
+        }
+
+        return breaks
     }
 }
