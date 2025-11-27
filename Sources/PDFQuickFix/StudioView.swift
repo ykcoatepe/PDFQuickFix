@@ -1,6 +1,7 @@
 import SwiftUI
 import PDFKit
 import UniformTypeIdentifiers
+import Combine
 
 enum StudioTool: String, CaseIterable, Identifiable {
     case organize = "Organize"
@@ -28,6 +29,8 @@ enum StudioTool: String, CaseIterable, Identifiable {
 }
 
 struct StudioView: View {
+    @Binding var selectedTab: AppMode
+    @EnvironmentObject private var documentHub: SharedDocumentHub
     @StateObject private var controller = StudioController()
     @State private var selectedTool: StudioTool = .organize
     @State private var showInspector: Bool = true
@@ -48,6 +51,22 @@ struct StudioView: View {
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
             VStack(spacing: 0) {
+                // Toolbar
+                ZStack {
+                    // Center: Mode Switcher
+                    AppModeSwitcher(currentMode: $selectedTab)
+                    
+                    // Left & Right Controls
+                    HStack {
+                        Spacer()
+                        // Add any right-aligned controls here if needed
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(Color(NSColor.windowBackgroundColor))
+                .overlay(Divider(), alignment: .bottom)
+                
                 toolbar
                 Divider()
                 ZStack {
@@ -236,10 +255,35 @@ struct StudioView: View {
                 controller.open(url: url)
             }
         }
+        .onAppear {
+            syncFromHub()
+        }
+        .onChange(of: documentHub.currentURL) { _ in
+            syncFromHub()
+        }
+        .onChange(of: controller.currentURL) { url in
+            if documentHub.syncEnabled {
+                documentHub.update(url: url, from: .studio)
+            }
+        }
+    }
+
+    private func syncFromHub() {
+        guard documentHub.syncEnabled,
+              documentHub.lastSource == .reader,
+              let target = documentHub.currentURL,
+              controller.currentURL != target else { return }
+        controller.open(url: target)
     }
 
     private var toolbar: some View {
         HStack(spacing: 12) {
+            Toggle(isOn: $documentHub.syncEnabled) {
+                Image(systemName: documentHub.syncEnabled ? "link" : "link.slash")
+            }
+            .toggleStyle(.button)
+            .help(documentHub.syncEnabled ? "Turn off Reader↔Studio sync" : "Turn on Reader↔Studio sync")
+
             HStack(spacing: 0) {
                 Button(action: openFile) {
                     Label("Open", systemImage: "folder")

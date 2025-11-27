@@ -9,6 +9,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFViewDelegate {
     @Published var currentPageIndex: Int = 0
     @Published var searchQuery: String = ""
     @Published var searchMatches: [PDFSelection] = []
+    @Published var currentMatchIndex: Int? = nil
     @Published var isSidebarVisible: Bool = true
     @Published var isRightPanelVisible: Bool = false
     @Published var isProcessing: Bool = false
@@ -29,6 +30,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFViewDelegate {
 
     private var findObserver: NSObjectProtocol?
     private let validationRunner = DocumentValidationRunner()
+    private var searchDebounceWorkItem: DispatchWorkItem?
     private enum ValidationMode { case idle, quick, full }
     private var validationMode: ValidationMode = .idle
     private let largeDocumentPageThreshold = DocumentValidationRunner.largeDocumentPageThreshold
@@ -143,6 +145,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFViewDelegate {
         // Add to Recent Files
         DispatchQueue.main.async {
             RecentFilesManager.shared.add(url: url, pageCount: newDocument.pageCount)
+            NotificationCenter.default.post(name: .readerDidOpenDocument, object: url)
         }
     }
 
@@ -186,7 +189,8 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFViewDelegate {
     
     func find(_ text: String) {
         searchMatches.removeAll()
-        guard let doc = document, !text.isEmpty else { return }
+        currentMatchIndex = nil
+        guard let doc = document, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         if doc.pageCount >= DocumentValidationRunner.massiveDocumentPageThreshold {
             log = "Search disabled for massive documents (too many pages)."
             return
@@ -200,38 +204,51 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFViewDelegate {
         ) { [weak self] note in
             guard let selection = note.userInfo?["PDFDocumentFoundSelection"] as? PDFSelection else { return }
             self?.searchMatches.append(selection)
+            if let idx = self?.searchMatches.indices.last, self?.currentMatchIndex == nil {
+                self?.focusSelection(selection, at: idx)
+            }
         }
         
         doc.cancelFindString()
         doc.beginFindString(text, withOptions: [.caseInsensitive])
     }
+
+    func updateSearchQueryDebounced(_ text: String) {
+        searchDebounceWorkItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            self?.find(text)
+        }
+        searchDebounceWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: item)
+    }
     
-    func focusSelection(_ selection: PDFSelection) {
+    func focusSelection(_ selection: PDFSelection, at index: Int? = nil) {
         selection.color = .yellow.withAlphaComponent(0.35)
         pdfView?.setCurrentSelection(selection, animate: true)
         pdfView?.go(to: selection)
+        currentMatchIndex = index ?? searchMatches.firstIndex(of: selection)
     }
     
     func findNext() {
-        guard let view = pdfView, !searchMatches.isEmpty else { return }
-        if let current = view.currentSelection,
-           let index = searchMatches.firstIndex(of: current),
-           index + 1 < searchMatches.count {
-            focusSelection(searchMatches[index + 1])
-        } else if let first = searchMatches.first {
-            focusSelection(first)
+        guard !searchMatches.isEmpty else { return }
+        let nextIndex: Int
+        if let current = currentMatchIndex {
+            nextIndex = (current + 1) % searchMatches.count
+        } else {
+            nextIndex = 0
         }
+        focusSelection(searchMatches[nextIndex], at: nextIndex)
     }
-    
+
     func findPrev() {
-        guard let view = pdfView, !searchMatches.isEmpty else { return }
-        if let current = view.currentSelection,
-           let index = searchMatches.firstIndex(of: current),
-           index - 1 >= 0 {
-            focusSelection(searchMatches[index - 1])
-        } else if let last = searchMatches.last {
-            focusSelection(last)
+        guard !searchMatches.isEmpty else { return }
+        let prevIndex: Int
+        if let current = currentMatchIndex {
+            prevIndex = (current - 1 + searchMatches.count) % searchMatches.count
+        } else {
+            prevIndex = max(searchMatches.count - 1, 0)
         }
+        focusSelection(searchMatches[prevIndex], at: prevIndex)
     }
     
     // MARK: - Annotations
@@ -354,9 +371,11 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFViewDelegate {
 }
 
 struct ReaderProView: View {
+    @ObservedObject var controller: ReaderControllerPro
     @Binding var selectedTab: AppMode
-    @StateObject private var controller = ReaderControllerPro()
+    @EnvironmentObject private var documentHub: SharedDocumentHub
     @State private var quickFixPresented = false
+    @State private var standaloneQuickFixPresented = false
     @State private var lastOpenedURL: URL?
     @State private var droppedURL: URL?
 
@@ -373,11 +392,13 @@ struct ReaderProView: View {
     }
     
     var body: some View {
-        ReaderShellView(controller: controller,
-                        quickFixPresented: $quickFixPresented,
-                        showEncrypt: $showEncrypt,
-                        profile: profile,
-                        selectedTab: $selectedTab)
+            ReaderShellView(controller: controller,
+                            quickFixPresented: $quickFixPresented,
+                            standaloneQuickFixPresented: $standaloneQuickFixPresented,
+                            showEncrypt: $showEncrypt,
+                            profile: profile,
+                            selectedTab: $selectedTab,
+                            syncEnabled: $documentHub.syncEnabled)
             .onDrop(of: [.fileURL, .url, .pdf], delegate: PDFURLDropDelegate { url in
                 droppedURL = url
             })
@@ -395,6 +416,10 @@ struct ReaderProView: View {
                     }
                 }
                 .frame(minWidth: 720, minHeight: 520)
+            }
+            .sheet(isPresented: $standaloneQuickFixPresented) {
+                QuickFixTab()
+                    .frame(minWidth: 900, minHeight: 620)
             }
             .sheet(isPresented: $showEncrypt) {
                 VStack(alignment: .leading, spacing: 12) {
@@ -414,6 +439,23 @@ struct ReaderProView: View {
                 }
                 .padding(16)
                 .frame(minWidth: 420)
+            }
+            .onAppear {
+                if documentHub.syncEnabled {
+                    documentHub.update(url: controller.currentURL, from: .reader)
+                }
+            }
+            .onChange(of: controller.currentURL) { url in
+                if documentHub.syncEnabled {
+                    documentHub.update(url: url, from: .reader)
+                }
+            }
+            .onChange(of: documentHub.currentURL) { url in
+                guard documentHub.syncEnabled,
+                      documentHub.lastSource == .studio,
+                      let url,
+                      controller.currentURL != url else { return }
+                controller.open(url: url)
             }
     }
     
@@ -443,13 +485,173 @@ struct ReaderProView: View {
     }
 }
 
+struct ReaderHomeView: View {
+    @ObservedObject var controller: ReaderControllerPro
+    @StateObject private var recentFiles = RecentFilesManager.shared
+    @State private var isDragging = false
+    
+    // Custom Colors - Zinc Palette
+    private let bgDark = Color(red: 0.09, green: 0.09, blue: 0.11) // Zinc 950 (#18181B)
+    private let cardBg = Color(red: 0.15, green: 0.15, blue: 0.17) // Zinc 900 (#27272A)
+    private let dropZoneStroke = Color(white: 0.3)
+    
+    // Grid layout for recent files (2 columns)
+    private let columns = [
+        GridItem(.flexible(), spacing: 16),
+        GridItem(.flexible(), spacing: 16)
+    ]
+    
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 40) {
+                Spacer()
+                    .frame(height: 60)
+                
+                // Drop Zone
+                Button(action: {
+                    chooseFile()
+                }) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 16)
+                            .stroke(style: StrokeStyle(lineWidth: 1.5, dash: [8]))
+                            .foregroundStyle(isDragging ? Color.accentColor : dropZoneStroke.opacity(0.5))
+                            .background(isDragging ? Color.accentColor.opacity(0.1) : Color.clear)
+                        
+                        VStack(spacing: 20) {
+                            Image(systemName: "folder.badge.plus")
+                                .font(.system(size: 64))
+                                .foregroundStyle(.secondary)
+                            
+                            VStack(spacing: 8) {
+                                Text("Drop PDF here")
+                                    .font(.system(size: 24, weight: .bold))
+                                    .foregroundStyle(.white)
+                                Text("or click to browse files")
+                                    .font(.body)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    .frame(height: 320)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .onDrop(of: [.fileURL, .url, .pdf], isTargeted: $isDragging) { providers in
+                    guard let provider = providers.first else { return false }
+                    _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                        if let url = url {
+                            DispatchQueue.main.async {
+                                controller.open(url: url)
+                            }
+                        }
+                    }
+                    return true
+                }
+                
+                // Recent Files
+                if !recentFiles.recentFiles.isEmpty {
+                    VStack(alignment: .leading, spacing: 16) {
+                        HStack {
+                            Text("Recent Files")
+                                .font(.title3)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(.white)
+                            Spacer()
+                            Button("Show All") {
+                                // Action for showing all files
+                            }
+                            .buttonStyle(.link)
+                            .foregroundStyle(.secondary)
+                        }
+                        
+                        LazyVGrid(columns: columns, spacing: 16) {
+                            ForEach(recentFiles.recentFiles.prefix(6)) { file in
+                                Button(action: {
+                                    controller.open(url: file.url)
+                                }) {
+                                    HStack(spacing: 16) {
+                                        // Thumbnail / Icon
+                                        ZStack {
+                                            RoundedRectangle(cornerRadius: 6)
+                                                .fill(Color(white: 0.95))
+                                                .frame(width: 48, height: 64)
+                                                .shadow(color: .black.opacity(0.2), radius: 2, x: 0, y: 1)
+                                            
+                                            // Simplified content lines
+                                            VStack(alignment: .leading, spacing: 4) {
+                                                RoundedRectangle(cornerRadius: 1)
+                                                    .fill(Color.gray.opacity(0.3))
+                                                    .frame(width: 32, height: 3)
+                                                
+                                                RoundedRectangle(cornerRadius: 1)
+                                                    .fill(Color.gray.opacity(0.3))
+                                                    .frame(width: 24, height: 3)
+                                                
+                                                Spacer()
+                                            }
+                                            .padding(8)
+                                        }
+                                        
+                                        // Info
+                                        VStack(alignment: .leading, spacing: 6) {
+                                            Text(file.name)
+                                                .font(.headline)
+                                                .fontWeight(.medium)
+                                                .foregroundStyle(.white)
+                                                .lineLimit(1)
+                                                .truncationMode(.middle)
+                                            
+                                            Text("Last opened: \(file.date.formatted(date: .abbreviated, time: .shortened))")
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        Spacer()
+                                    }
+                                    .padding(16)
+                                    .background(cardBg)
+                                    .cornerRadius(12)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 12)
+                                            .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                                    )
+                                    .shadow(color: .black.opacity(0.3), radius: 6, x: 0, y: 3)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                }
+                
+                Spacer()
+            }
+            .padding(.horizontal)
+            .frame(maxWidth: 800)
+            .frame(maxWidth: .infinity)
+        }
+        .background(bgDark)
+    }
+    
+    private func chooseFile() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.pdf]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        if panel.runModal() == .OK, let url = panel.url {
+            controller.open(url: url)
+        }
+    }
+}
+
 // MARK: - Reader Shell View
 struct ReaderShellView: View {
     @ObservedObject var controller: ReaderControllerPro
     @Binding var quickFixPresented: Bool
+    @Binding var standaloneQuickFixPresented: Bool
     @Binding var showEncrypt: Bool
     let profile: DocumentProfile
     @Binding var selectedTab: AppMode
+    @StateObject private var recentFilesManager = RecentFilesManager.shared
+    @Binding var syncEnabled: Bool
     
     var body: some View {
         VStack(spacing: 0) {
@@ -458,7 +660,12 @@ struct ReaderShellView: View {
                           profile: profile,
                           selectedTab: $selectedTab,
                           quickFixPresented: $quickFixPresented,
-                          showEncrypt: $showEncrypt)
+                          showEncrypt: $showEncrypt,
+                          browseForDocument: browseForDocument,
+                          presentStandaloneQuickFix: {
+                              standaloneQuickFixPresented = true
+                          },
+                          syncEnabled: $syncEnabled)
                 .frame(height: 44)
                 .zIndex(1)
             
@@ -480,9 +687,10 @@ struct ReaderShellView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .background(Color(NSColor.windowBackgroundColor))
                 } else {
-                    ReaderHomeView(controller: controller)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(Color(NSColor.windowBackgroundColor))
+                    ReaderHomeView(
+                        controller: controller
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 
                 // Right Sidebar (Slide-in)
@@ -495,6 +703,16 @@ struct ReaderShellView: View {
             }
             
             ReaderStatusBar(controller: controller)
+        }
+    }
+
+    private func browseForDocument() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.pdf]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        if panel.runModal() == .OK, let url = panel.url {
+            controller.open(url: url)
         }
     }
 }
@@ -519,36 +737,43 @@ struct ReaderToolbar: View {
     @Binding var selectedTab: AppMode
     @Binding var quickFixPresented: Bool
     @Binding var showEncrypt: Bool
+    let browseForDocument: () -> Void
+    let presentStandaloneQuickFix: () -> Void
+    @Binding var syncEnabled: Bool
     
     var body: some View {
         ZStack {
-            // Center: Mode Switcher
-            AppModeSwitcher(currentMode: $selectedTab)
-            
-            // Left & Right Controls
-            HStack(spacing: 0) { // Removed spacing here, will use spacers inside groups
-                // Left Controls Group
-                HStack(spacing: 16) {
-                    // Document Navigation
-                    HStack(spacing: 0) {
-                        Button(action: { controller.pdfView?.goToPreviousPage(nil) }) {
-                            Image(systemName: "chevron.left")
-                        }
-                        .buttonStyle(.plain)
+            // Layer 1: Left and Right Controls
+            HStack(alignment: .center, spacing: 12) {
+            // Left Controls Group
+            HStack(spacing: 16) {
+                Button {
+                    browseForDocument()
+                } label: {
+                    Image(systemName: "folder")
+                }
+                .buttonStyle(.plain)
+                .help("Open a PDF")
+
+                HStack(spacing: 0) {
+                    Button(action: { controller.pdfView?.goToPreviousPage(nil) }) {
+                        Image(systemName: "chevron.left")
+                    }
+                    .buttonStyle(.plain)
                         .disabled(controller.document == nil)
-                        
+
                         Button(action: { controller.pdfView?.goToNextPage(nil) }) {
                             Image(systemName: "chevron.right")
                         }
                         .buttonStyle(.plain)
                         .disabled(controller.document == nil)
                     }
-                    
+
                     Text(zoomPercentage)
                         .font(.subheadline)
                         .monospacedDigit()
                         .frame(width: 45)
-                    
+
                     HStack(spacing: 4) {
                         Text("Page")
                         TextField("", value: pageBinding, formatter: NumberFormatter())
@@ -567,38 +792,87 @@ struct ReaderToolbar: View {
                     }
                     .font(.subheadline)
                 }
-                
+
                 Spacer()
-                
+
                 // Right Controls Group
-                HStack(spacing: 16) {
-                    // Search Bar
+                HStack(spacing: 12) {
+                    Toggle(isOn: $syncEnabled) {
+                        Image(systemName: syncEnabled ? "link" : "link.slash")
+                    }
+                    .toggleStyle(.button)
+                    .help(syncEnabled ? "Turn off Reader↔Studio sync" : "Turn on Reader↔Studio sync")
+
                     HStack {
                         Image(systemName: "magnifyingglass")
                             .foregroundStyle(.secondary)
-                        TextField("Search", text: $controller.searchQuery)
+                        TextField("Search in document", text: $controller.searchQuery)
                             .textFieldStyle(.plain)
                             .onSubmit {
                                 controller.find(controller.searchQuery)
                             }
+                            .onChange(of: controller.searchQuery) { query in
+                                controller.updateSearchQueryDebounced(query)
+                            }
                             .disabled(controller.document == nil)
+                        if !controller.searchMatches.isEmpty {
+                            Text("\(controller.searchMatches.count)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                     .padding(6)
                     .background(Color(NSColor.controlBackgroundColor))
                     .cornerRadius(6)
-                    .frame(width: 180)
+                    .frame(width: 200)
 
-                    // QuickFix
-                    Button {
-                        quickFixPresented = true
-                    } label: {
-                        Image(systemName: "wand.and.stars")
+                    HStack(spacing: 8) {
+                        Button(action: { controller.findPrev() }) {
+                            Image(systemName: "chevron.up")
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(controller.searchMatches.isEmpty)
+
+                        Button(action: { controller.findNext() }) {
+                            Image(systemName: "chevron.down")
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(controller.searchMatches.isEmpty)
+
+                        if !controller.searchMatches.isEmpty {
+                            Menu {
+                                ForEach(Array(controller.searchMatches.enumerated()), id: \.offset) { idx, match in
+                                    Button {
+                                        controller.focusSelection(match)
+                                    } label: {
+                                        HStack {
+                                            Text("Page \(match.pages.first?.label ?? "\(idx+1)")")
+                                            Spacer()
+                                            Text(snippet(for: match))
+                                                .lineLimit(1)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                    }
+                                }
+                            } label: {
+                                Label("Matches", systemImage: "list.bullet")
+                            }
+                            .menuStyle(.borderlessButton)
+                        }
                     }
-                    .buttonStyle(.plain)
-                    .disabled(controller.document == nil)
-                    .help("Run QuickFix on the open document")
 
-                    // Encrypt
+                    Button {
+                        if controller.document == nil {
+                            presentStandaloneQuickFix()
+                        } else {
+                            quickFixPresented = true
+                    }
+                } label: {
+                    Image(systemName: "wand.and.stars")
+                }
+                .buttonStyle(.plain)
+                .help("Run QuickFix on the open document")
+
                     Button {
                         showEncrypt = true
                     } label: {
@@ -607,8 +881,7 @@ struct ReaderToolbar: View {
                     .buttonStyle(.plain)
                     .disabled(controller.document == nil)
                     .help("Encrypt PDF")
-                    
-                    // Performance Badge
+
                     if profile.isMassive {
                         HStack(spacing: 4) {
                             Image(systemName: "bolt.fill")
@@ -620,8 +893,7 @@ struct ReaderToolbar: View {
                         .cornerRadius(4)
                         .help("Performance Mode Active")
                     }
-                    
-                    // Right Sidebar Toggle
+
                     Button(action: {
                         withAnimation {
                             controller.toggleRightPanel()
@@ -634,6 +906,9 @@ struct ReaderToolbar: View {
                     .disabled(controller.document == nil)
                 }
             }
+            
+            // Layer 2: Centered Switcher
+            AppModeSwitcher(currentMode: $selectedTab)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
@@ -663,6 +938,13 @@ struct ReaderToolbar: View {
             }
         )
     }
+
+    private func snippet(for selection: PDFSelection) -> String {
+        (selection.string ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .prefix(40)
+            .replacingOccurrences(of: "\n", with: " ")
+    }
 }
 
 // MARK: - Reader Sidebar Left (Pages / Outline)
@@ -685,17 +967,15 @@ struct ReaderSidebarLeft: View {
             Divider()
             
             if controller.document == nil {
-                VStack(spacing: 12) {
-                    Spacer()
+                VStack(spacing: 8) {
                     Image(systemName: "doc.on.doc")
-                        .font(.largeTitle)
+                        .font(.system(size: 24))
                         .foregroundStyle(.secondary)
                     Text("No pages yet")
-                        .font(.headline)
+                        .font(.caption)
                         .foregroundStyle(.secondary)
-                    Spacer()
                 }
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 if selection == 0 {
                     // Thumbnails
@@ -719,7 +999,10 @@ struct ReaderSidebarLeft: View {
                 }
             }
         }
-        .background(Color(NSColor.controlBackgroundColor))
+        .background(
+            VisualEffectView(material: .sidebar, blendingMode: .withinWindow)
+                .ignoresSafeArea()
+        )
     }
 }
 
@@ -749,6 +1032,26 @@ struct OutlineNode: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - Visual Effect Helper
+
+struct VisualEffectView: NSViewRepresentable {
+    let material: NSVisualEffectView.Material
+    let blendingMode: NSVisualEffectView.BlendingMode
+
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = material
+        view.blendingMode = blendingMode
+        view.state = .active
+        return view
+    }
+
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
+        nsView.material = material
+        nsView.blendingMode = blendingMode
     }
 }
 
@@ -864,6 +1167,12 @@ struct ReaderStatusBar: View {
     }
 }
 
+// MARK: - Notifications
+
+extension Notification.Name {
+    static let readerDidOpenDocument = Notification.Name("ReaderDidOpenDocument")
+}
+
 // MARK: - Reader Canvas
 struct ReaderCanvas: View {
     @ObservedObject var controller: ReaderControllerPro
@@ -941,164 +1250,6 @@ struct ThumbnailProRepresentedView: NSViewRepresentable {
     }
 }
 
-struct ReaderHomeView: View {
-    @ObservedObject var controller: ReaderControllerPro
-    @StateObject private var recentFiles = RecentFilesManager.shared
-    @State private var isDragging = false
-    
-    // Custom Colors - Adjusted to match target lighter grey tones
-    private let bgDark = Color(red: 0.13, green: 0.13, blue: 0.13) // ~#212121
-    private let cardBg = Color(red: 0.2, green: 0.2, blue: 0.2) // ~#333333
-    private let dropZoneStroke = Color(white: 0.25)
-    
-    // Grid layout for recent files (2 columns)
-    private let columns = [
-        GridItem(.flexible(), spacing: 16),
-        GridItem(.flexible(), spacing: 16)
-    ]
-    
-    var body: some View {
-        ScrollView {
-            VStack(spacing: 40) {
-                Spacer()
-                    .frame(height: 60)
-                
-                // Drop Zone
-                Button(action: {
-                    chooseFile()
-                }) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 16)
-                            .stroke(style: StrokeStyle(lineWidth: 2, dash: [10]))
-                            .foregroundStyle(isDragging ? Color.accentColor : dropZoneStroke)
-                            .background(isDragging ? Color.accentColor.opacity(0.1) : Color.clear)
-                        
-                        VStack(spacing: 20) {
-                            Image(systemName: "folder.badge.plus")
-                                .font(.system(size: 64))
-                                .foregroundStyle(.secondary)
-                            
-                            VStack(spacing: 8) {
-                                Text("Drop PDF here")
-                                    .font(.system(size: 24, weight: .bold))
-                                    .foregroundStyle(.white)
-                                Text("or click to browse files")
-                                    .font(.body)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                    .frame(height: 320)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .onDrop(of: [.fileURL, .url, .pdf], isTargeted: $isDragging) { providers in
-                    guard let provider = providers.first else { return false }
-                    _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                        if let url = url {
-                            DispatchQueue.main.async {
-                                controller.open(url: url)
-                            }
-                        }
-                    }
-                    return true
-                }
-                
-                // Recent Files
-                if !recentFiles.recentFiles.isEmpty {
-                    VStack(alignment: .leading, spacing: 16) {
-                        HStack {
-                            Text("Recent Files")
-                                .font(.title3)
-                                .fontWeight(.semibold)
-                                .foregroundStyle(.white)
-                            Spacer()
-                            Button("Show All") {
-                                // Action for showing all files
-                            }
-                            .buttonStyle(.link)
-                            .foregroundStyle(.secondary)
-                        }
-                        
-                        LazyVGrid(columns: columns, spacing: 16) {
-                            ForEach(recentFiles.recentFiles.prefix(6)) { file in
-                                Button(action: {
-                                    controller.open(url: file.url)
-                                }) {
-                                    HStack(spacing: 16) {
-                                        // Thumbnail / Icon
-                                        ZStack {
-                                            RoundedRectangle(cornerRadius: 6)
-                                                .fill(Color.white)
-                                                .frame(width: 48, height: 64)
-                                                .shadow(color: .black.opacity(0.1), radius: 2, x: 0, y: 1)
-                                            
-                                            // Simplified content lines (just one block)
-                                            VStack(alignment: .leading, spacing: 4) {
-                                                RoundedRectangle(cornerRadius: 1)
-                                                    .fill(Color.gray.opacity(0.2))
-                                                    .frame(width: 32, height: 4)
-                                                
-                                                RoundedRectangle(cornerRadius: 1)
-                                                    .fill(Color.gray.opacity(0.2))
-                                                    .frame(width: 24, height: 4)
-                                                
-                                                Spacer()
-                                            }
-                                            .padding(8)
-                                        }
-                                        
-                                        // Info
-                                        VStack(alignment: .leading, spacing: 6) {
-                                            Text(file.name)
-                                                .font(.headline)
-                                                .fontWeight(.medium)
-                                                .foregroundStyle(.white)
-                                                .lineLimit(1)
-                                                .truncationMode(.middle)
-                                            
-                                            Text("Last opened: \(file.date.formatted(date: .abbreviated, time: .shortened))")
-                                                .font(.caption)
-                                                .foregroundStyle(.secondary)
-                                        }
-                                        Spacer()
-                                    }
-                                    .padding(16)
-                                    .background(cardBg)
-                                    .cornerRadius(12)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 12)
-                                            .stroke(Color.white.opacity(0.05), lineWidth: 1)
-                                    )
-                                    .shadow(color: .black.opacity(0.2), radius: 4, x: 0, y: 2)
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                    }
-                }
-                
-                Spacer()
-            }
-            .padding(.horizontal)
-            .frame(maxWidth: 800)
-            .frame(maxWidth: .infinity)
-        }
-        .background(bgDark)
-    }
-    
-    private func chooseFile() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.pdf]
-        panel.allowsMultipleSelection = false
-        panel.canChooseDirectories = false
-        if panel.runModal() == .OK, let url = panel.url {
-            controller.open(url: url)
-        }
-    }
-}
-
-
 // MARK: - Extensions
 
 extension PDFOutline {
@@ -1127,60 +1278,5 @@ struct PDFThumbnailViewRepresentable: NSViewRepresentable {
     
     func updateNSView(_ nsView: PDFThumbnailView, context: Context) {
         nsView.pdfView = pdfView
-    }
-}
-
-
-
-struct RecentFile: Identifiable, Codable {
-    var id: UUID = UUID()
-    let url: URL
-    let date: Date
-    let pageCount: Int
-    
-    var name: String {
-        url.lastPathComponent
-    }
-}
-
-class RecentFilesManager: ObservableObject {
-    static let shared = RecentFilesManager()
-    
-    @Published var recentFiles: [RecentFile] = []
-    
-    private let maxRecentFiles = 10
-    private let storageKey = "PDFQuickFix_RecentFiles"
-    
-    private init() {
-        load()
-    }
-    
-    func add(url: URL, pageCount: Int) {
-        // Remove existing entry if present
-        recentFiles.removeAll { $0.url == url }
-        
-        // Add new entry to top
-        let newFile = RecentFile(url: url, date: Date(), pageCount: pageCount)
-        recentFiles.insert(newFile, at: 0)
-        
-        // Trim
-        if recentFiles.count > maxRecentFiles {
-            recentFiles = Array(recentFiles.prefix(maxRecentFiles))
-        }
-        
-        save()
-    }
-    
-    private func save() {
-        if let data = try? JSONEncoder().encode(recentFiles) {
-            UserDefaults.standard.set(data, forKey: storageKey)
-        }
-    }
-    
-    private func load() {
-        if let data = UserDefaults.standard.data(forKey: storageKey),
-           let decoded = try? JSONDecoder().decode([RecentFile].self, from: data) {
-            recentFiles = decoded
-        }
     }
 }

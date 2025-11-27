@@ -3,6 +3,7 @@ import AppKit
 import UniformTypeIdentifiers
 
 struct SplitView: View {
+    @Binding var selectedTab: AppMode
     @StateObject private var controller = SplitController()
 
     private static let integerFormatter: NumberFormatter = {
@@ -22,7 +23,24 @@ struct SplitView: View {
     }()
 
     var body: some View {
-        ScrollView {
+        VStack(spacing: 0) {
+            // Toolbar
+            ZStack {
+                // Center: Mode Switcher
+                AppModeSwitcher(currentMode: $selectedTab)
+                
+                // Left & Right Controls
+                HStack {
+                    Spacer()
+                    // Add any right-aligned controls here if needed
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(Color(NSColor.windowBackgroundColor))
+            .overlay(Divider(), alignment: .bottom)
+            
+            ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 header
                 fileSection
@@ -30,6 +48,8 @@ struct SplitView: View {
                 destinationSection
                 historySection
                 footer
+            }
+            .padding(24)
             }
             .padding(24)
         }
