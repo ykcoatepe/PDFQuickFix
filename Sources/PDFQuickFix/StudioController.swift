@@ -73,6 +73,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
     @Published var loadingStatus: String?
     @Published var isLargeDocument: Bool = false
     @Published var isMassiveDocument: Bool = false
+    @Published var selectedAnnotation: PDFAnnotation?
 
     weak var pdfView: PDFView?
     private let validationRunner = DocumentValidationRunner()
@@ -88,6 +89,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
     private let thumbnailQueue = DispatchQueue(label: "com.pdfquickfix.thumbnails", qos: .userInitiated)
     private var inflightThumbnails: Set<Int> = []
     private let inflightLock = NSLock()
+    private var selectionHelperAnnotation: PDFAnnotation?
     private let snapshotQueue: OperationQueue = {
         let queue = OperationQueue()
         queue.qualityOfService = .userInitiated
@@ -241,6 +243,57 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
         isThumbnailsLoading = false
         pushLog("⚠️ \(error.localizedDescription)")
         present(error)
+    }
+
+    // MARK: - Selection & Editing
+    
+    func selectAnnotation(_ annotation: PDFAnnotation) {
+        guard !isMassiveDocument else { return }
+        // If already selected, do nothing (or refresh?)
+        if selectedAnnotation === annotation { return }
+        
+        deselectAnnotation() // Clear previous
+        
+        selectedAnnotation = annotation
+        
+        // Add visual feedback (SelectionAnnotation)
+        if let page = annotation.page {
+            let helper = SelectionAnnotation(bounds: annotation.bounds, forType: .stamp, withProperties: nil)
+            helper.shouldPrint = false
+            page.addAnnotation(helper)
+            selectionHelperAnnotation = helper
+        }
+        
+        pushLog("Selected annotation: \(annotation.type ?? "Unknown")")
+    }
+    
+    func deselectAnnotation() {
+        if let helper = selectionHelperAnnotation {
+            helper.page?.removeAnnotation(helper)
+            selectionHelperAnnotation = nil
+        }
+        selectedAnnotation = nil
+    }
+    
+    func handleTap(in view: PDFView, at point: CGPoint) {
+        guard !isMassiveDocument else { return }
+        
+        guard let page = view.page(for: point, nearest: true) else {
+            deselectAnnotation()
+            return
+        }
+        
+        let pagePoint = view.convert(point, to: page)
+        
+        // Hit-test for annotations
+        if let annotation = page.annotation(at: pagePoint) {
+            // Ignore our own selection helper
+            if annotation is SelectionAnnotation { return }
+            
+            selectAnnotation(annotation)
+        } else {
+            deselectAnnotation()
+        }
     }
 
     func setDocument(_ document: PDFDocument?, url: URL? = nil) {
@@ -980,3 +1033,39 @@ private final class PageSnapshotRenderOperation: Operation {
 }
 
 extension PageSnapshotRenderOperation: @unchecked Sendable {}
+
+class SelectionAnnotation: PDFAnnotation {
+    override func draw(with box: PDFDisplayBox, in context: CGContext) {
+        super.draw(with: box, in: context)
+        
+        context.saveGState()
+        
+        // Draw border
+        context.setStrokeColor(NSColor.systemBlue.cgColor)
+        context.setLineWidth(1.0)
+        
+        let rect = bounds
+        context.stroke(rect)
+        
+        // Handles
+        let handleSize: CGFloat = 6.0
+        // Corners
+        let corners = [
+            CGPoint(x: rect.minX, y: rect.minY),
+            CGPoint(x: rect.maxX - handleSize, y: rect.minY),
+            CGPoint(x: rect.minX, y: rect.maxY - handleSize),
+            CGPoint(x: rect.maxX - handleSize, y: rect.maxY)
+        ]
+        
+        context.setFillColor(NSColor.white.cgColor)
+        context.setStrokeColor(NSColor.systemBlue.cgColor)
+        
+        for corner in corners {
+            let handleRect = CGRect(origin: corner, size: CGSize(width: handleSize, height: handleSize))
+            context.fill(handleRect)
+            context.stroke(handleRect)
+        }
+        
+        context.restoreGState()
+    }
+}

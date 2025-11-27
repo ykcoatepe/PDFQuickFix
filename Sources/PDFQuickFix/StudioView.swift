@@ -248,7 +248,7 @@ struct StudioView: View {
                                     .stroke(AppTheme.Colors.cardBorder, lineWidth: AppTheme.Metrics.cardBorderWidth)
                             )
 
-                        StudioPDFViewRepresented(document: doc) { view in
+                        StudioPDFViewRepresented(document: doc, controller: controller) { view in
                             controller.attach(pdfView: view)
                         }
                         .background(AppTheme.Colors.background)
@@ -652,14 +652,25 @@ struct StudioView: View {
 
 struct StudioPDFViewRepresented: NSViewRepresentable {
     var document: PDFDocument?
+    var controller: StudioController
     var didCreate: (PDFView) -> Void
 
+    func makeCoordinator() -> Coordinator {
+        Coordinator(controller: controller)
+    }
+
     func makeNSView(context: Context) -> PDFView {
-        let view = PDFView()
+        let view = StudioPDFView()
+        view.controller = controller
+        view.wantsLayer = true
         view.document = document
         view.applyPerformanceTuning(isLargeDocument: false,
                                     desiredDisplayMode: .singlePageContinuous,
                                     resetScale: true)
+        
+        let gesture = NSClickGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap(_:)))
+        view.addGestureRecognizer(gesture)
+        
         didCreate(view)
         return view
     }
@@ -667,6 +678,33 @@ struct StudioPDFViewRepresented: NSViewRepresentable {
     func updateNSView(_ nsView: PDFView, context: Context) {
         if nsView.document !== document {
             nsView.document = document
+        }
+    }
+    
+    class Coordinator: NSObject {
+        var controller: StudioController
+        
+        init(controller: StudioController) {
+            self.controller = controller
+        }
+        
+        @MainActor
+        @objc func handleTap(_ gesture: NSClickGestureRecognizer) {
+            guard let pdfView = gesture.view as? PDFView else { return }
+            let location = gesture.location(in: pdfView)
+            controller.handleTap(in: pdfView, at: location)
+        }
+    }
+}
+
+class StudioPDFView: PDFView {
+    weak var controller: StudioController?
+    
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 53 { // Esc
+            controller?.deselectAnnotation()
+        } else {
+            super.keyDown(with: event)
         }
     }
 }
