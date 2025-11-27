@@ -70,3 +70,45 @@ private struct OutlineRowView: View {
         .padding(.leading, CGFloat(row.depth) * 16)
     }
 }
+
+// MARK: - Reader Outline Components
+
+struct ReaderOutlineNode: View {
+    let node: PDFOutline
+    let controller: ReaderControllerPro
+    
+    var body: some View {
+        let count = node.numberOfChildren
+        if count > 0 {
+            let children = (0..<count).compactMap { node.child(at: $0) }
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(children, id: \.self) { child in
+                    ReaderOutlineRow(child: child, controller: controller)
+                }
+            }
+        }
+    }
+}
+
+struct ReaderOutlineRow: View {
+    let child: PDFOutline
+    let controller: ReaderControllerPro
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(child.label ?? "Untitled")
+                .font(.caption)
+                .padding(.leading, CGFloat(child.level) * 10)
+                .padding(.vertical, 4)
+                .padding(.horizontal, 4)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    if let dest = child.destination {
+                        controller.pdfView?.go(to: dest)
+                    }
+                }
+            // Recursive call
+            ReaderOutlineNode(node: child, controller: controller)
+        }
+    }
+}

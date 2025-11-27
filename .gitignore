@@ -23,6 +23,7 @@ Carthage/Build/
 
 # Logs
 *.log
+build_log_*.txt
 
 # XcodeGen output (can be regenerated)
 *.xcodeproj

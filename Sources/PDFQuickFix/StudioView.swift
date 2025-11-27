@@ -1,6 +1,8 @@
 import SwiftUI
 import PDFKit
 import UniformTypeIdentifiers
+import Combine
+import AppKit
 
 enum StudioTool: String, CaseIterable, Identifiable {
     case organize = "Organize"
@@ -28,16 +30,18 @@ enum StudioTool: String, CaseIterable, Identifiable {
 }
 
 struct StudioView: View {
-    @StateObject private var controller = StudioController()
-    @State private var selectedTool: StudioTool = .organize
-    @State private var showInspector: Bool = true
-    @State private var showQuickFix: Bool = false
-    @State private var quickFixURL: URL?
+    @ObservedObject var controller: StudioController
+    @Binding var selectedTab: AppMode
+    @EnvironmentObject private var documentHub: SharedDocumentHub
+    @Binding var selectedTool: StudioTool
+    @Binding var showQuickFix: Bool
+    @Binding var quickFixURL: URL?
+    @State private var navSelection: Int = 0 // 0 = Pages, 1 = Outline
 
-    @State private var showingWatermarkSheet = false
-    @State private var showingHeaderFooterSheet = false
-    @State private var showingBatesSheet = false
-    @State private var showingCropSheet = false
+    @Binding var showingWatermarkSheet: Bool
+    @Binding var showingHeaderFooterSheet: Bool
+    @Binding var showingBatesSheet: Bool
+    @Binding var showingCropSheet: Bool
 
     @State private var watermarkOptions = WatermarkOptions()
     @State private var headerFooterOptions = HeaderFooterOptions()
@@ -48,107 +52,31 @@ struct StudioView: View {
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
             VStack(spacing: 0) {
-                toolbar
-                Divider()
-                ZStack {
+                // Toolbar handled by UnifiedToolbar in ContentView
+
+                GeometryReader { proxy in
+                    let layout = StudioLayout(width: proxy.size.width)
+
                     HStack(spacing: 0) {
-                        VStack(spacing: 12) {
-                            ForEach(StudioTool.allCases) { tool in
-                                Button {
-                                    selectedTool = tool
-                                    if tool == .measure {
-                                        showInspector = false
-                                    }
-                                } label: {
-                                    VStack(spacing: 6) {
-                                        Image(systemName: tool.systemImage)
-                                            .font(.system(size: 24))
-                                        Text(tool.rawValue)
-                                            .font(.caption2)
-                                            .fontWeight(.medium)
-                                    }
-                                    .frame(width: 72, height: 72)
-                                    .contentShape(Rectangle())
-                                }
-                                .buttonStyle(.plain)
-                                .background(selectedTool == tool ? AppColors.primary.opacity(0.1) : Color.clear)
-                                .foregroundColor(selectedTool == tool ? AppColors.primary : .secondary)
-                                .cornerRadius(12)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 12)
-                                        .stroke(selectedTool == tool ? AppColors.primary.opacity(0.2) : Color.clear, lineWidth: 1)
-                                )
-                            }
-                            Spacer()
-                        }
-                        .padding(12)
-                        .frame(width: 96)
-                        .background(AppColors.surface)
-
-                        Divider()
-
-                        ZStack {
-                            if controller.document != nil && !controller.isMassiveDocument {
-                                StudioPDFViewRepresented(document: controller.document) { view in
-                                    controller.attach(pdfView: view)
-                                }
-                                .background(Color(NSColor.textBackgroundColor))
-                                .contentShape(Rectangle())
-
-                                if selectedTool == .measure {
-                                    MeasureOverlay()
-                                        .padding()
-                                }
-                            } else if controller.isMassiveDocument, let url = controller.currentURL {
-                                VStack(spacing: 12) {
-                                    Text("Studio is disabled for massive documents.")
-                                        .font(.headline)
-                                    Text("Page count: \(controller.document?.pageCount ?? 0). Use the system viewer to browse this file.")
-                                        .font(.subheadline)
-                                        .foregroundStyle(.secondary)
-                                    Button("Open in Preview") {
-                                        NSWorkspace.shared.open(url)
-                                    }
-                                    .buttonStyle(.borderedProminent)
-                                }
-                                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            } else if controller.document == nil {
-                                VStack(spacing: 16) {
-                                    Image(systemName: "doc.badge.gearshape")
-                                        .font(.system(size: 48))
-                                        .foregroundStyle(AppColors.primary.opacity(0.5))
-                                    Text("Open or drop a PDF to begin")
-                                        .appFont(.title3)
-                                        .foregroundStyle(.secondary)
-                                    Button("Open File", action: openFile)
-                                        .buttonStyle(PrimaryButtonStyle())
-                                }
-                                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                                .background(AppColors.background)
-                            }
-
-                            if controller.isDocumentLoading {
-                                ZStack {
-                                    Color.black.opacity(0.08)
-                                    LoadingOverlayView(status: controller.loadingStatus ?? "Loading…")
-                                }
-                                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                                .allowsHitTesting(false)
-                            }
+                        if layout.showsLeftColumn {
+                            leftColumn
+                                .frame(width: layout.leftColumnWidth)
+                                .background(AppTheme.Colors.sidebarBackground)
                         }
 
-                        if showInspector && selectedTool != .measure {
-                            Divider()
-                            inspectorPanel
-                                .frame(width: 320)
-                                .background(Color(NSColor.underPageBackgroundColor))
+                        Divider().overlay(AppTheme.Colors.cardBorder.opacity(0.6))
+
+                        centerColumn
+                            .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
+
+                        if layout.showsRightColumn {
+                            Divider().overlay(AppTheme.Colors.cardBorder.opacity(0.6))
+                            rightColumn
+                                .frame(width: layout.rightColumnWidth)
+                                .background(AppTheme.Colors.sidebarBackground)
                         }
                     }
-                    if !controller.isMassiveDocument {
-                        FullscreenPDFDropView { url in
-                            controller.open(url: url)
-                        }
-                    }
+                    .background(AppTheme.Colors.background)
                 }
 
                 if !controller.logMessages.isEmpty {
@@ -158,12 +86,14 @@ struct StudioView: View {
                             ForEach(controller.logMessages.enumerated().map({ $0 }), id: \.offset) { entry in
                                 Text(entry.element)
                                     .font(.caption.monospaced())
+                                    .foregroundColor(AppTheme.Colors.secondaryText)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                             }
                         }
                         .padding(8)
                     }
                     .frame(height: 140)
+                    .background(AppTheme.Colors.cardBackground)
                 }
             }
 
@@ -236,123 +166,350 @@ struct StudioView: View {
                 controller.open(url: url)
             }
         }
+        .onAppear {
+            syncFromHub()
+        }
+        .onChange(of: documentHub.currentURL) { _ in
+            syncFromHub()
+        }
+        .onChange(of: controller.currentURL) { url in
+            if documentHub.syncEnabled {
+                documentHub.update(url: url, from: .studio)
+            }
+        }
     }
 
-    private var toolbar: some View {
-        HStack(spacing: 12) {
-            HStack(spacing: 0) {
-                Button(action: openFile) {
-                    Label("Open", systemImage: "folder")
-                }
-                .buttonStyle(GhostButtonStyle())
-                
-                Button(action: save) {
-                    Label("Save", systemImage: "square.and.arrow.down")
-                }
-                .buttonStyle(GhostButtonStyle())
-                .disabled(controller.document == nil)
-                
-                Button(action: saveAs) {
-                    Label("Save As…", systemImage: "square.and.arrow.up")
-                }
-                .buttonStyle(GhostButtonStyle())
-                .disabled(controller.document == nil)
+    private var modeBar: some View {
+        ZStack {
+            AppModeSwitcher(currentMode: $selectedTab)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(AppTheme.Colors.cardBackground)
+        .overlay(Divider(), alignment: .bottom)
+    }
+
+    private func syncFromHub() {
+        guard documentHub.syncEnabled,
+              documentHub.lastSource == .reader,
+              let target = documentHub.currentURL,
+              controller.currentURL != target else { return }
+        controller.open(url: target)
+    }
+
+    // MARK: - Columns
+
+    private var leftColumn: some View {
+        VStack(spacing: 10) {
+            Picker("", selection: $navSelection) {
+                Text("Pages").tag(0)
+                Text("Outline").tag(1)
             }
-            
-            Divider().frame(height: 20)
-            
-            Button(action: {
-                quickFixURL = controller.currentURL
-                showQuickFix = true
-            }) {
-                Label("QuickFix…", systemImage: "wand.and.sparkles")
-            }
-            .buttonStyle(GhostButtonStyle())
-            .disabled(controller.currentURL == nil)
-            
-            Menu {
-                Button("Watermark…") { showingWatermarkSheet = true }
-                    .disabled(controller.document == nil)
-                Button("Header & Footer…") { showingHeaderFooterSheet = true }
-                    .disabled(controller.document == nil)
-                Button("Bates Numbering…") { showingBatesSheet = true }
-                    .disabled(controller.document == nil)
-                Button("Crop Pages…") { showingCropSheet = true }
-                    .disabled(controller.document == nil)
-                Divider()
-                Button("Optimize…") {
-                    runOptimize()
-                }
-                .disabled(controller.document == nil)
-            } label: {
-                Label("Tools", systemImage: "slider.horizontal.3")
-            }
-            .menuStyle(.borderlessButton)
-            .frame(height: 28)
-            
-            Menu("Edit Tools") {
-                Button("Add FreeText") { EditingTools.addFreeText(in: controller.pdfView) }
-                Button("Add Rectangle") { EditingTools.addRectangle(in: controller.pdfView) }
-                Button("Add Filled Rectangle") { EditingTools.addRectangle(in: controller.pdfView, filled: true) }
-                Button("Add Oval") { EditingTools.addOval(in: controller.pdfView) }
-                Button("Add Filled Oval") { EditingTools.addOval(in: controller.pdfView, filled: true) }
-                Button("Add Line") { EditingTools.addLine(in: controller.pdfView) }
-                Button("Add Arrow") { EditingTools.addArrow(in: controller.pdfView) }
-                Button("Add Link…") {
-                    let alert = NSAlert()
-                    alert.messageText = "Enter link URL"
-                    let textField = NSTextField(string: "https://example.com")
-                    textField.frame = NSRect(x: 0, y: 0, width: 260, height: 22)
-                    alert.accessoryView = textField
-                    alert.addButton(withTitle: "OK")
-                    alert.addButton(withTitle: "Cancel")
-                    if alert.runModal() == .alertFirstButtonReturn {
-                        EditingTools.addLink(in: controller.pdfView, urlString: textField.stringValue)
+            .pickerStyle(.segmented)
+
+            if navSelection == 0 {
+                ScrollView {
+                    LazyVStack(spacing: 8) {
+                        ForEach(controller.pageSnapshots) { snapshot in
+                            pageRow(for: snapshot)
+                                .onAppear { controller.ensureThumbnail(for: snapshot.index) }
+                        }
                     }
-                }
-                Button("Add Ink (sample)") { EditingTools.addSampleInk(in: controller.pdfView) }
-            }
-            .menuStyle(.borderlessButton)
-            .disabled(controller.pdfView == nil)
-            .frame(height: 28)
-            
-            Button(action: {
-                controller.runFullValidation()
-            }) {
-                Label("Validate", systemImage: "checkmark.shield")
-            }
-            .buttonStyle(GhostButtonStyle())
-            .disabled(controller.document == nil || controller.isFullValidationRunning)
-            .help("Run full validation/sanitization")
-            
-            if let status = controller.validationStatus {
-                Text(status)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 8)
                     .padding(.vertical, 4)
-                    .background(AppColors.surface)
-                    .cornerRadius(4)
+                }
+            } else {
+                outlineList
+            }
+
+            if controller.isMassiveDocument {
+                Text("Thumbnails disabled for massive documents.")
+                    .font(.caption2)
+                    .foregroundColor(AppTheme.Colors.secondaryText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             
             Spacer()
-            
-            Toggle(isOn: $showInspector) {
-                Image(systemName: "sidebar.right")
-            }
-            .toggleStyle(.button)
-            .help("Toggle inspector")
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(AppColors.surface)
-        .overlay(
-            Rectangle()
-                .frame(height: 1)
-                .foregroundColor(AppColors.border),
-            alignment: .bottom
+        .padding(10)
+        .foregroundColor(AppTheme.Colors.primaryText)
+    }
+
+    private var centerColumn: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            centerHeader
+
+            Group {
+                if let doc = controller.document, !controller.isMassiveDocument {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: AppTheme.Metrics.cardCornerRadius, style: .continuous)
+                            .fill(AppTheme.Colors.cardBackground)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: AppTheme.Metrics.cardCornerRadius, style: .continuous)
+                                    .stroke(AppTheme.Colors.cardBorder, lineWidth: AppTheme.Metrics.cardBorderWidth)
+                            )
+
+                        StudioPDFViewRepresented(document: doc) { view in
+                            controller.attach(pdfView: view)
+                        }
+                        .background(AppTheme.Colors.background)
+                        .clipShape(RoundedRectangle(cornerRadius: AppTheme.Metrics.cardCornerRadius, style: .continuous))
+
+                        if selectedTool == .measure {
+                            MeasureOverlay()
+                                .padding()
+                        }
+
+                        if controller.isDocumentLoading {
+                            Color.black.opacity(0.08)
+                            LoadingOverlayView(status: controller.loadingStatus ?? "Loading…")
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if controller.isMassiveDocument, let url = controller.currentURL {
+                    masssiveNotice(url: url)
+                } else {
+                    emptyPlaceholder
+                }
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .background(AppTheme.Colors.background)
+    }
+
+    private var rightColumn: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Annotations")
+                    .font(.headline)
+                Spacer()
+            }
+
+            if controller.isLargeDocument {
+                Text("Annotation listing disabled for large documents. Navigate to pages to inspect.")
+                    .font(.caption)
+                    .foregroundColor(AppTheme.Colors.secondaryText)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(controller.annotationRows) { row in
+                            annotationRow(row)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+        }
+        .padding(12)
+        .foregroundColor(AppTheme.Colors.primaryText)
+    }
+
+    // MARK: - Pieces
+
+    private func pageRow(for snapshot: PageSnapshot) -> some View {
+        let isSelected = controller.selectedPageIDs.contains(snapshot.index)
+        return HStack(spacing: 10) {
+            if let thumb = snapshot.thumbnail, !controller.isMassiveDocument {
+                Image(decorative: thumb, scale: 1, orientation: .up)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 52, height: 72)
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .stroke(AppTheme.Colors.cardBorder, lineWidth: 0.5)
+                    )
+            } else {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(AppTheme.Colors.cardBackground.opacity(0.8))
+                    Text("Pg \(snapshot.index + 1)")
+                        .font(.caption2)
+                        .foregroundColor(AppTheme.Colors.secondaryText)
+                        .padding(4)
+                }
+                .frame(width: 52, height: 72)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(snapshot.label)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+                if controller.isThumbnailsLoading {
+                    ProgressView().controlSize(.small)
+                }
+            }
+            Spacer()
+        }
+        .padding(8)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(isSelected ? AppTheme.Colors.cardBackground.opacity(0.8) : Color.clear)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(isSelected ? Color.accentColor.opacity(0.6) : AppTheme.Colors.cardBorder, lineWidth: 1)
+                )
+        )
+        .contentShape(Rectangle())
+        .onTapGesture {
+            controller.selectedPageIDs = [snapshot.index]
+            controller.goTo(page: snapshot.index)
+        }
+    }
+
+    @ViewBuilder
+    private var outlineList: some View {
+        if controller.outlineRows.isEmpty {
+            Text(controller.isMassiveDocument ? "Outline disabled for massive documents." : "No outline available.")
+                .font(.caption)
+                .foregroundColor(AppTheme.Colors.secondaryText)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(controller.outlineRows) { row in
+                        HStack(spacing: 8) {
+                            Text(row.outline.label ?? "Untitled")
+                                .foregroundColor(AppTheme.Colors.primaryText)
+                            Spacer()
+                            Button {
+                                if let dest = row.outline.destination {
+                                    controller.pdfView?.go(to: dest)
+                                }
+                            } label: {
+                                Image(systemName: "arrow.uturn.down")
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .font(.caption)
+                        .padding(6)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(AppTheme.Colors.cardBackground)
+                        )
+                        .padding(.leading, CGFloat(row.depth) * 12)
+                    }
+                }
+            }
+        }
+    }
+
+    private var centerHeader: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(pageTitle)
+                    .font(.headline)
+                if let status = controller.validationStatus {
+                    Text(status)
+                        .font(.caption)
+                        .foregroundColor(AppTheme.Colors.secondaryText)
+                }
+            }
+
+            Spacer()
+
+            Button {
+                selectedTool = (selectedTool == .measure ? .organize : .measure)
+            } label: {
+                Label(selectedTool == .measure ? "Exit Measure" : "Measure", systemImage: "ruler")
+            }
+            .buttonStyle(.bordered)
+            .tint(.accentColor)
+            .disabled(controller.document == nil)
+        }
+        .foregroundColor(AppTheme.Colors.primaryText)
+    }
+
+    private func annotationRow(_ row: AnnotationRow) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(row.title)
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Text("Page \(row.pageIndex + 1)")
+                    .font(.caption)
+                    .foregroundColor(AppTheme.Colors.secondaryText)
+            }
+            if let contents = row.annotation.contents, !contents.isEmpty {
+                Text(contents)
+                    .font(.caption)
+                    .foregroundColor(AppTheme.Colors.secondaryText)
+                    .lineLimit(3)
+            }
+
+            HStack(spacing: 8) {
+                Button {
+                    controller.focus(annotation: row)
+                } label: {
+                    Label("Go", systemImage: "arrow.right.circle")
+                }
+                .buttonStyle(.bordered)
+
+                Button(role: .destructive) {
+                    controller.delete(annotation: row)
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .buttonStyle(.bordered)
+            }
+            .font(.caption)
+        }
+        .padding(8)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(AppTheme.Colors.cardBackground)
         )
     }
+
+    private var pageTitle: String {
+        guard let doc = controller.document else { return "No document" }
+        let current: Int? = {
+            if let selected = controller.selectedPageIDs.sorted().first { return selected }
+            if let view = controller.pdfView, let page = view.currentPage {
+                let idx = doc.index(for: page)
+                return idx >= 0 ? idx : nil
+            }
+            return nil
+        }()
+        if let idx = current {
+            return "Page \(idx + 1) of \(doc.pageCount)"
+        } else {
+            return "Page 1 of \(doc.pageCount)"
+        }
+    }
+
+    private func masssiveNotice(url: URL) -> some View {
+        VStack(spacing: 12) {
+            Text("Studio is disabled for massive documents.")
+                .font(.headline)
+                .foregroundColor(AppTheme.Colors.primaryText)
+            Text("Page count: \(controller.document?.pageCount ?? 0). Use the system viewer to browse this file.")
+                .font(.subheadline)
+                .foregroundColor(AppTheme.Colors.secondaryText)
+            Button("Open in Preview") {
+                NSWorkspace.shared.open(url)
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var emptyPlaceholder: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "doc.badge.gearshape")
+                .font(.system(size: 48))
+                .foregroundColor(AppTheme.Colors.secondaryText)
+            Text("Open or drop a PDF to begin")
+                .font(.headline)
+                .foregroundColor(AppTheme.Colors.primaryText)
+            Button("Open File", action: openFile)
+                .buttonStyle(.borderedProminent)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // Toolbar handled by UnifiedToolbar
 
     @ViewBuilder
     private var inspectorPanel: some View {
@@ -686,5 +843,22 @@ private struct CropSheet: View {
             }
         }
         .padding(20)
+    }
+}
+
+// MARK: - Layout helper
+
+private struct StudioLayout {
+    let width: CGFloat
+
+    var showsLeftColumn: Bool { true }
+    var showsRightColumn: Bool { width > 1200 }
+
+    var leftColumnWidth: CGFloat {
+        max(220, min(260, width * 0.22))
+    }
+
+    var rightColumnWidth: CGFloat {
+        width > 1200 ? 260 : 0
     }
 }

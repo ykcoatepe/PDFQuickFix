@@ -223,3 +223,54 @@ struct PDFURLDropDelegate: DropDelegate {
         return handlePDFDrop(providers, onResolvedURL: onResolvedURL)
     }
 }
+
+extension Animation {
+    /// Standard transition for sidebars (Left/Right panels)
+    static var sidebarTransition: Animation {
+        .easeOut(duration: 0.25)
+    }
+    
+    /// Standard transition for smaller panels or overlays
+    static var panelTransition: Animation {
+        .easeOut(duration: 0.2)
+    }
+}
+
+// MARK: - Visual Effect Helper
+
+struct VisualEffectView: NSViewRepresentable {
+    let material: NSVisualEffectView.Material
+    let blendingMode: NSVisualEffectView.BlendingMode
+
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = material
+        view.blendingMode = blendingMode
+        view.state = .active
+        return view
+    }
+
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
+        nsView.material = material
+        nsView.blendingMode = blendingMode
+    }
+}
+
+// MARK: - PDF Thumbnail Helper
+
+struct PDFThumbnailViewRepresentable: NSViewRepresentable {
+    let pdfView: PDFView
+    
+    func makeNSView(context: Context) -> PDFThumbnailView {
+        let thumbnailView = PDFThumbnailView()
+        thumbnailView.pdfView = pdfView
+        thumbnailView.thumbnailSize = CGSize(width: 60, height: 80)
+
+        thumbnailView.backgroundColor = NSColor.controlBackgroundColor
+        return thumbnailView
+    }
+    
+    func updateNSView(_ nsView: PDFThumbnailView, context: Context) {
+        nsView.pdfView = pdfView
+    }
+}
