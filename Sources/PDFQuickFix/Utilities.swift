@@ -223,3 +223,15 @@ struct PDFURLDropDelegate: DropDelegate {
         return handlePDFDrop(providers, onResolvedURL: onResolvedURL)
     }
 }
+
+extension Animation {
+    /// Standard transition for sidebars (Left/Right panels)
+    static var sidebarTransition: Animation {
+        .easeOut(duration: 0.25)
+    }
+    
+    /// Standard transition for smaller panels or overlays
+    static var panelTransition: Animation {
+        .easeOut(duration: 0.2)
+    }
+}

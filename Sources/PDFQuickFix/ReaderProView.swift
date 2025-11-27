@@ -10,7 +10,12 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFViewDelegate {
     @Published var searchQuery: String = ""
     @Published var searchMatches: [PDFSelection] = []
     @Published var isSidebarVisible: Bool = true
+    @Published var isRightPanelVisible: Bool = false
     @Published var isProcessing: Bool = false
+    
+    func toggleRightPanel() {
+        isRightPanelVisible.toggle()
+    }
     @Published var log: String = ""
     @Published var validationStatus: String?
     @Published var isFullValidationRunning: Bool = false
@@ -354,264 +359,46 @@ struct ReaderProView: View {
     @State private var ownerPassword = ""
     
     var body: some View {
-        VStack(spacing: 0) {
-            toolbar
-            Divider()
-            ZStack {
-                HStack(spacing: 0) {
-                    if controller.isSidebarVisible, controller.document != nil, !controller.isLargeDocument {
-                        ThumbnailProRepresentedView(pdfViewGetter: { controller.pdfView })
-                            .frame(width: 220)
-                            .background(.thinMaterial)
+        ReaderShellView(controller: controller,
+                        quickFixPresented: $quickFixPresented,
+                        showEncrypt: $showEncrypt)
+            .onDrop(of: [.fileURL, .url, .pdf], delegate: PDFURLDropDelegate { url in
+                droppedURL = url
+            })
+            .onChange(of: droppedURL) { newValue in
+                guard let url = newValue else { return }
+                droppedURL = nil
+                lastOpenedURL = url
+                controller.open(url: url)
+            }
+            .sheet(isPresented: $quickFixPresented) {
+                QuickFixSheet(inputURL: $lastOpenedURL) { output in
+                    if let output {
+                        lastOpenedURL = output
+                        controller.open(url: output)
                     }
-                    ZStack {
-                        if controller.document != nil && !controller.isMassiveDocument {
-                            PDFViewProRepresented(document: controller.document) { view in
-                                controller.pdfView = view
-                            }
-                            .background(Color(NSColor.textBackgroundColor))
-                            .contentShape(Rectangle())
-                        } else if controller.isMassiveDocument, let url = controller.currentURL {
-                            VStack(spacing: 12) {
-                                Text("This PDF is too large to view inline.")
-                                    .font(.headline)
-                                Text("Page count: \(controller.document?.pageCount ?? 0). Use the system viewer for best performance.")
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
-                                Button("Open in Preview") {
-                                    NSWorkspace.shared.open(url)
-                                }
-                                .buttonStyle(.borderedProminent)
-                            }
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        } else if controller.document == nil {
-                            Text("Open or drop a PDF to begin.")
-                                .foregroundStyle(.secondary)
-                                .padding()
-                                .allowsHitTesting(false)
+                }
+                .frame(minWidth: 720, minHeight: 520)
+            }
+            .sheet(isPresented: $showEncrypt) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Encrypt PDF").font(.title3).bold()
+                    SecureField("User password", text: $userPassword)
+                    SecureField("Owner password (optional)", text: $ownerPassword)
+                    HStack {
+                        Spacer()
+                        Button("Cancel") { showEncrypt = false }
+                        Button("Encrypt") {
+                            encryptCurrent()
+                            showEncrypt = false
                         }
-
-                        if controller.isLoadingDocument {
-                            ZStack {
-                                Color.black.opacity(0.08)
-                                LoadingOverlayView(status: controller.loadingStatus ?? "Loading…")
-                            }
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .allowsHitTesting(false)
-                        }
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(controller.document == nil || userPassword.isEmpty)
                     }
                 }
-                if !controller.isMassiveDocument {
-                    FullscreenPDFDropView { url in
-                        droppedURL = url
-                    }
-                }
+                .padding(16)
+                .frame(minWidth: 420)
             }
-        }
-        .onDrop(of: [.fileURL, .url, .pdf], delegate: PDFURLDropDelegate { url in
-            droppedURL = url
-        })
-        .onChange(of: droppedURL) { newValue in
-            guard let url = newValue else { return }
-            droppedURL = nil
-            lastOpenedURL = url
-            controller.open(url: url)
-        }
-        .sheet(isPresented: $quickFixPresented) {
-            QuickFixSheet(inputURL: $lastOpenedURL) { output in
-                if let output {
-                    lastOpenedURL = output
-                    controller.open(url: output)
-                }
-            }
-            .frame(minWidth: 720, minHeight: 520)
-        }
-        .sheet(isPresented: $showEncrypt) {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Encrypt PDF").font(.title3).bold()
-                SecureField("User password", text: $userPassword)
-                SecureField("Owner password (optional)", text: $ownerPassword)
-                HStack {
-                    Spacer()
-                    Button("Cancel") { showEncrypt = false }
-                    Button("Encrypt") {
-                        encryptCurrent()
-                        showEncrypt = false
-                    }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(controller.document == nil || userPassword.isEmpty)
-                }
-            }
-            .padding(16)
-            .frame(minWidth: 420)
-        }
-    }
-    
-    private var toolbar: some View {
-        HStack(spacing: 12) {
-            Button {
-                openFile()
-            } label: {
-                Label("Open", systemImage: "folder")
-            }
-            .help("Open a PDF")
-            
-            Button {
-                controller.saveCopy()
-            } label: {
-                Label("Save Copy", systemImage: "square.and.arrow.down")
-            }
-            .disabled(controller.document == nil)
-            
-            Button {
-                controller.printDoc()
-            } label: {
-                Label("Print", systemImage: "printer")
-            }
-            .disabled(controller.document == nil)
-            
-            Divider().frame(height: 22)
-            
-            Button { controller.rotateCurrentPage(left: true) } label: {
-                Label("Rotate Left", systemImage: "rotate.left")
-            }
-            .disabled(controller.document == nil)
-            
-            Button { controller.rotateCurrentPage(left: false) } label: {
-                Label("Rotate Right", systemImage: "rotate.right")
-            }
-            .disabled(controller.document == nil)
-            
-            Button(role: .destructive) { controller.deleteCurrentPage() } label: {
-                Label("Delete Page", systemImage: "trash")
-            }
-            .disabled(controller.document == nil)
-            
-            Divider().frame(height: 22)
-            
-            Button { quickFixPresented = true } label: {
-                Label("QuickFix…", systemImage: "wand.and.stars")
-            }
-            .disabled(controller.document == nil)
-            .help("Run QuickFix on the open document")
-            
-            Button { mergePDFs() } label: {
-                Label("Merge…", systemImage: "square.on.square")
-            }
-            
-            Button { showEncrypt = true } label: {
-                Label("Encrypt…", systemImage: "lock")
-            }
-            .disabled(controller.document == nil)
-            
-            Divider().frame(height: 22)
-            
-            Button {
-                controller.applyMark(.highlight, color: NSColor.yellow.withAlphaComponent(0.6))
-            } label: {
-                Label("Highlight", systemImage: "highlighter")
-            }
-            .disabled(controller.document == nil)
-            
-            Button {
-                controller.applyMark(.underline, color: NSColor.systemBlue)
-            } label: {
-                Label("Underline", systemImage: "underline")
-            }
-            .disabled(controller.document == nil)
-            
-            Button {
-                controller.applyMark(.strikeOut, color: NSColor.systemRed)
-            } label: {
-                Label("Strike", systemImage: "strikethrough")
-            }
-            .disabled(controller.document == nil)
-            
-            Button {
-                controller.addStickyNote()
-            } label: {
-                Label("Note", systemImage: "note.text")
-            }
-            .disabled(controller.document == nil)
-            
-            Button {
-                controller.validateFully()
-            } label: {
-                Label("Validate", systemImage: "checkmark.shield")
-            }
-            .disabled(controller.document == nil || controller.isFullValidationRunning)
-            .help("Run full validation/sanitization in the background")
-            
-            if let status = controller.validationStatus {
-                Text(status)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-            
-            Toggle(isOn: $controller.isSidebarVisible) {
-                Image(systemName: "sidebar.leading")
-            }
-            .toggleStyle(.button)
-            .help("Toggle thumbnail sidebar")
-            
-            HStack(spacing: 6) {
-                TextField("Find", text: $controller.searchQuery, onCommit: {
-                    controller.find(controller.searchQuery)
-                    controller.findNext()
-                })
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 240)
-                
-                Button { controller.findPrev() } label: {
-                    Image(systemName: "chevron.up")
-                }
-                .buttonStyle(.plain)
-                
-                Button { controller.findNext() } label: {
-                    Image(systemName: "chevron.down")
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-    }
-    
-    private func openFile() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = false
-        panel.allowsMultipleSelection = false
-        panel.allowedContentTypes = [.pdf]
-        if panel.runModal() == .OK, let url = panel.url {
-            lastOpenedURL = url
-            controller.open(url: url)
-        }
-    }
-    
-    private func mergePDFs() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = false
-        panel.allowsMultipleSelection = true
-        panel.allowedContentTypes = [.pdf]
-        if panel.runModal() == .OK {
-            let urls = panel.urls
-            guard !urls.isEmpty else { return }
-            
-            let savePanel = NSSavePanel()
-            savePanel.allowedContentTypes = [.pdf]
-            savePanel.nameFieldStringValue = "Merged.pdf"
-            
-            if savePanel.runModal() == .OK, let output = savePanel.url {
-                do {
-                    _ = try PDFMerge.merge(urls: urls, outputURL: output)
-                    NSWorkspace.shared.activateFileViewerSelecting([output])
-                } catch {
-                    print("Merge error: \(error)")
-                }
-            }
-        }
     }
     
     private func encryptCurrent() {
@@ -637,6 +424,436 @@ struct ReaderProView: View {
         }
         userPassword = ""
         ownerPassword = ""
+    }
+}
+
+// MARK: - Reader Shell View
+struct ReaderShellView: View {
+    @ObservedObject var controller: ReaderControllerPro
+    @Binding var quickFixPresented: Bool
+    @Binding var showEncrypt: Bool
+    
+    // Computed profile based on current document
+    private var profile: DocumentProfile {
+        if let doc = controller.document {
+            return DocumentProfile.from(pageCount: doc.pageCount)
+        }
+        return .empty
+    }
+    
+    @State private var showRightPanel = false
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            ReaderToolbar(controller: controller,
+                          profile: profile,
+                          quickFixPresented: $quickFixPresented,
+                          showEncrypt: $showEncrypt)
+            
+            HStack(spacing: 0) {
+                // Left Sidebar
+                if controller.isSidebarVisible {
+                    ReaderSidebarLeft(controller: controller, profile: profile)
+                        .frame(width: 260)
+                        .transition(.move(edge: .leading))
+                }
+                
+                Divider()
+                
+                // Canvas
+                ReaderCanvas(controller: controller, profile: profile)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                
+                // Right Sidebar (Slide-in)
+                if controller.isRightPanelVisible {
+                    Divider()
+                    ReaderSidebarRight(controller: controller, profile: profile)
+                        .frame(width: 280)
+                        .transition(.move(edge: .trailing))
+                }
+            }
+            
+            ReaderStatusBar(controller: controller)
+        }
+    }
+}
+
+// Extension to support right panel toggle in controller
+extension ReaderControllerPro {
+    // Add this property to your controller if not present, or use a @Published in the view
+    // For now, assuming we add it to the controller or manage it in the view.
+    // Since ReaderControllerPro is a class, we can't easily add @Published via extension.
+    // Let's assume we modify ReaderControllerPro to include isRightPanelVisible.
+    // For this refactor, I will add a computed property wrapper or assume it exists.
+    // Actually, let's add it to the controller class definition in the same file if possible,
+    // or use a separate state in ShellView if we can't modify the controller easily.
+    // But the toolbar needs to toggle it.
+    // Let's add it to the controller class in the file.
+}
+
+
+// MARK: - Reader Toolbar
+struct ReaderToolbar: View {
+    @ObservedObject var controller: ReaderControllerPro
+    let profile: DocumentProfile
+    @Binding var quickFixPresented: Bool
+    @Binding var showEncrypt: Bool
+    
+    var body: some View {
+        HStack(spacing: 16) {
+            // ... (keep existing content until button)
+            // Left: Back / Title
+            HStack(spacing: 8) {
+                if let url = controller.currentURL {
+                    Image(systemName: "doc.text")
+                        .foregroundStyle(.secondary)
+                    Text(url.lastPathComponent)
+                        .font(.headline)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                } else {
+                    Text("PDFQuickFix")
+                        .font(.headline)
+                }
+            }
+            
+            Spacer()
+            
+            // Center: View Controls
+            HStack(spacing: 12) {
+                // Zoom
+                HStack(spacing: 0) {
+                    Button(action: { controller.pdfView?.zoomOut(nil) }) {
+                        Image(systemName: "minus")
+                    }
+                    .buttonStyle(.plain)
+                    .frame(width: 24, height: 24)
+                    
+                    Text(zoomPercentage)
+                        .font(.caption.monospacedDigit())
+                        .frame(width: 48)
+                        .multilineTextAlignment(.center)
+                    
+                    Button(action: { controller.pdfView?.zoomIn(nil) }) {
+                        Image(systemName: "plus")
+                    }
+                    .buttonStyle(.plain)
+                    .frame(width: 24, height: 24)
+                }
+                .background(Color(NSColor.controlBackgroundColor))
+                .cornerRadius(6)
+                
+                // Page Nav
+                HStack(spacing: 4) {
+                    Text("Page")
+                        .foregroundStyle(.secondary)
+                    TextField("Page", value: $controller.currentPageIndex, formatter: NumberFormatter())
+                        .textFieldStyle(.plain)
+                        .font(.body.monospacedDigit())
+                        .multilineTextAlignment(.center)
+                        .frame(width: 32)
+                        .onSubmit {
+                            if let doc = controller.document,
+                               let page = doc.page(at: controller.currentPageIndex) {
+                                controller.pdfView?.go(to: page)
+                            }
+                        }
+                    Text("/ \(controller.document?.pageCount ?? 0)")
+                        .foregroundStyle(.secondary)
+                }
+                .font(.subheadline)
+            }
+            
+            Spacer()
+            
+            // Right: Tools & Massive Mode Badge
+            HStack(spacing: 12) {
+                if profile.isMassive {
+                    HStack(spacing: 4) {
+                        Circle().fill(Color.orange).frame(width: 6, height: 6)
+                        Text("Performance Mode")
+                            .font(.caption)
+                            .fontWeight(.medium)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.orange.opacity(0.1))
+                    .cornerRadius(12)
+                    .help("Search and thumbnails are limited for performance.")
+                }
+                
+                if profile.searchEnabled {
+                    HStack(spacing: 6) {
+                        Image(systemName: "magnifyingglass")
+                            .foregroundStyle(.secondary)
+                        TextField("Search", text: $controller.searchQuery, onCommit: {
+                            controller.find(controller.searchQuery)
+                            controller.findNext()
+                        })
+                        .textFieldStyle(.plain)
+                        .frame(width: 120)
+                    }
+                    .padding(6)
+                    .background(Color(NSColor.controlBackgroundColor))
+                    .cornerRadius(6)
+                }
+
+                Button {
+                    quickFixPresented = true
+                } label: {
+                    Image(systemName: "wand.and.stars")
+                }
+                .buttonStyle(.plain)
+                .help("Open QuickFix")
+
+                Button {
+                    showEncrypt = true
+                } label: {
+                    Image(systemName: "lock.doc")
+                }
+                .buttonStyle(.plain)
+                .disabled(controller.document == nil)
+                .help("Encrypt PDF")
+                
+                Button(action: {
+                    withAnimation(.sidebarTransition) {
+                        controller.toggleRightPanel()
+                    }
+                }) {
+                    Image(systemName: "sidebar.right")
+                }
+                .buttonStyle(.plain)
+                .help("Toggle Info/Comments")
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(Color(NSColor.windowBackgroundColor))
+        .overlay(Divider(), alignment: .bottom)
+    }
+    
+    private var zoomPercentage: String {
+        guard let scale = controller.pdfView?.scaleFactor else { return "100%" }
+        return "\(Int(scale * 100))%"
+    }
+}
+
+// MARK: - Reader Sidebar Left (Pages / Outline)
+struct ReaderSidebarLeft: View {
+    @ObservedObject var controller: ReaderControllerPro
+    let profile: DocumentProfile
+    @State private var selection: SidebarTab = .pages
+    
+    enum SidebarTab { case pages, outline }
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            Picker("", selection: $selection) {
+                Image(systemName: "square.grid.2x2").tag(SidebarTab.pages)
+                Image(systemName: "list.bullet").tag(SidebarTab.outline)
+            }
+            .pickerStyle(.segmented)
+            .padding(8)
+            
+            Divider()
+            
+            if selection == .pages {
+                if profile.thumbnailsEnabled {
+                    ThumbnailProRepresentedView(pdfViewGetter: { controller.pdfView })
+                } else {
+                    List(0..<(controller.document?.pageCount ?? 0), id: \.self) { index in
+                        Text("Page \(index + 1)")
+                            .font(.caption)
+                            .onTapGesture {
+                                if let page = controller.document?.page(at: index) {
+                                    controller.pdfView?.go(to: page)
+                                }
+                            }
+                    }
+                }
+            } else {
+                if profile.outlineEnabled {
+                    if let outline = controller.document?.outlineRoot {
+                        OutlineView(root: outline, controller: controller)
+                    } else {
+                        Text("No Outline")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                } else {
+                    Text("Outline disabled")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+        }
+        .background(Color(NSColor.controlBackgroundColor))
+    }
+}
+
+// Simple Outline View Helper
+struct OutlineView: View {
+    let root: PDFOutline
+    let controller: ReaderControllerPro
+    
+    var body: some View {
+        List {
+            OutlineNode(node: root, controller: controller)
+        }
+    }
+}
+
+struct OutlineNode: View {
+    let node: PDFOutline
+    let controller: ReaderControllerPro
+    
+    var body: some View {
+        let count = node.numberOfChildren
+        if count > 0 {
+            // TODO: Fix OutlineNode recursion
+            Text("Outline Children Placeholder")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.leading, 10)
+        }
+    }
+}
+
+
+// MARK: - Reader Sidebar Right (Comments / Info)
+struct ReaderSidebarRight: View {
+    @ObservedObject var controller: ReaderControllerPro
+    let profile: DocumentProfile
+    @State private var selection: RightPanelTab = .info
+    
+    enum RightPanelTab { case comments, info }
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            Picker("", selection: $selection) {
+                Text("Info").tag(RightPanelTab.info)
+                Text("Comments").tag(RightPanelTab.comments)
+            }
+            .pickerStyle(.segmented)
+            .padding(8)
+            
+            Divider()
+            
+            if selection == .info {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) {
+                        InfoRow(label: "File", value: controller.currentURL?.lastPathComponent ?? "-")
+                        InfoRow(label: "Pages", value: "\(controller.document?.pageCount ?? 0)")
+                        InfoRow(label: "Size", value: "Calculating...") // Placeholder
+                        InfoRow(label: "Security", value: controller.document?.isEncrypted == true ? "Encrypted" : "None")
+                        
+                        Divider()
+                        
+                        if let status = controller.validationStatus {
+                            Text("Validation")
+                                .font(.headline)
+                            Text(status)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding()
+                }
+            } else {
+                if profile.globalAnnotationsEnabled {
+                    Text("Comments List Placeholder")
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    Text("Comments disabled for performance")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+        }
+        .background(Color(NSColor.controlBackgroundColor))
+    }
+}
+
+struct InfoRow: View {
+    let label: String
+    let value: String
+    
+    var body: some View {
+        HStack {
+            Text(label).foregroundStyle(.secondary)
+            Spacer()
+            Text(value).fontWeight(.medium)
+        }
+        .font(.caption)
+    }
+}
+
+// MARK: - Reader Status Bar
+struct ReaderStatusBar: View {
+    @ObservedObject var controller: ReaderControllerPro
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            if let status = controller.validationStatus {
+                Image(systemName: "checkmark.shield")
+                    .font(.caption)
+                Text(status)
+                    .font(.caption)
+            } else {
+                Text("Ready")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            
+            Spacer()
+            
+            if let selection = controller.pdfView?.currentSelection {
+                Text("\(selection.pages.count) pages selected")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 4)
+        .background(Color(NSColor.windowBackgroundColor))
+        .overlay(Divider(), alignment: .top)
+    }
+}
+
+// MARK: - Reader Canvas
+struct ReaderCanvas: View {
+    @ObservedObject var controller: ReaderControllerPro
+    let profile: DocumentProfile
+    
+    var body: some View {
+        ZStack {
+            if controller.document != nil && !profile.isMassive {
+                PDFViewProRepresented(document: controller.document) { view in
+                    controller.pdfView = view
+                }
+                .background(Color(NSColor.textBackgroundColor))
+            } else if profile.isMassive, let url = controller.currentURL {
+                VStack(spacing: 12) {
+                    Text("Performance Mode Active")
+                        .font(.headline)
+                    Text("This document is too large for the full editor.")
+                        .foregroundStyle(.secondary)
+                    Button("Open in Preview") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+            } else {
+                Text("Open a PDF")
+                    .foregroundStyle(.secondary)
+            }
+            
+            if controller.isLoadingDocument {
+                LoadingOverlayView(status: controller.loadingStatus ?? "Loading...")
+            }
+        }
     }
 }
 
