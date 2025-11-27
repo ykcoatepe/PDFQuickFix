@@ -668,8 +668,11 @@ struct StudioPDFViewRepresented: NSViewRepresentable {
                                     desiredDisplayMode: .singlePageContinuous,
                                     resetScale: true)
         
-        let gesture = NSClickGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap(_:)))
-        view.addGestureRecognizer(gesture)
+        let tapGesture = NSClickGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap(_:)))
+        view.addGestureRecognizer(tapGesture)
+        
+        let panGesture = NSPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handlePan(_:)))
+        view.addGestureRecognizer(panGesture)
         
         didCreate(view)
         return view
@@ -694,6 +697,13 @@ struct StudioPDFViewRepresented: NSViewRepresentable {
             let location = gesture.location(in: pdfView)
             controller.handleTap(in: pdfView, at: location)
         }
+        
+        @MainActor
+        @objc func handlePan(_ gesture: NSPanGestureRecognizer) {
+            guard let pdfView = gesture.view as? PDFView else { return }
+            let location = gesture.location(in: pdfView)
+            controller.handleDrag(in: pdfView, at: location, state: gesture.state)
+        }
     }
 }
 
@@ -703,6 +713,8 @@ class StudioPDFView: PDFView {
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 53 { // Esc
             controller?.deselectAnnotation()
+        } else if event.keyCode == 51 || event.keyCode == 117 { // Delete or Forward Delete
+            controller?.deleteSelectedAnnotation()
         } else {
             super.keyDown(with: event)
         }

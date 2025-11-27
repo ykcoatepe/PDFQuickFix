@@ -105,6 +105,8 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
     private var studioOpenStart: Date?
     #endif
 
+
+
     deinit {
         NotificationCenter.default.removeObserver(self)
         validationRunner.cancelAll()
@@ -247,6 +249,19 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
 
     // MARK: - Selection & Editing
     
+    private enum DragMode {
+        case none
+        case move(startPoint: CGPoint, originalBounds: CGRect)
+        case resize(handle: ResizeHandle, startPoint: CGPoint, originalBounds: CGRect)
+    }
+    
+    private enum ResizeHandle {
+        case topLeft, topRight, bottomLeft, bottomRight
+    }
+    
+    private let selectionHandleSize: CGFloat = 6.0
+    private var currentDragMode: DragMode = .none
+    
     func selectAnnotation(_ annotation: PDFAnnotation) {
         guard !isMassiveDocument else { return }
         // If already selected, do nothing (or refresh?)
@@ -273,6 +288,18 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
             selectionHelperAnnotation = nil
         }
         selectedAnnotation = nil
+        currentDragMode = .none
+    }
+    
+    func deleteSelectedAnnotation() {
+        guard let annotation = selectedAnnotation, let page = annotation.page else { return }
+        
+        registerDelete(annotation: annotation, on: page)
+        
+        deselectAnnotation()
+        page.removeAnnotation(annotation)
+        refreshAnnotations()
+        pushLog("Deleted annotation")
     }
     
     func handleTap(in view: PDFView, at point: CGPoint) {
@@ -293,6 +320,94 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
             selectAnnotation(annotation)
         } else {
             deselectAnnotation()
+        }
+    }
+    
+    func handleDrag(in view: PDFView, at point: CGPoint, state: NSGestureRecognizer.State) {
+        guard !isMassiveDocument, let annotation = selectedAnnotation, let page = annotation.page else { return }
+        
+        let pagePoint = view.convert(point, to: page)
+        
+        switch state {
+        case .began:
+            guard let mode = dragMode(for: pagePoint, annotation: annotation) else {
+                currentDragMode = .none
+                return
+            }
+            currentDragMode = mode
+            
+        case .changed:
+            switch currentDragMode {
+            case .move(let startPoint, let originalBounds):
+                let dx = pagePoint.x - startPoint.x
+                let dy = pagePoint.y - startPoint.y
+                let newBounds = CGRect(x: originalBounds.origin.x + dx,
+                                       y: originalBounds.origin.y + dy,
+                                       width: originalBounds.width,
+                                       height: originalBounds.height)
+                annotation.bounds = newBounds
+                selectionHelperAnnotation?.bounds = newBounds
+                
+            case .resize:
+                break // TODO: Implement resize
+            case .none:
+                break
+            }
+            
+        case .ended:
+            if case .move(_, let originalBounds) = currentDragMode {
+                let finalBounds = annotation.bounds
+                if finalBounds != originalBounds {
+                    registerBoundsChange(annotation: annotation, oldBounds: originalBounds, newBounds: finalBounds)
+                }
+            }
+            currentDragMode = .none
+            
+        default:
+            currentDragMode = .none
+        }
+    }
+    
+    private func dragMode(for point: CGPoint, annotation: PDFAnnotation) -> DragMode? {
+        let bounds = annotation.bounds
+        let handleSize = selectionHandleSize
+        let handles: [(ResizeHandle, CGRect)] = [
+            (.bottomLeft, CGRect(origin: CGPoint(x: bounds.minX, y: bounds.minY), size: CGSize(width: handleSize, height: handleSize))),
+            (.bottomRight, CGRect(origin: CGPoint(x: bounds.maxX - handleSize, y: bounds.minY), size: CGSize(width: handleSize, height: handleSize))),
+            (.topLeft, CGRect(origin: CGPoint(x: bounds.minX, y: bounds.maxY - handleSize), size: CGSize(width: handleSize, height: handleSize))),
+            (.topRight, CGRect(origin: CGPoint(x: bounds.maxX - handleSize, y: bounds.maxY - handleSize), size: CGSize(width: handleSize, height: handleSize)))
+        ]
+        if let match = handles.first(where: { $0.1.insetBy(dx: -2, dy: -2).contains(point) }) {
+            return .resize(handle: match.0, startPoint: point, originalBounds: bounds)
+        }
+        if bounds.contains(point) {
+            return .move(startPoint: point, originalBounds: bounds)
+        }
+        return nil
+    }
+
+    private func registerBoundsChange(annotation: PDFAnnotation, oldBounds: CGRect, newBounds: CGRect) {
+        guard let undoManager = pdfView?.undoManager else { return }
+        undoManager.registerUndo(withTarget: self) { target in
+            annotation.bounds = oldBounds
+            target.selectionHelperAnnotation?.bounds = oldBounds
+            target.registerBoundsChange(annotation: annotation, oldBounds: newBounds, newBounds: oldBounds)
+        }
+        if !undoManager.isUndoing {
+            undoManager.setActionName("Move/Resize Annotation")
+        }
+    }
+
+    private func registerDelete(annotation: PDFAnnotation, on page: PDFPage) {
+        guard let undoManager = pdfView?.undoManager else { return }
+        undoManager.registerUndo(withTarget: self) { target in
+            page.addAnnotation(annotation)
+            target.selectAnnotation(annotation)
+            target.refreshAnnotations()
+            target.registerDelete(annotation: annotation, on: page)
+        }
+        if !undoManager.isUndoing {
+            undoManager.setActionName("Delete Annotation")
         }
     }
 
