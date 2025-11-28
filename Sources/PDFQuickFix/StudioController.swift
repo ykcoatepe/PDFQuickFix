@@ -89,17 +89,11 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     }
     
     func rotateLeft() {
-        guard let view = pdfView, let page = view.currentPage else { return }
-        let currentRotation = page.rotation
-        page.rotation = (currentRotation - 90 + 360) % 360
-        view.layoutDocumentView()
+        rotateCurrentPageLeft()
     }
     
     func rotateRight() {
-        guard let view = pdfView, let page = view.currentPage else { return }
-        let currentRotation = page.rotation
-        page.rotation = (currentRotation + 90) % 360
-        view.layoutDocumentView()
+        rotateCurrentPageRight()
     }
     weak var pdfView: PDFView?
     private let validationRunner = DocumentValidationRunner()
