@@ -1489,7 +1489,7 @@ class SelectionAnnotation: PDFAnnotation {
             CGPoint(x: rect.minX, y: rect.minY),
             CGPoint(x: rect.maxX - handleSize, y: rect.minY),
             CGPoint(x: rect.minX, y: rect.maxY - handleSize),
-            CGPoint(x: rect.maxX - handleSize, y: rect.maxY)
+            CGPoint(x: rect.maxX - handleSize, y: rect.maxY - handleSize)
         ]
         
         context.setFillColor(NSColor.white.cgColor)
