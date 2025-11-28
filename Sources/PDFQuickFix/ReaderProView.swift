@@ -1,10 +1,11 @@
 import SwiftUI
-import PDFKit
+@preconcurrency import PDFKit
 import AppKit
 import UniformTypeIdentifiers
 
 // Controller coordinating PDF viewing, search, and page operations.
-final class ReaderControllerPro: NSObject, ObservableObject, PDFViewDelegate {
+@MainActor
+final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
     @Published var document: PDFDocument?
     @Published var currentPageIndex: Int = 0
     @Published var zoomScale: CGFloat = 1.0
@@ -167,13 +168,100 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFViewDelegate {
         scheduleValidation(for: url, pageLimit: nil, mode: .full)
     }
     
-    func saveCopy() {
+    func saveAs() {
         guard let doc = document else { return }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.pdf]
         panel.nameFieldStringValue = (doc.documentURL?.deletingPathExtension().lastPathComponent ?? "Document") + "-copy.pdf"
         if panel.runModal() == .OK, let url = panel.url {
             doc.write(to: url)
+        }
+    }
+    
+    func exportToImages(format: NSBitmapImageRep.FileType) {
+        guard let docURL = document?.documentURL else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.prompt = "Export"
+        panel.message = "Choose a folder to save images"
+        
+        if panel.runModal() == .OK, let outputDir = panel.url {
+            let fileExtension: String
+            switch format {
+            case .jpeg: fileExtension = "jpg"
+            case .png: fileExtension = "png"
+            case .tiff: fileExtension = "tiff"
+            default: fileExtension = "img"
+            }
+            
+            isProcessing = true
+
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                // Create a new PDFDocument instance for background processing
+                guard let backgroundDoc = PDFDocument(url: docURL) else {
+                    Task { @MainActor [weak self] in self?.isProcessing = false }
+                    return
+                }
+                
+                for i in 0..<backgroundDoc.pageCount {
+                    guard let page = backgroundDoc.page(at: i) else { continue }
+                    let pageRect = page.bounds(for: .mediaBox)
+                    // Use PDFPage.thumbnail to generate image
+
+                    
+                    let image = page.thumbnail(of: pageRect.size, for: .mediaBox)
+                    if let tiffData = image.tiffRepresentation,
+                       let bitmap = NSBitmapImageRep(data: tiffData),
+                       let data = bitmap.representation(using: format, properties: [:]) {
+                        
+                        let filename = "Page_\(i + 1).\(fileExtension)"
+                        let fileURL = outputDir.appendingPathComponent(filename)
+                        try? data.write(to: fileURL)
+                    }
+                }
+                
+                Task { @MainActor [weak self] in
+                    self?.isProcessing = false
+                    NSWorkspace.shared.activateFileViewerSelecting([outputDir])
+                }
+            }
+        }
+    }
+    
+    func exportToText() {
+        guard let docURL = document?.documentURL else { return }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.plainText]
+        panel.nameFieldStringValue = (docURL.deletingPathExtension().lastPathComponent) + ".txt"
+        
+        if panel.runModal() == .OK, let url = panel.url {
+            isProcessing = true
+
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                // Create a new PDFDocument instance for background processing
+                guard let backgroundDoc = PDFDocument(url: docURL) else {
+                    Task { @MainActor [weak self] in self?.isProcessing = false }
+                    return
+                }
+                
+                var fullText = ""
+                for i in 0..<backgroundDoc.pageCount {
+                    if let page = backgroundDoc.page(at: i), let text = page.string {
+                        fullText += "--- Page \(i + 1) ---\n\n"
+                        fullText += text
+                        fullText += "\n\n"
+                    }
+                }
+                
+                try? fullText.write(to: url, atomically: true, encoding: .utf8)
+                
+                Task { @MainActor [weak self] in
+                    self?.isProcessing = false
+                    NSWorkspace.shared.activateFileViewerSelecting([url])
+                }
+            }
         }
     }
     
@@ -204,9 +292,12 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFViewDelegate {
             queue: .main
         ) { [weak self] note in
             guard let selection = note.userInfo?["PDFDocumentFoundSelection"] as? PDFSelection else { return }
-            self?.searchMatches.append(selection)
-            if let idx = self?.searchMatches.indices.last, self?.currentMatchIndex == nil {
-                self?.focusSelection(selection, at: idx)
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.searchMatches.append(selection)
+                if let idx = self.searchMatches.indices.last, self.currentMatchIndex == nil {
+                    self.focusSelection(selection, at: idx)
+                }
             }
         }
         
@@ -278,12 +369,52 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFViewDelegate {
     
     // MARK: - Page operations
     
-    func rotateCurrentPage(left: Bool) {
-        guard let page = pdfView?.currentPage else { return }
-        var rotation = page.rotation
-        rotation += left ? -90 : 90
-        if rotation < 0 { rotation += 360 }
-        page.rotation = rotation % 360
+    func rotateLeft() {
+        rotateCurrentPageLeft()
+    }
+    
+    func rotateRight() {
+        rotateCurrentPageRight()
+    }
+    
+    func rotateCurrentPageLeft() {
+        guard let page = currentPDFPage else { return }
+        let oldRotation = page.rotation
+        let newRotation = (oldRotation - 90).normalizedRotation
+        page.rotation = newRotation
+        notifyPageRotationChanged()
+        registerRotationUndo(page: page, oldRotation: oldRotation, newRotation: newRotation)
+    }
+
+    func rotateCurrentPageRight() {
+        guard let page = currentPDFPage else { return }
+        let oldRotation = page.rotation
+        let newRotation = (oldRotation + 90).normalizedRotation
+        page.rotation = newRotation
+        notifyPageRotationChanged()
+        registerRotationUndo(page: page, oldRotation: oldRotation, newRotation: newRotation)
+    }
+
+    private var currentPDFPage: PDFPage? {
+        if let pdfView = pdfView, let page = pdfView.currentPage {
+            return page
+        }
+        return nil
+    }
+
+    private func notifyPageRotationChanged() {
+        // PDFKit repaints automatically, but we can force a layout update if needed.
+        // For now, this is a placeholder for any side effects.
+    }
+
+    private func registerRotationUndo(page: PDFPage, oldRotation: Int, newRotation: Int) {
+        guard let undoManager = pdfView?.undoManager else { return }
+        undoManager.registerUndo(withTarget: self) { controller in
+            page.rotation = oldRotation
+            controller.notifyPageRotationChanged()
+            controller.registerRotationUndo(page: page, oldRotation: newRotation, newRotation: oldRotation)
+        }
+        undoManager.setActionName("Rotate Page")
     }
     
     func deleteCurrentPage() {
@@ -326,13 +457,6 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFViewDelegate {
         zoomScale = view.scaleFactor
     }
 
-    func pdfViewWillChangeScaleFactor(_ sender: PDFView, toScale scale: CGFloat) -> CGFloat {
-        DispatchQueue.main.async { [weak self] in
-            self?.zoomScale = scale
-        }
-        return scale
-    }
-    
     private func annotationRects(for selection: PDFSelection, on page: PDFPage) -> [CGRect] {
         let perLine = selection.selectionsByLine()
         let rects = perLine
@@ -401,6 +525,18 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFViewDelegate {
         }
     }
 }
+extension ReaderControllerPro: FileExportable {}
+
+// PDFViewDelegate conformance kept nonisolated to satisfy protocol requirements
+// while updating state on the main actor explicitly.
+extension ReaderControllerPro: PDFViewDelegate {
+    nonisolated func pdfViewWillChangeScaleFactor(_ sender: PDFView, toScale scale: CGFloat) -> CGFloat {
+        Task { @MainActor [weak self] in
+            self?.zoomScale = scale
+        }
+        return scale
+    }
+}
 
 struct ReaderProView: View {
     @ObservedObject var controller: ReaderControllerPro
@@ -431,9 +567,11 @@ struct ReaderProView: View {
                             profile: profile,
                             selectedTab: $selectedTab,
                             syncEnabled: $documentHub.syncEnabled)
-            .onDrop(of: [.fileURL, .url, .pdf], delegate: PDFURLDropDelegate { url in
-                droppedURL = url
-            })
+            .focusedSceneValue(\.fileExportable, controller)
+        .focusedSceneValue(\.pdfActionable, controller)
+        .onDrop(of: [.fileURL, .url, .pdf], delegate: PDFURLDropDelegate { url in
+            droppedURL = url
+        })
             .onChange(of: droppedURL) { newValue in
                 guard let url = newValue else { return }
                 droppedURL = nil
@@ -473,7 +611,8 @@ struct ReaderProView: View {
                 .frame(minWidth: 420)
             }
             .onAppear {
-                if documentHub.syncEnabled {
+                syncFromHub()
+                if documentHub.syncEnabled, documentHub.currentURL == nil {
                     documentHub.update(url: controller.currentURL, from: .reader)
                 }
             }
@@ -482,12 +621,8 @@ struct ReaderProView: View {
                     documentHub.update(url: url, from: .reader)
                 }
             }
-            .onChange(of: documentHub.currentURL) { url in
-                guard documentHub.syncEnabled,
-                      documentHub.lastSource == .studio,
-                      let url,
-                      controller.currentURL != url else { return }
-                controller.open(url: url)
+            .onChange(of: documentHub.currentURL) { _ in
+                syncFromHub()
             }
     }
     
@@ -514,6 +649,14 @@ struct ReaderProView: View {
         }
         userPassword = ""
         ownerPassword = ""
+    }
+
+    private func syncFromHub() {
+        guard documentHub.syncEnabled,
+              documentHub.lastSource == .studio,
+              let target = documentHub.currentURL,
+              controller.currentURL != target else { return }
+        controller.open(url: target)
     }
 }
 
@@ -736,6 +879,21 @@ struct ReaderShellView: View {
                     ReaderCanvas(controller: controller, profile: profile)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .background(AppTheme.Colors.background)
+                        .contextMenu {
+                            if controller.document != nil {
+                                Button {
+                                    controller.rotateCurrentPageLeft()
+                                } label: {
+                                    Label("Rotate Left", systemImage: "rotate.left")
+                                }
+                                
+                                Button {
+                                    controller.rotateCurrentPageRight()
+                                } label: {
+                                    Label("Rotate Right", systemImage: "rotate.right")
+                                }
+                            }
+                        }
                 } else {
                     ReaderHomeView(
                         controller: controller
@@ -771,6 +929,18 @@ struct ReaderShellView: View {
         let minWidth: CGFloat = 180
         let maxWidth: CGFloat = 420
         return min(max(value, minWidth), maxWidth)
+    }
+}
+
+private extension Int {
+    var normalizedRotation: Int {
+        var value = self % 360
+        if value < 0 { value += 360 }
+        // PDFKit expects multiples of 90°
+        if value % 90 != 0 {
+            value = (value / 90) * 90
+        }
+        return value
     }
 }
 
@@ -962,7 +1132,7 @@ struct ReaderCanvas: View {
     var body: some View {
         ZStack {
             if controller.document != nil && !profile.isMassive {
-                PDFViewProRepresented(document: controller.document) { view in
+                PDFViewProRepresented(document: controller.document, controller: controller) { view in
                     controller.pdfView = view
                 }
                 .background(Color(NSColor.textBackgroundColor))
@@ -993,10 +1163,12 @@ struct ReaderCanvas: View {
 
 struct PDFViewProRepresented: NSViewRepresentable {
     var document: PDFDocument?
+    var controller: ReaderControllerPro
     var didCreate: (PDFView) -> Void
     
     func makeNSView(context: Context) -> PDFView {
-        let view = PDFView()
+        let view = ReaderPDFView()
+        view.controller = controller
         view.backgroundColor = .textBackgroundColor
         view.document = document
         view.applyPerformanceTuning(isLargeDocument: false,
@@ -1010,6 +1182,36 @@ struct PDFViewProRepresented: NSViewRepresentable {
         if nsView.document !== document {
             nsView.document = document
         }
+        if let readerView = nsView as? ReaderPDFView {
+            readerView.controller = controller
+        }
+    }
+}
+
+class ReaderPDFView: PDFView {
+    weak var controller: ReaderControllerPro?
+    
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let menu = super.menu(for: event) ?? NSMenu()
+        menu.addItem(NSMenuItem.separator())
+        
+        let rotateLeft = NSMenuItem(title: "Rotate Left 90°", action: #selector(rotateLeft(_:)), keyEquivalent: "")
+        rotateLeft.target = self
+        menu.addItem(rotateLeft)
+        
+        let rotateRight = NSMenuItem(title: "Rotate Right 90°", action: #selector(rotateRight(_:)), keyEquivalent: "")
+        rotateRight.target = self
+        menu.addItem(rotateRight)
+        
+        return menu
+    }
+    
+    @objc private func rotateLeft(_ sender: Any?) {
+        controller?.rotateCurrentPageLeft()
+    }
+    
+    @objc private func rotateRight(_ sender: Any?) {
+        controller?.rotateCurrentPageRight()
     }
 }
 

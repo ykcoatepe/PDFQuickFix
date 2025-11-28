@@ -8,7 +8,6 @@ struct ContentView: View {
     @StateObject private var studioController = StudioController()
     
     // Studio State (Lifted for Toolbar access)
-    @State private var studioSelectedTool: StudioTool = .organize
     @State private var showQuickFix: Bool = false
     @State private var quickFixURL: URL?
     @State private var showingWatermarkSheet = false
@@ -23,7 +22,7 @@ struct ContentView: View {
                 readerController: readerController,
                 studioController: studioController,
                 readerSyncEnabled: $documentHub.syncEnabled,
-                studioSelectedTool: $studioSelectedTool,
+                studioSelectedTool: $studioController.selectedTool,
                 showQuickFix: $showQuickFix,
                 quickFixURL: $quickFixURL,
                 showingWatermarkSheet: $showingWatermarkSheet,
@@ -46,7 +45,7 @@ struct ContentView: View {
                     StudioView(
                         controller: studioController,
                         selectedTab: $currentMode,
-                        selectedTool: $studioSelectedTool,
+                        selectedTool: $studioController.selectedTool,
                         showQuickFix: $showQuickFix,
                         quickFixURL: $quickFixURL,
                         showingWatermarkSheet: $showingWatermarkSheet,
@@ -188,6 +187,38 @@ struct UnifiedToolbar: View {
             
             Divider().frame(height: 16)
             
+            // File Operations
+            Group {
+                Button(action: openReaderFile) {
+                    Image(systemName: "folder")
+                }
+                .buttonStyle(.plain)
+                .help("Open PDF…")
+
+                Button(action: { readerController.saveAs() }) {
+                    Image(systemName: "square.and.arrow.down")
+                }
+                .buttonStyle(.plain)
+                .help("Save As…")
+                .disabled(readerController.document == nil)
+                
+                Menu {
+                    Menu("Images") {
+                        Button("JPEG") { readerController.exportToImages(format: .jpeg) }
+                        Button("PNG") { readerController.exportToImages(format: .png) }
+                        Button("TIFF") { readerController.exportToImages(format: .tiff) }
+                    }
+                    Button("Text") { readerController.exportToText() }
+                } label: {
+                    Image(systemName: "square.and.arrow.up")
+                }
+                .menuStyle(.borderlessButton)
+                .frame(width: 20, height: 28)
+                .disabled(readerController.document == nil)
+            }
+            
+            Divider().frame(height: 16)
+            
             // Zoom Controls
             HStack(spacing: 8) {
                 Button(action: { readerController.zoomOut() }) {
@@ -214,6 +245,25 @@ struct UnifiedToolbar: View {
                 .buttonStyle(.plain)
                 .disabled(readerController.document == nil)
             }
+            
+            Divider().frame(height: 16)
+            
+            // Rotation Controls
+            HStack(spacing: 8) {
+                Button(action: { readerController.rotateCurrentPageLeft() }) {
+                    Image(systemName: "rotate.left")
+                }
+                .buttonStyle(.plain)
+                .help("Rotate Left")
+                .disabled(readerController.document == nil)
+                
+                Button(action: { readerController.rotateCurrentPageRight() }) {
+                    Image(systemName: "rotate.right")
+                }
+                .buttonStyle(.plain)
+                .help("Rotate Right")
+                .disabled(readerController.document == nil)
+            }
         }
     }
     
@@ -238,6 +288,26 @@ struct UnifiedToolbar: View {
                     Label("Save", systemImage: "square.and.arrow.down")
                 }
                 .buttonStyle(GhostButtonStyle())
+                .disabled(studioController.document == nil)
+                
+                Button(action: { studioController.saveAs() }) {
+                    Label("Save As", systemImage: "square.and.arrow.down.on.square")
+                }
+                .buttonStyle(GhostButtonStyle())
+                .disabled(studioController.document == nil)
+                
+                Menu {
+                    Menu("Images") {
+                        Button("JPEG") { studioController.exportToImages(format: .jpeg) }
+                        Button("PNG") { studioController.exportToImages(format: .png) }
+                        Button("TIFF") { studioController.exportToImages(format: .tiff) }
+                    }
+                    Button("Text") { studioController.exportToText() }
+                } label: {
+                    Label("Export", systemImage: "square.and.arrow.up")
+                }
+                .menuStyle(.borderlessButton)
+                .frame(height: 28)
                 .disabled(studioController.document == nil)
             }
         }
@@ -404,6 +474,16 @@ struct UnifiedToolbar: View {
             readerController.setZoom(percent: value)
         }
         zoomInput = zoomPercentage
+    }
+
+    private func openReaderFile() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.pdf]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        if panel.runModal() == .OK, let url = panel.url {
+            readerController.open(url: url)
+        }
     }
     
     private var pageBinding: Binding<Int> {
