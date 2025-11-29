@@ -836,13 +836,17 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     }
 
     func exportToImages(format: NSBitmapImageRep.FileType) {
-        guard let docURL = document?.documentURL else { return }
+        guard let doc = document, let snapshot = doc.dataRepresentation() else {
+            pushLog("Export failed: couldn't read current document state")
+            return
+        }
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.canCreateDirectories = true
         panel.prompt = "Export"
         panel.message = "Choose a folder to save images"
+        panel.directoryURL = currentURL?.deletingLastPathComponent()
         
         if panel.runModal() == .OK, let outputDir = panel.url {
             let fileExtension: String
@@ -865,7 +869,12 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
                 }
                 
                 // Create a new PDFDocument instance for background processing
-                guard let backgroundDoc = PDFDocument(url: docURL) else { return }
+                guard let backgroundDoc = PDFDocument(data: snapshot) else {
+                    DispatchQueue.main.async {
+                        self?.pushLog("Export failed: couldn't read current document state")
+                    }
+                    return
+                }
                 
                 for i in 0..<backgroundDoc.pageCount {
                     guard let page = backgroundDoc.page(at: i) else { continue }
@@ -891,7 +900,10 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     }
     
     func exportToText() {
-        guard let docURL = document?.documentURL else { return }
+        guard let doc = document, let snapshot = doc.dataRepresentation() else {
+            pushLog("Export failed: couldn't read current document state")
+            return
+        }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.plainText]
         panel.nameFieldStringValue = (currentURL?.deletingPathExtension().lastPathComponent ?? "Document") + ".txt"
@@ -909,7 +921,12 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
                 }
                 
                 // Create a new PDFDocument instance for background processing
-                guard let backgroundDoc = PDFDocument(url: docURL) else { return }
+                guard let backgroundDoc = PDFDocument(data: snapshot) else {
+                    DispatchQueue.main.async {
+                        self?.pushLog("Export failed: couldn't read current document state")
+                    }
+                    return
+                }
                 
                 var fullText = ""
                 for i in 0..<backgroundDoc.pageCount {

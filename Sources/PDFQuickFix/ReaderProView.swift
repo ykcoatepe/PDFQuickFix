@@ -179,13 +179,17 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
     }
     
     func exportToImages(format: NSBitmapImageRep.FileType) {
-        guard let docURL = document?.documentURL else { return }
+        guard let doc = document, let snapshot = doc.dataRepresentation() else {
+            log = "Export failed: couldn't read current document state"
+            return
+        }
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.canCreateDirectories = true
         panel.prompt = "Export"
         panel.message = "Choose a folder to save images"
+        panel.directoryURL = doc.documentURL?.deletingLastPathComponent()
         
         if panel.runModal() == .OK, let outputDir = panel.url {
             let fileExtension: String
@@ -200,8 +204,11 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
 
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 // Create a new PDFDocument instance for background processing
-                guard let backgroundDoc = PDFDocument(url: docURL) else {
-                    Task { @MainActor [weak self] in self?.isProcessing = false }
+                guard let backgroundDoc = PDFDocument(data: snapshot) else {
+                    Task { @MainActor [weak self] in
+                        self?.isProcessing = false
+                        self?.log = "Export failed: couldn't read current document state"
+                    }
                     return
                 }
                 
@@ -231,18 +238,24 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
     }
     
     func exportToText() {
-        guard let docURL = document?.documentURL else { return }
+        guard let doc = document, let snapshot = doc.dataRepresentation() else {
+            log = "Export failed: couldn't read current document state"
+            return
+        }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.plainText]
-        panel.nameFieldStringValue = (docURL.deletingPathExtension().lastPathComponent) + ".txt"
+        panel.nameFieldStringValue = (doc.documentURL?.deletingPathExtension().lastPathComponent ?? "Document") + ".txt"
         
         if panel.runModal() == .OK, let url = panel.url {
             isProcessing = true
 
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 // Create a new PDFDocument instance for background processing
-                guard let backgroundDoc = PDFDocument(url: docURL) else {
-                    Task { @MainActor [weak self] in self?.isProcessing = false }
+                guard let backgroundDoc = PDFDocument(data: snapshot) else {
+                    Task { @MainActor [weak self] in
+                        self?.isProcessing = false
+                        self?.log = "Export failed: couldn't read current document state"
+                    }
                     return
                 }
                 
