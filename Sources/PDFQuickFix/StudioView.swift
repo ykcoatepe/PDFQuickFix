@@ -177,6 +177,9 @@ struct StudioView: View {
                 documentHub.update(url: url, from: .studio)
             }
         }
+        .focusedSceneValue(\.fileExportable, controller)
+        .focusedSceneValue(\.pdfActionable, controller)
+        .focusedSceneValue(\.studioToolSwitchable, controller)
     }
 
     private var modeBar: some View {
@@ -248,11 +251,24 @@ struct StudioView: View {
                                     .stroke(AppTheme.Colors.cardBorder, lineWidth: AppTheme.Metrics.cardBorderWidth)
                             )
 
-                        StudioPDFViewRepresented(document: doc) { view in
+                        StudioPDFViewRepresented(document: doc, controller: controller) { view in
                             controller.attach(pdfView: view)
                         }
                         .background(AppTheme.Colors.background)
                         .clipShape(RoundedRectangle(cornerRadius: AppTheme.Metrics.cardCornerRadius, style: .continuous))
+                        .contextMenu {
+                            Button {
+                                controller.rotateCurrentPageLeft()
+                            } label: {
+                                Label("Rotate Left", systemImage: "rotate.left")
+                            }
+                            
+                            Button {
+                                controller.rotateCurrentPageRight()
+                            } label: {
+                                Label("Rotate Right", systemImage: "rotate.right")
+                            }
+                        }
 
                         if selectedTool == .measure {
                             MeasureOverlay()
@@ -266,7 +282,7 @@ struct StudioView: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if controller.isMassiveDocument, let url = controller.currentURL {
-                    masssiveNotice(url: url)
+                    massiveNotice(url: url)
                 } else {
                     emptyPlaceholder
                 }
@@ -417,6 +433,25 @@ struct StudioView: View {
             .buttonStyle(.bordered)
             .tint(.accentColor)
             .disabled(controller.document == nil)
+            
+            // Rotation Buttons
+            HStack(spacing: 0) {
+                Button {
+                    controller.rotateCurrentPageLeft()
+                } label: {
+                    Image(systemName: "rotate.left")
+                }
+                .buttonStyle(.bordered)
+                .disabled(controller.document == nil)
+                
+                Button {
+                    controller.rotateCurrentPageRight()
+                } label: {
+                    Image(systemName: "rotate.right")
+                }
+                .buttonStyle(.bordered)
+                .disabled(controller.document == nil)
+            }
         }
         .foregroundColor(AppTheme.Colors.primaryText)
     }
@@ -479,7 +514,7 @@ struct StudioView: View {
         }
     }
 
-    private func masssiveNotice(url: URL) -> some View {
+    private func massiveNotice(url: URL) -> some View {
         VStack(spacing: 12) {
             Text("Studio is disabled for massive documents.")
                 .font(.headline)
@@ -652,14 +687,21 @@ struct StudioView: View {
 
 struct StudioPDFViewRepresented: NSViewRepresentable {
     var document: PDFDocument?
+    var controller: StudioController
     var didCreate: (PDFView) -> Void
 
+    func makeCoordinator() -> () {
+    }
+
     func makeNSView(context: Context) -> PDFView {
-        let view = PDFView()
+        let view = StudioPDFView()
+        view.controller = controller
+        view.wantsLayer = true
         view.document = document
         view.applyPerformanceTuning(isLargeDocument: false,
                                     desiredDisplayMode: .singlePageContinuous,
                                     resetScale: true)
+        
         didCreate(view)
         return view
     }
@@ -668,6 +710,102 @@ struct StudioPDFViewRepresented: NSViewRepresentable {
         if nsView.document !== document {
             nsView.document = document
         }
+    }
+}
+
+class StudioPDFView: PDFView {
+    weak var controller: StudioController?
+    private var trackingArea: NSTrackingArea?
+    private var isDraggingAnnotation: Bool = false
+
+    override func mouseDown(with event: NSEvent) {
+        if let controller = controller, controller.handleMouseDown(in: self, with: event) {
+            isDraggingAnnotation = true
+        } else {
+            isDraggingAnnotation = false
+            super.mouseDown(with: event)
+        }
+    }
+    
+    override func mouseDragged(with event: NSEvent) {
+        if isDraggingAnnotation {
+            controller?.handleMouseDragged(in: self, with: event)
+        } else {
+            super.mouseDragged(with: event)
+        }
+    }
+    
+    override func mouseUp(with event: NSEvent) {
+        if isDraggingAnnotation {
+            controller?.handleMouseUp(in: self, with: event)
+            isDraggingAnnotation = false
+        } else {
+            super.mouseUp(with: event)
+        }
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea = trackingArea {
+            removeTrackingArea(trackingArea)
+        }
+        
+        let options: NSTrackingArea.Options = [.mouseMoved, .activeInKeyWindow, .activeAlways]
+        trackingArea = NSTrackingArea(rect: bounds, options: options, owner: self, userInfo: nil)
+        addTrackingArea(trackingArea!)
+    }
+    
+    override func mouseMoved(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        if let cursor = controller?.cursor(for: point, in: self) {
+            cursor.set()
+        } else {
+            super.mouseMoved(with: event)
+        }
+    }
+    
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 53 { // Esc
+            controller?.deselectAnnotation()
+        } else if event.keyCode == 51 || event.keyCode == 117 { // Delete or Forward Delete
+            controller?.deleteSelectedAnnotation()
+        } else {
+            super.keyDown(with: event)
+        }
+    }
+    
+    override func responds(to aSelector: Selector!) -> Bool {
+        if aSelector == #selector(delete(_:)) {
+            return controller?.selectedAnnotation != nil
+        }
+        return super.responds(to: aSelector)
+    }
+    
+    @IBAction func delete(_ sender: Any?) {
+        controller?.deleteSelectedAnnotation()
+    }
+    
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let menu = super.menu(for: event) ?? NSMenu()
+        menu.addItem(NSMenuItem.separator())
+        
+        let rotateLeft = NSMenuItem(title: "Rotate Left 90°", action: #selector(rotateLeft(_:)), keyEquivalent: "")
+        rotateLeft.target = self
+        menu.addItem(rotateLeft)
+        
+        let rotateRight = NSMenuItem(title: "Rotate Right 90°", action: #selector(rotateRight(_:)), keyEquivalent: "")
+        rotateRight.target = self
+        menu.addItem(rotateRight)
+        
+        return menu
+    }
+    
+    @objc private func rotateLeft(_ sender: Any?) {
+        controller?.rotateCurrentPageLeft()
+    }
+    
+    @objc private func rotateRight(_ sender: Any?) {
+        controller?.rotateCurrentPageRight()
     }
 }
 

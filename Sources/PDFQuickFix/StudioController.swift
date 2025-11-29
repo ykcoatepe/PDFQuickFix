@@ -1,7 +1,8 @@
 import Foundation
-import PDFKit
+import SwiftUI
 import AppKit
-import CoreGraphics
+@preconcurrency import PDFKit
+import UniformTypeIdentifiers
 import os.log
 
 struct PageSnapshot: Identifiable, Hashable {
@@ -58,7 +59,7 @@ struct StudioDebugInfo {
 }
 
 @MainActor
-final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
+final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFActionable, StudioToolSwitchable {
     @Published var document: PDFDocument?
     @Published var currentURL: URL?
     @Published var pageSnapshots: [PageSnapshot] = []
@@ -73,7 +74,27 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
     @Published var loadingStatus: String?
     @Published var isLargeDocument: Bool = false
     @Published var isMassiveDocument: Bool = false
-
+    @Published var selectedAnnotation: PDFAnnotation?
+    @Published var selectedTool: StudioTool = .organize
+    
+    // MARK: - PDFActionable
+    func zoomIn() {
+        guard let view = pdfView else { return }
+        view.zoomIn(self)
+    }
+    
+    func zoomOut() {
+        guard let view = pdfView else { return }
+        view.zoomOut(self)
+    }
+    
+    func rotateLeft() {
+        rotateCurrentPageLeft()
+    }
+    
+    func rotateRight() {
+        rotateCurrentPageRight()
+    }
     weak var pdfView: PDFView?
     private let validationRunner = DocumentValidationRunner()
     private var snapshotGenerationID = UUID()
@@ -88,6 +109,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
     private let thumbnailQueue = DispatchQueue(label: "com.pdfquickfix.thumbnails", qos: .userInitiated)
     private var inflightThumbnails: Set<Int> = []
     private let inflightLock = NSLock()
+    private var selectionHelperAnnotation: PDFAnnotation?
     private let snapshotQueue: OperationQueue = {
         let queue = OperationQueue()
         queue.qualityOfService = .userInitiated
@@ -102,6 +124,8 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
     #if DEBUG
     private var studioOpenStart: Date?
     #endif
+
+
 
     deinit {
         NotificationCenter.default.removeObserver(self)
@@ -241,6 +265,354 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
         isThumbnailsLoading = false
         pushLog("⚠️ \(error.localizedDescription)")
         present(error)
+    }
+
+
+
+    // MARK: - Selection & Editing
+    
+    private enum DragMode {
+        case none
+        case move(startPoint: CGPoint, originalBounds: CGRect)
+        case resize(handle: ResizeHandle, startPoint: CGPoint, originalBounds: CGRect)
+    }
+    
+    private enum ResizeHandle {
+        case topLeft, topRight, bottomLeft, bottomRight
+    }
+    
+    private let selectionHandleSize: CGFloat = 6.0
+    private var currentDragMode: DragMode = .none
+    
+    func selectAnnotation(_ annotation: PDFAnnotation) {
+        guard !isMassiveDocument else { return }
+        // If already selected, do nothing (or refresh?)
+        if selectedAnnotation === annotation { return }
+        
+        // Invalidate old selection if it exists
+        if let current = selectedAnnotation, let page = current.page {
+            forceRedraw(rect: current.bounds.union(selectionHelperAnnotation?.bounds ?? .zero), on: page)
+        }
+
+        deselectAnnotation() // Clear previous (and invalidate its area)
+        
+        selectedAnnotation = annotation
+        
+        // Add visual feedback (SelectionAnnotation)
+        if let page = annotation.page {
+            // Use .square to avoid default stamp appearance
+            let helper = SelectionAnnotation(bounds: annotation.bounds, forType: .square, withProperties: nil)
+            helper.shouldPrint = false
+            page.addAnnotation(helper)
+            selectionHelperAnnotation = helper
+            // Invalidate new selection area
+            forceRedraw(rect: annotation.bounds.union(helper.bounds), on: page)
+        }
+        
+        pushLog("Selected annotation: \(annotation.type ?? "Unknown")")
+    }
+    
+    func deselectAnnotation() {
+        if let helper = selectionHelperAnnotation {
+            // Remove from page to prevent ghosts
+            helper.page?.removeAnnotation(helper)
+            
+            // Invalidate area
+            if let page = helper.page {
+                forceRedraw(rect: helper.bounds, on: page)
+            }
+            selectionHelperAnnotation = nil
+        }
+        
+        if let current = selectedAnnotation, let page = current.page {
+            // Invalidate old selection bounds too
+            forceRedraw(rect: current.bounds, on: page)
+        }
+        
+        selectedAnnotation = nil
+        selectionHelperAnnotation = nil
+        refreshAnnotations()
+    }
+    
+    // MARK: - Page Rotation
+    
+    func rotateCurrentPageLeft() {
+        guard let page = currentPDFPage else { return }
+        let oldRotation = page.rotation
+        let newRotation = (oldRotation - 90).normalizedRotation
+        page.rotation = newRotation
+        notifyPageRotationChanged()
+        registerRotationUndo(page: page, oldRotation: oldRotation, newRotation: newRotation)
+    }
+
+    func rotateCurrentPageRight() {
+        guard let page = currentPDFPage else { return }
+        let oldRotation = page.rotation
+        let newRotation = (oldRotation + 90).normalizedRotation
+        page.rotation = newRotation
+        notifyPageRotationChanged()
+        registerRotationUndo(page: page, oldRotation: oldRotation, newRotation: newRotation)
+    }
+
+    private var currentPDFPage: PDFPage? {
+        if let pdfView = pdfView, let page = pdfView.currentPage {
+            return page
+        }
+        return nil
+    }
+
+    private func notifyPageRotationChanged() {
+        // Refresh thumbnails if needed
+        if let page = currentPDFPage, let doc = document {
+            let index = doc.index(for: page)
+            if index >= 0 {
+                // Invalidate thumbnail
+                ensureThumbnail(for: index)
+            }
+        }
+    }
+
+    private func registerRotationUndo(page: PDFPage, oldRotation: Int, newRotation: Int) {
+        guard let undoManager = pdfView?.undoManager else { return }
+        undoManager.registerUndo(withTarget: self) { controller in
+            page.rotation = oldRotation
+            controller.notifyPageRotationChanged()
+            controller.registerRotationUndo(page: page, oldRotation: newRotation, newRotation: oldRotation)
+        }
+        undoManager.setActionName("Rotate Page")
+    }
+    
+    func deleteSelectedAnnotation() {
+        guard let annotation = selectedAnnotation, let page = annotation.page else { return }
+        
+        registerDelete(annotation: annotation, on: page)
+        
+        deselectAnnotation()
+        page.removeAnnotation(annotation)
+        refreshAnnotations()
+        pushLog("Deleted annotation")
+    }
+    
+    func handleMouseDown(in view: PDFView, with event: NSEvent) -> Bool {
+        guard !isMassiveDocument else { return false }
+        let point = view.convert(event.locationInWindow, from: nil)
+        
+        guard let page = view.page(for: point, nearest: true) else {
+            deselectAnnotation()
+            return false
+        }
+        
+        let pagePoint = view.convert(point, to: page)
+        
+        // 1. Check if we are hitting the currently selected annotation (or its handles)
+        if let selected = selectedAnnotation, selected.page == page {
+            if let mode = dragMode(for: pagePoint, annotation: selected) {
+                // We hit the selection. Start dragging.
+                currentDragMode = mode
+                return true
+            }
+        }
+        
+        // 2. Check if we hit a new annotation
+        if let annotation = page.annotation(at: pagePoint) {
+            // Ignore our own selection helper if it somehow got hit directly
+            if annotation is SelectionAnnotation { return true }
+            
+            selectAnnotation(annotation)
+            
+            // Check if we can drag this new annotation immediately
+            if let mode = dragMode(for: pagePoint, annotation: annotation) {
+                currentDragMode = mode
+            }
+            return true
+        }
+        
+        // 3. Clicked empty space
+        deselectAnnotation()
+        return false
+    }
+    
+    func handleMouseDragged(in view: PDFView, with event: NSEvent) {
+        guard !isMassiveDocument, let annotation = selectedAnnotation, let page = annotation.page else { return }
+        let point = view.convert(event.locationInWindow, from: nil)
+        let pagePoint = view.convert(point, to: page)
+        
+        switch currentDragMode {
+            case .move(let startPoint, let originalBounds):
+                let dx = pagePoint.x - startPoint.x
+                let dy = pagePoint.y - startPoint.y
+                let newBounds = CGRect(x: originalBounds.origin.x + dx,
+                                       y: originalBounds.origin.y + dy,
+                                       width: originalBounds.width,
+                                       height: originalBounds.height)
+                
+                // Invalidate old area
+                forceRedraw(rect: annotation.bounds.union(selectionHelperAnnotation?.bounds ?? .zero), on: page)
+                
+                annotation.bounds = newBounds
+                selectionHelperAnnotation?.bounds = newBounds
+                
+                // Invalidate new area
+                forceRedraw(rect: newBounds, on: page)
+                
+            case .resize(let handle, let startPoint, let originalBounds):
+                let dx = pagePoint.x - startPoint.x
+                let dy = pagePoint.y - startPoint.y
+
+                var newBounds = originalBounds
+                let minSize: CGFloat = 10
+
+                switch handle {
+                case .topLeft:
+                    let proposedWidth = originalBounds.width - dx
+                    let proposedHeight = originalBounds.height - dy
+                    let clampedWidth = max(minSize, proposedWidth)
+                    let clampedHeight = max(minSize, proposedHeight)
+                    let widthDelta = proposedWidth - clampedWidth
+                    let heightDelta = proposedHeight - clampedHeight
+                    newBounds.origin.x = originalBounds.origin.x + dx + widthDelta
+                    newBounds.origin.y = originalBounds.origin.y + dy + heightDelta
+                    newBounds.size.width = clampedWidth
+                    newBounds.size.height = clampedHeight
+                case .topRight:
+                    let proposedWidth = originalBounds.width + dx
+                    let proposedHeight = originalBounds.height - dy
+                    let clampedWidth = max(minSize, proposedWidth)
+                    let clampedHeight = max(minSize, proposedHeight)
+                    let heightDelta = proposedHeight - clampedHeight
+                    newBounds.origin.y = originalBounds.origin.y + dy + heightDelta
+                    newBounds.size.width = clampedWidth
+                    newBounds.size.height = clampedHeight
+                case .bottomLeft:
+                    let proposedWidth = originalBounds.width - dx
+                    let clampedWidth = max(minSize, proposedWidth)
+                    let widthDelta = proposedWidth - clampedWidth
+                    newBounds.origin.x = originalBounds.origin.x + dx + widthDelta
+                    newBounds.size.width = clampedWidth
+                    let proposedHeight = originalBounds.height + dy
+                    newBounds.size.height = max(minSize, proposedHeight)
+                case .bottomRight:
+                    let proposedWidth = originalBounds.width + dx
+                    let proposedHeight = originalBounds.height + dy
+                    newBounds.size.width = max(minSize, proposedWidth)
+                    newBounds.size.height = max(minSize, proposedHeight)
+                }
+
+                // Invalidate old area
+                forceRedraw(rect: annotation.bounds.union(selectionHelperAnnotation?.bounds ?? .zero), on: page)
+
+                annotation.bounds = newBounds
+                selectionHelperAnnotation?.bounds = newBounds
+                
+                // Invalidate new area
+                forceRedraw(rect: newBounds, on: page)
+            case .none:
+                break
+            }
+    }
+    
+    func handleMouseUp(in view: PDFView, with event: NSEvent) {
+        guard !isMassiveDocument, let annotation = selectedAnnotation, let page = annotation.page else { return }
+        
+        if case .move(_, let originalBounds) = currentDragMode {
+            let finalBounds = annotation.bounds
+            if finalBounds != originalBounds {
+                registerBoundsChange(annotation: annotation, oldBounds: originalBounds, newBounds: finalBounds)
+            }
+        } else if case .resize(_, _, let originalBounds) = currentDragMode {
+            let finalBounds = annotation.bounds
+            if finalBounds != originalBounds {
+                registerBoundsChange(annotation: annotation, oldBounds: originalBounds, newBounds: finalBounds)
+            }
+        }
+        
+        // Final redraw to ensure clean state
+        forceRedraw(rect: annotation.bounds.union(selectionHelperAnnotation?.bounds ?? .zero), on: page)
+        
+        currentDragMode = .none
+    }
+    
+
+    
+    private func dragMode(for point: CGPoint, annotation: PDFAnnotation) -> DragMode? {
+        let bounds = annotation.bounds
+        let handleSize = selectionHandleSize
+        let handles: [(ResizeHandle, CGRect)] = [
+            (.bottomLeft, CGRect(origin: CGPoint(x: bounds.minX, y: bounds.minY), size: CGSize(width: handleSize, height: handleSize))),
+            (.bottomRight, CGRect(origin: CGPoint(x: bounds.maxX - handleSize, y: bounds.minY), size: CGSize(width: handleSize, height: handleSize))),
+            (.topLeft, CGRect(origin: CGPoint(x: bounds.minX, y: bounds.maxY - handleSize), size: CGSize(width: handleSize, height: handleSize))),
+            (.topRight, CGRect(origin: CGPoint(x: bounds.maxX - handleSize, y: bounds.maxY - handleSize), size: CGSize(width: handleSize, height: handleSize)))
+        ]
+        if let match = handles.first(where: { $0.1.insetBy(dx: -2, dy: -2).contains(point) }) {
+            return .resize(handle: match.0, startPoint: point, originalBounds: bounds)
+        }
+        if bounds.contains(point) {
+            return .move(startPoint: point, originalBounds: bounds)
+        }
+        return nil
+    }
+
+    private func registerBoundsChange(annotation: PDFAnnotation, oldBounds: CGRect, newBounds: CGRect) {
+        guard let undoManager = pdfView?.undoManager else { return }
+        undoManager.registerUndo(withTarget: self) { target in
+            annotation.bounds = oldBounds
+            target.selectionHelperAnnotation?.bounds = oldBounds
+            target.registerBoundsChange(annotation: annotation, oldBounds: newBounds, newBounds: oldBounds)
+        }
+        if !undoManager.isUndoing {
+            undoManager.setActionName("Move/Resize Annotation")
+        }
+    }
+
+    private func registerDelete(annotation: PDFAnnotation, on page: PDFPage) {
+        guard let undoManager = pdfView?.undoManager else { return }
+        undoManager.registerUndo(withTarget: self) { target in
+            page.addAnnotation(annotation)
+            target.selectAnnotation(annotation)
+            target.refreshAnnotations()
+            target.registerDelete(annotation: annotation, on: page)
+        }
+        if !undoManager.isUndoing {
+            undoManager.setActionName("Delete Annotation")
+        }
+    }
+
+    func cursor(for point: CGPoint, in view: PDFView) -> NSCursor? {
+        guard !isMassiveDocument else { return nil }
+        guard let page = view.page(for: point, nearest: true) else { return nil }
+        let pagePoint = view.convert(point, to: page)
+        
+        // 1. Check resize handles if an annotation is selected
+        if let annotation = selectedAnnotation, annotation.page == page {
+            if let mode = dragMode(for: pagePoint, annotation: annotation) {
+                switch mode {
+                case .resize(let handle, _, _):
+                    switch handle {
+                    case .topLeft, .bottomRight: return .crosshair // Or diagonal resize
+                    case .topRight, .bottomLeft: return .crosshair
+                    }
+                case .move:
+                    return .openHand
+                case .none:
+                    break
+                }
+            }
+        }
+        
+        // 2. Check if hovering over any other annotation
+        if let _ = page.annotation(at: pagePoint) {
+            return .pointingHand
+        }
+        
+        return nil
+    }
+    
+    private func forceRedraw(rect: CGRect, on page: PDFPage) {
+        guard let view = pdfView else { return }
+        let viewRect = view.convert(rect, from: page)
+        // Expand slightly to cover anti-aliasing/handles
+        let expanded = viewRect.insetBy(dx: -10, dy: -10)
+        view.setNeedsDisplay(expanded)
     }
 
     func setDocument(_ document: PDFDocument?, url: URL? = nil) {
@@ -446,6 +818,133 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate {
         refreshPages()
         pushLog("Duplicated \(targets.count) page(s)")
         return true
+    }
+
+    func saveAs() {
+        guard let doc = document else { return }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.pdf]
+        panel.nameFieldStringValue = (currentURL?.lastPathComponent ?? "PDFQuickFix.pdf")
+        if panel.runModal() == .OK, let url = panel.url {
+            if doc.write(to: url) {
+                setDocument(doc, url: url)
+                pushLog("Saved as \(url.lastPathComponent)")
+            } else {
+                pushLog("Failed to save to \(url.path)")
+            }
+        }
+    }
+
+    func exportToImages(format: NSBitmapImageRep.FileType) {
+        guard let doc = document, let snapshot = doc.dataRepresentation() else {
+            pushLog("Export failed: couldn't read current document state")
+            return
+        }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.prompt = "Export"
+        panel.message = "Choose a folder to save images"
+        panel.directoryURL = currentURL?.deletingLastPathComponent()
+        
+        if panel.runModal() == .OK, let outputDir = panel.url {
+            let fileExtension: String
+            switch format {
+            case .jpeg: fileExtension = "jpg"
+            case .png: fileExtension = "png"
+            case .tiff: fileExtension = "tiff"
+            default: fileExtension = "img"
+            }
+            
+            isDocumentLoading = true
+            loadingStatus = "Exporting images..."
+            
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                defer {
+                    DispatchQueue.main.async {
+                        self?.isDocumentLoading = false
+                        self?.loadingStatus = nil
+                    }
+                }
+                
+                // Create a new PDFDocument instance for background processing
+                guard let backgroundDoc = PDFDocument(data: snapshot) else {
+                    DispatchQueue.main.async {
+                        self?.pushLog("Export failed: couldn't read current document state")
+                    }
+                    return
+                }
+                
+                for i in 0..<backgroundDoc.pageCount {
+                    guard let page = backgroundDoc.page(at: i) else { continue }
+                    let pageRect = page.bounds(for: .mediaBox)
+                    let image = page.thumbnail(of: pageRect.size, for: .mediaBox)
+                    
+                    if let tiffData = image.tiffRepresentation,
+                       let bitmap = NSBitmapImageRep(data: tiffData),
+                       let data = bitmap.representation(using: format, properties: [:]) {
+                        
+                        let filename = "Page_\(i + 1).\(fileExtension)"
+                        let fileURL = outputDir.appendingPathComponent(filename)
+                        try? data.write(to: fileURL)
+                    }
+                }
+                
+                DispatchQueue.main.async {
+                    self?.pushLog("Exported images to \(outputDir.lastPathComponent)")
+                    NSWorkspace.shared.activateFileViewerSelecting([outputDir])
+                }
+            }
+        }
+    }
+    
+    func exportToText() {
+        guard let doc = document, let snapshot = doc.dataRepresentation() else {
+            pushLog("Export failed: couldn't read current document state")
+            return
+        }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.plainText]
+        panel.nameFieldStringValue = (currentURL?.deletingPathExtension().lastPathComponent ?? "Document") + ".txt"
+        
+        if panel.runModal() == .OK, let url = panel.url {
+            isDocumentLoading = true
+            loadingStatus = "Exporting text..."
+            
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                defer {
+                    DispatchQueue.main.async {
+                        self?.isDocumentLoading = false
+                        self?.loadingStatus = nil
+                    }
+                }
+                
+                // Create a new PDFDocument instance for background processing
+                guard let backgroundDoc = PDFDocument(data: snapshot) else {
+                    DispatchQueue.main.async {
+                        self?.pushLog("Export failed: couldn't read current document state")
+                    }
+                    return
+                }
+                
+                var fullText = ""
+                for i in 0..<backgroundDoc.pageCount {
+                    if let page = backgroundDoc.page(at: i), let text = page.string {
+                        fullText += "--- Page \(i + 1) ---\n\n"
+                        fullText += text
+                        fullText += "\n\n"
+                    }
+                }
+                
+                try? fullText.write(to: url, atomically: true, encoding: .utf8)
+                
+                DispatchQueue.main.async {
+                    self?.pushLog("Exported text to \(url.lastPathComponent)")
+                    NSWorkspace.shared.activateFileViewerSelecting([url])
+                }
+            }
+        }
     }
 
     func exportSelectedPages() {
@@ -980,3 +1479,53 @@ private final class PageSnapshotRenderOperation: Operation {
 }
 
 extension PageSnapshotRenderOperation: @unchecked Sendable {}
+
+class SelectionAnnotation: PDFAnnotation {
+    override func draw(with box: PDFDisplayBox, in context: CGContext) {
+        // Do NOT call super.draw to avoid default appearance (like the X box)
+        
+        context.saveGState()
+        
+        // Draw border
+        context.setStrokeColor(NSColor.systemBlue.cgColor)
+        context.setLineWidth(1.0)
+        
+        let rect = bounds
+        context.stroke(rect)
+        
+        // Handles
+        let handleSize: CGFloat = 6.0
+        // Corners
+        let corners = [
+            CGPoint(x: rect.minX, y: rect.minY),
+            CGPoint(x: rect.maxX - handleSize, y: rect.minY),
+            CGPoint(x: rect.minX, y: rect.maxY - handleSize),
+            CGPoint(x: rect.maxX - handleSize, y: rect.maxY - handleSize)
+        ]
+        
+        context.setFillColor(NSColor.white.cgColor)
+        context.setStrokeColor(NSColor.systemBlue.cgColor)
+        
+        for corner in corners {
+            let handleRect = CGRect(origin: corner, size: CGSize(width: handleSize, height: handleSize))
+            context.fill(handleRect)
+            context.stroke(handleRect)
+        }
+        
+        context.restoreGState()
+    }
+}
+
+private extension Int {
+    var normalizedRotation: Int {
+        var value = self % 360
+        if value < 0 { value += 360 }
+        // PDFKit expects multiples of 90°
+        if value % 90 != 0 {
+            value = (value / 90) * 90
+        }
+        return value
+    }
+}
+
+extension StudioController: FileExportable {}
