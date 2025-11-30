@@ -78,4 +78,8 @@ In Debug builds the app emits signposts and basic performance metrics.
   studio open avg:      120.5 ms (3 samples)
   ```
 
+
 Use this to compare branches and track regressions when working on large-document performance.
+
+## Development
+For detailed development instructions, architecture notes, and workflows, please refer to [agent.md](agent.md).

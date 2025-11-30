@@ -268,6 +268,15 @@ struct StudioView: View {
                             } label: {
                                 Label("Rotate Right", systemImage: "rotate.right")
                             }
+                            
+                            if controller.selectedAnnotation != nil {
+                                Divider()
+                                Button(role: .destructive) {
+                                    controller.deleteSelectedAnnotation()
+                                } label: {
+                                    Label("Delete Annotation", systemImage: "trash")
+                                }
+                            }
                         }
 
                         if selectedTool == .measure {
@@ -785,21 +794,7 @@ class StudioPDFView: PDFView {
         controller?.deleteSelectedAnnotation()
     }
     
-    override func menu(for event: NSEvent) -> NSMenu? {
-        let menu = super.menu(for: event) ?? NSMenu()
-        menu.addItem(NSMenuItem.separator())
-        
-        let rotateLeft = NSMenuItem(title: "Rotate Left 90°", action: #selector(rotateLeft(_:)), keyEquivalent: "")
-        rotateLeft.target = self
-        menu.addItem(rotateLeft)
-        
-        let rotateRight = NSMenuItem(title: "Rotate Right 90°", action: #selector(rotateRight(_:)), keyEquivalent: "")
-        rotateRight.target = self
-        menu.addItem(rotateRight)
-        
-        return menu
-    }
-    
+
     @objc private func rotateLeft(_ sender: Any?) {
         controller?.rotateCurrentPageLeft()
     }
