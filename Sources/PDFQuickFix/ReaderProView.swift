@@ -27,6 +27,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
     @Published var loadingStatus: String?
     @Published var isLargeDocument: Bool = false
     @Published var isMassiveDocument: Bool = false
+    @Published var isPartialLoad: Bool = false
 
     weak var pdfView: PDFView?
 
@@ -53,6 +54,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         #if DEBUG
         let openStart = Date()
         #endif
+
 
         let massiveThreshold = DocumentValidationRunner.massiveDocumentPageThreshold
 
@@ -119,8 +121,11 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         defer { PerfLog.end("ReaderApplyDocument", sp) }
         currentURL = url
         document = newDocument
-        isLargeDocument = newDocument.pageCount > largeDocumentPageThreshold
-        isMassiveDocument = newDocument.pageCount >= DocumentValidationRunner.massiveDocumentPageThreshold
+        
+        let fileSize = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int64) ?? 0
+        let profile = DocumentProfile.from(pageCount: newDocument.pageCount, fileSizeBytes: fileSize)
+        isLargeDocument = profile.isLarge
+        isMassiveDocument = profile.isMassive
 
         if !isMassiveDocument {
             pdfView?.document = newDocument
@@ -133,13 +138,16 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         searchMatches.removeAll()
         validationStatus = nil
         validationMode = .idle
+        validationStatus = nil
+        validationMode = .idle
         isFullValidationRunning = false
+        isPartialLoad = false
 
         let shouldSkipAutoValidation = DocumentValidationRunner.shouldSkipQuickValidation(
             estimatedPages: nil,
             resolvedPageCount: newDocument.pageCount
         )
-        let isMassive = newDocument.pageCount >= DocumentValidationRunner.massiveDocumentPageThreshold
+        let isMassive = profile.isMassive
         if !isMassive && !shouldSkipAutoValidation {
             scheduleValidation(for: url, pageLimit: 10, mode: .quick)
         }
@@ -293,7 +301,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         searchMatches.removeAll()
         currentMatchIndex = nil
         guard let doc = document, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        if doc.pageCount >= DocumentValidationRunner.massiveDocumentPageThreshold {
+        if DocumentProfile.from(pageCount: doc.pageCount).isMassive {
             log = "Search disabled for massive documents (too many pages)."
             return
         }
@@ -380,6 +388,51 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         page.addAnnotation(note)
     }
     
+    func loadPartialDocument(pageLimit: Int = 50) {
+        guard let originalDoc = document else { return }
+        let partialDoc = PDFDocument()
+        let count = min(originalDoc.pageCount, pageLimit)
+        
+        for i in 0..<count {
+            guard let page = originalDoc.page(at: i),
+                  let copy = page.copy() as? PDFPage else { continue }
+            partialDoc.insert(copy, at: i)
+        }
+        
+        self.pdfView?.document = partialDoc
+        self.configurePDFView()
+        self.isMassiveDocument = false // Temporarily treat as normal for viewing
+        self.isPartialLoad = true
+        
+        // Notify user
+        log = "Loaded first \(count) pages for preview."
+    }
+    
+    func loadFullDocument() {
+        guard let originalDoc = document else { return }
+        
+        // Re-evaluate profile to restore massive state if needed
+        let profile = DocumentProfile.from(pageCount: originalDoc.pageCount)
+        self.isMassiveDocument = profile.isMassive
+        self.isPartialLoad = false
+        
+        // If it was massive, we are now "forcing" it to load fully?
+        // Or should we just return to the massive placeholder?
+        // The user clicked "Load All", so we should try to load it into the view.
+        // We will set isMassiveDocument = false to allow the view to render it,
+        // but we might want to warn or keep some flags.
+        // For now, let's allow it but maybe keep isLargeDocument = true for tuning.
+        
+        // Actually, if we set isMassiveDocument = false, the view will try to render.
+        // Let's do that, assuming the user knows what they are doing.
+        self.isMassiveDocument = false
+        
+        self.pdfView?.document = originalDoc
+        self.configurePDFView()
+        
+        log = "Loaded full document (\(originalDoc.pageCount) pages)."
+    }
+    
     // MARK: - Page operations
     
     func rotateLeft() {
@@ -422,10 +475,11 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
 
     private func registerRotationUndo(page: PDFPage, oldRotation: Int, newRotation: Int) {
         guard let undoManager = pdfView?.undoManager else { return }
-        undoManager.registerUndo(withTarget: self) { controller in
+        undoManager.registerUndo(withTarget: self) { [weak self] controller in
+            guard let self = self else { return }
             page.rotation = oldRotation
-            controller.notifyPageRotationChanged()
-            controller.registerRotationUndo(page: page, oldRotation: newRotation, newRotation: oldRotation)
+            self.notifyPageRotationChanged()
+            self.registerRotationUndo(page: page, oldRotation: newRotation, newRotation: oldRotation)
         }
         undoManager.setActionName("Rotate Page")
     }
@@ -1144,12 +1198,39 @@ struct ReaderCanvas: View {
     
     var body: some View {
         ZStack {
-            if controller.document != nil && !profile.isMassive {
-                PDFViewProRepresented(document: controller.document, controller: controller) { view in
-                    controller.pdfView = view
+            if controller.document != nil && !controller.isMassiveDocument {
+                ZStack(alignment: .top) {
+                    PDFViewProRepresented(document: controller.document, controller: controller) { view in
+                        controller.pdfView = view
+                    }
+                    .background(Color(NSColor.textBackgroundColor))
+                    
+                    if controller.isPartialLoad {
+                        HStack {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundColor(.yellow)
+                            Text("Partial Load: First 50 pages")
+                                .font(.caption)
+                                .fontWeight(.medium)
+                            
+                            Spacer()
+                            
+                            Button("Load All") {
+                                controller.loadFullDocument()
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(Material.regular)
+                        .cornerRadius(8)
+                        .shadow(radius: 2)
+                        .padding(.top, 8)
+                        .frame(maxWidth: 400)
+                    }
                 }
-                .background(Color(NSColor.textBackgroundColor))
-            } else if profile.isMassive, let url = controller.currentURL {
+            } else if controller.isMassiveDocument, let url = controller.currentURL {
                 VStack(spacing: 12) {
                     Text("Performance Mode Active")
                         .font(.headline)
@@ -1159,6 +1240,11 @@ struct ReaderCanvas: View {
                     Button("Open in Preview") {
                         NSWorkspace.shared.open(url)
                     }
+                    
+                    Button("Load First 50 Pages") {
+                        controller.loadPartialDocument()
+                    }
+                    .buttonStyle(.borderedProminent)
                 }
             } else {
                 Text("Open a PDF")

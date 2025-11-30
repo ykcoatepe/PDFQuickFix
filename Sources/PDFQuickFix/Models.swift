@@ -37,10 +37,13 @@ struct DocumentProfile {
     // Thresholds (aligned with DocumentValidationRunner)
     private static var largePageThreshold: Int { DocumentValidationRunner.largeDocumentPageThreshold }
     private static var massivePageThreshold: Int { DocumentValidationRunner.massiveDocumentPageThreshold }
+    private static let massiveFileSizeThreshold: Int64 = 200 * 1024 * 1024 // 200 MB
     
     static func from(pageCount: Int, fileSizeBytes: Int64? = nil) -> DocumentProfile {
         let isLarge = pageCount > largePageThreshold
-        let isMassive = pageCount >= massivePageThreshold
+        let isMassivePageCount = pageCount >= massivePageThreshold
+        let isMassiveSize = (fileSizeBytes ?? 0) >= massiveFileSizeThreshold
+        let isMassive = isMassivePageCount || isMassiveSize
         
         // In massive mode, we disable heavy features to prevent UI freezing
         return DocumentProfile(

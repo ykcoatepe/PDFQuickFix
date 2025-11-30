@@ -195,8 +195,9 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         defer { PerfLog.end("StudioFinishOpen", sp) }
         document = newDocument
         currentURL = url
-        isLargeDocument = newDocument.pageCount > largeDocumentPageThreshold
-        isMassiveDocument = newDocument.pageCount >= DocumentValidationRunner.massiveDocumentPageThreshold
+        let profile = DocumentProfile.from(pageCount: newDocument.pageCount)
+        isLargeDocument = profile.isLarge
+        isMassiveDocument = profile.isMassive
         resetThumbnailState()
         let isMassive = isMassiveDocument
         if isMassive {
@@ -374,10 +375,11 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
 
     private func registerRotationUndo(page: PDFPage, oldRotation: Int, newRotation: Int) {
         guard let undoManager = pdfView?.undoManager else { return }
-        undoManager.registerUndo(withTarget: self) { controller in
+        undoManager.registerUndo(withTarget: self) { [weak self] controller in
+            guard let self = self else { return }
             page.rotation = oldRotation
-            controller.notifyPageRotationChanged()
-            controller.registerRotationUndo(page: page, oldRotation: newRotation, newRotation: oldRotation)
+            self.notifyPageRotationChanged()
+            self.registerRotationUndo(page: page, oldRotation: newRotation, newRotation: oldRotation)
         }
         undoManager.setActionName("Rotate Page")
     }
@@ -650,7 +652,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
             isThumbnailsLoading = false
             return
         }
-        if doc.pageCount >= DocumentValidationRunner.massiveDocumentPageThreshold {
+        if DocumentProfile.from(pageCount: doc.pageCount).isMassive {
             let count = doc.pageCount
             pageSnapshots = (0..<count).map { index in
                 PageSnapshot(id: index,
@@ -707,7 +709,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
             outlineRows = []
             return
         }
-        if doc.pageCount >= DocumentValidationRunner.massiveDocumentPageThreshold {
+        if DocumentProfile.from(pageCount: doc.pageCount).isMassive {
             outlineRows = []
             pushLog("Outline disabled for massive documents (too many pages).")
             return
@@ -1183,7 +1185,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     var debugInfo: StudioDebugInfo {
         let pages = document?.pageCount ?? 0
         let isLarge = isLargeDocument
-        let isMassive = pages >= DocumentValidationRunner.massiveDocumentPageThreshold
+        let isMassive = DocumentProfile.from(pageCount: pages).isMassive
         let render = renderService.debugInfo()
         return StudioDebugInfo(pageCount: pages,
                                isLargeDocument: isLarge,
@@ -1224,7 +1226,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         let targetSize = snapshotTargetSize
         let docURL = doc.documentURL
         let docData: Data?
-        if doc.pageCount < DocumentValidationRunner.massiveDocumentPageThreshold {
+        if !DocumentProfile.from(pageCount: doc.pageCount).isMassive {
             docData = doc.dataRepresentation()
         } else {
             // For very large documents, avoid serializing the entire file.
@@ -1278,7 +1280,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
 
         let docURL = doc.documentURL
         let docData: Data?
-        if doc.pageCount < DocumentValidationRunner.massiveDocumentPageThreshold {
+        if !DocumentProfile.from(pageCount: doc.pageCount).isMassive {
             docData = doc.dataRepresentation()
         } else {
             docData = nil
