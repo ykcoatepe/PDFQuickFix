@@ -2,6 +2,7 @@ import SwiftUI
 @preconcurrency import PDFKit
 import AppKit
 import UniformTypeIdentifiers
+import PDFQuickFixKit
 
 // Controller coordinating PDF viewing, search, and page operations.
 @MainActor
@@ -28,6 +29,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
     @Published var isLargeDocument: Bool = false
     @Published var isMassiveDocument: Bool = false
     @Published var isPartialLoad: Bool = false
+    @Published var isRepaired: Bool = false
 
     weak var pdfView: PDFView?
 
@@ -60,7 +62,23 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
-            guard let rawDoc = PDFDocument(url: url) else {
+            
+            // Repair/Normalize if needed
+            var finalURL = url
+            var repaired = false
+            do {
+                let repairedURL = try PDFRepairService().repairIfNeeded(inputURL: url)
+                if repairedURL != url {
+                    finalURL = repairedURL
+                    repaired = true
+                }
+            } catch {
+                // Fallback to original is automatic if repairIfNeeded throws or returns original
+                // But repairIfNeeded is designed to not throw for fallback cases, so this catch might be rare
+                print("Reader repair failed: \(error)")
+            }
+            
+            guard let rawDoc = PDFDocument(url: finalURL) else {
                 DispatchQueue.main.async {
                     self.isLoadingDocument = false
                     self.loadingStatus = nil
@@ -77,7 +95,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
                 DispatchQueue.main.async {
                     self.loadingStatus = nil
                     self.isLoadingDocument = false
-                    self.finishOpen(document: rawDoc, url: url)
+                    self.finishOpen(document: rawDoc, url: finalURL, isRepaired: repaired)
                     #if DEBUG
                     let duration = Date().timeIntervalSince(openStart)
                     PerfMetrics.shared.recordReaderOpen(duration: duration)
@@ -86,7 +104,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
                 }
             } else {
                 DispatchQueue.main.async {
-                    self.validationRunner.openDocument(at: url,
+                    self.validationRunner.openDocument(at: finalURL,
                                                       quickValidationPageLimit: 0,
                                                       progress: { [weak self] processed, total in
                                                           guard let self = self else { return }
@@ -100,7 +118,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
                                                           self.loadingStatus = nil
                                                           switch result {
                                                           case .success(let doc):
-                                                              self.finishOpen(document: doc, url: url)
+                                                              self.finishOpen(document: doc, url: finalURL, isRepaired: repaired)
                                                               #if DEBUG
                                                               let duration = Date().timeIntervalSince(openStart)
                                                               PerfMetrics.shared.recordReaderOpen(duration: duration)
@@ -116,7 +134,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         }
     }
 
-    private func finishOpen(document newDocument: PDFDocument, url: URL) {
+    private func finishOpen(document newDocument: PDFDocument, url: URL, isRepaired: Bool = false) {
         let sp = PerfLog.begin("ReaderApplyDocument")
         defer { PerfLog.end("ReaderApplyDocument", sp) }
         currentURL = url
@@ -142,6 +160,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         validationMode = .idle
         isFullValidationRunning = false
         isPartialLoad = false
+        self.isRepaired = isRepaired
 
         let shouldSkipAutoValidation = DocumentValidationRunner.shouldSkipQuickValidation(
             estimatedPages: nil,
@@ -605,7 +624,7 @@ extension ReaderControllerPro: PDFViewDelegate {
     }
 }
 
-struct ReaderProView: View {
+struct ReaderProView: View, Equatable {
     @ObservedObject var controller: ReaderControllerPro
     @Binding var selectedTab: AppMode
     @EnvironmentObject private var documentHub: SharedDocumentHub
@@ -617,6 +636,11 @@ struct ReaderProView: View {
     @State private var showEncrypt = false
     @State private var userPassword = ""
     @State private var ownerPassword = ""
+    
+    static func == (lhs: ReaderProView, rhs: ReaderProView) -> Bool {
+        return lhs.controller === rhs.controller &&
+               lhs.selectedTab == rhs.selectedTab
+    }
     
     // Computed profile based on current document
     private var profile: DocumentProfile {
@@ -640,7 +664,7 @@ struct ReaderProView: View {
             droppedURL = url
         })
             .onChange(of: droppedURL) { newValue in
-                guard let url = newValue else { return }
+                guard let url = newValue, url != lastOpenedURL else { return }
                 droppedURL = nil
                 lastOpenedURL = url
                 controller.open(url: url)
@@ -684,6 +708,7 @@ struct ReaderProView: View {
                 }
             }
             .onChange(of: controller.currentURL) { url in
+                guard let url, url != documentHub.currentURL else { return }
                 if documentHub.syncEnabled {
                     documentHub.update(url: url, from: .reader)
                 }

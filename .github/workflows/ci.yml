@@ -13,11 +13,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install XcodeGen
         run: brew install xcodegen
-      - name: Generate Xcode project
-        run: xcodegen generate
-      - name: Build (Release)
-        run: |
-          xcodebuild -project PDFQuickFix.xcodeproj -scheme PDFQuickFix -configuration Release -derivedDataPath build build
+      - name: Run CI
+        run: make ci-cloud
+      - name: Build Release for Artifact
+        run: make build
       - name: Upload app artifact
         uses: actions/upload-artifact@v4
         with:

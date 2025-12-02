@@ -29,7 +29,7 @@ enum StudioTool: String, CaseIterable, Identifiable {
     }
 }
 
-struct StudioView: View {
+struct StudioView: View, Equatable {
     @ObservedObject var controller: StudioController
     @Binding var selectedTab: AppMode
     @EnvironmentObject private var documentHub: SharedDocumentHub
@@ -37,7 +37,7 @@ struct StudioView: View {
     @Binding var showQuickFix: Bool
     @Binding var quickFixURL: URL?
     @State private var navSelection: Int = 0 // 0 = Pages, 1 = Outline
-
+    
     @Binding var showingWatermarkSheet: Bool
     @Binding var showingHeaderFooterSheet: Bool
     @Binding var showingBatesSheet: Bool
@@ -48,6 +48,18 @@ struct StudioView: View {
     @State private var batesOptions = BatesOptions()
     @State private var cropOptions = CropOptions()
     @State private var alertMessage: String?
+    
+    static func == (lhs: StudioView, rhs: StudioView) -> Bool {
+        return lhs.controller === rhs.controller &&
+               lhs.selectedTab == rhs.selectedTab &&
+               lhs.selectedTool == rhs.selectedTool &&
+               lhs.showQuickFix == rhs.showQuickFix &&
+               lhs.quickFixURL == rhs.quickFixURL &&
+               lhs.showingWatermarkSheet == rhs.showingWatermarkSheet &&
+               lhs.showingHeaderFooterSheet == rhs.showingHeaderFooterSheet &&
+               lhs.showingBatesSheet == rhs.showingBatesSheet &&
+               lhs.showingCropSheet == rhs.showingCropSheet
+    }
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
@@ -173,6 +185,7 @@ struct StudioView: View {
             syncFromHub()
         }
         .onChange(of: controller.currentURL) { url in
+            guard let url, url != documentHub.currentURL else { return }
             if documentHub.syncEnabled {
                 documentHub.update(url: url, from: .studio)
             }

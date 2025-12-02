@@ -1,6 +1,6 @@
 Agent Guide — PDFQuickFix
 
-Version: 2025-11-29 • Owner: CodeForge AI
+Version: 2025-11-30 • Owner: CodeForge AI
 
 0. Quickstart
    • `make bootstrap` (if available) or `brew install xcodegen`
@@ -11,7 +11,9 @@ Version: 2025-11-29 • Owner: CodeForge AI
 
 1. Structure & Naming
    • `Sources/PDFQuickFix/`: SwiftUI macOS app, PDF tooling, utilities.
-   • `scripts/`: Shell helpers (`build.sh`, `setup.sh`).
+   • `libs/pdfcore/`: Core PDF parsing logic (COS objects, Lexer, Parser).
+   • `libs/pdfquickfix-kit/`: Repair and recovery services.
+   • `scripts/`: Shell helpers (`build.sh`, `setup.sh`, `ci_run.sh`).
    • `project.yml`: XcodeGen spec.
    • `build/`, `dist/`: Artifacts.
    • Swift: 4-space indent, CamelCase types, camelCase vars/funcs. SwiftUI MVVM.
@@ -20,12 +22,13 @@ Version: 2025-11-29 • Owner: CodeForge AI
    • Build: `make build` (Release), `make debug` (Debug).
    • Run: `make run` (or via Xcode).
    • DMG: `make dmg`.
+   • CI Local: `make ci-home`.
    • Lint: `swiftformat .` (if installed), `swiftlint` (if installed).
-   • Test: Manual pass required (no automated target yet).
+   • Test: `make sanity-fast` or `xcodebuild test`.
 
 3. Repo Memory
    • `.codex/memory.json`: JSON memory for the agent.
-   • Commands: `python -m .scripts.memory ...` (if integrated).
+   • `LOGBOOK.md`: Human-readable task log.
 
 4. Security
    • No secrets in repo.
@@ -38,6 +41,7 @@ Version: 2025-11-29 • Owner: CodeForge AI
 
 6. CI Gate
    • Build must pass.
+   • `make ci-cloud` runs on GitHub Actions.
    • Manual verification of OCR/redaction flows.
 
 7. Troubleshooting

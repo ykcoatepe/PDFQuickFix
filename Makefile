@@ -39,3 +39,14 @@ dmg: build
 
 release: dmg
 	@echo "Tag and upload with GitHub Releases or CI."
+
+ci: ci-cloud
+
+ci-home:
+	./scripts/ci_run.sh
+
+ci-cloud:
+	./scripts/ci_run.sh
+
+sanity-fast:
+	./scripts/ci_run.sh

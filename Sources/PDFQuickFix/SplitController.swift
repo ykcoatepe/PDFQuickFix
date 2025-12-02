@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import PDFQuickFixKit
 
 struct SplitJobRecord: Identifiable {
     let id = UUID()
@@ -177,7 +178,16 @@ final class SplitController: ObservableObject {
                                  destination: URL,
                                  mode: PDFSplitMode,
                                  completion: @escaping (Result<PDFSplitResult, Error>) -> Void) {
-        let options = PDFSplitOptions(sourceURL: source,
+        
+        // Repair/Normalize
+        var finalSource = source
+        do {
+            finalSource = try PDFRepairService().repairIfNeeded(inputURL: source)
+        } catch {
+            print("Split repair failed: \(error)")
+        }
+        
+        let options = PDFSplitOptions(sourceURL: finalSource,
                                       destinationDirectory: destination,
                                       mode: mode)
         splitter.splitAsync(options: options,
@@ -230,7 +240,15 @@ final class SplitController: ObservableObject {
                     self.status = "Splitting \(fileURL.lastPathComponent) (\(index + 1)/\(urls.count))…"
                 }
 
-                let options = PDFSplitOptions(sourceURL: fileURL,
+                // Repair/Normalize
+                var finalSource = fileURL
+                do {
+                    finalSource = try PDFRepairService().repairIfNeeded(inputURL: fileURL)
+                } catch {
+                    print("Split batch repair failed: \(error)")
+                }
+
+                let options = PDFSplitOptions(sourceURL: finalSource,
                                               destinationDirectory: destination,
                                               mode: mode)
                 do {

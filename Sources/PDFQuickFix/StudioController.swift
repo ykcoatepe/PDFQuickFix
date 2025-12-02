@@ -4,6 +4,7 @@ import AppKit
 @preconcurrency import PDFKit
 import UniformTypeIdentifiers
 import os.log
+import PDFQuickFixKit
 
 struct PageSnapshot: Identifiable, Hashable {
     let id: Int
@@ -76,6 +77,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     @Published var isMassiveDocument: Bool = false
     @Published var selectedAnnotation: PDFAnnotation?
     @Published var selectedTool: StudioTool = .organize
+    @Published var isRepaired: Bool = false
     
     // MARK: - PDFActionable
     func zoomIn() {
@@ -169,28 +171,47 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         studioOpenStart = Date()
         #endif
 
-        validationRunner.openDocument(at: url,
-                                      quickValidationPageLimit: 0,
-                                      progress: { [weak self] processed, total in
-                                          guard let self = self else { return }
-                                          guard total > 0 else { return }
-                                          let clamped = min(processed, total)
-                                          self.loadingStatus = "Validating \(clamped)/\(total)"
-                                      },
-                                      completion: { [weak self] result in
-                                          guard let self = self else { return }
-                                          self.isDocumentLoading = false
-                                          self.loadingStatus = nil
-                                          switch result {
-                                          case .success(let doc):
-                                              self.finishOpen(document: doc, url: url)
-                                          case .failure(let error):
-                                              self.handleOpenError(error)
-                                          }
-                                      })
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            
+            // Repair/Normalize
+            var finalURL = url
+            var repaired = false
+            do {
+                let repairedURL = try PDFRepairService().repairIfNeeded(inputURL: url)
+                if repairedURL != url {
+                    finalURL = repairedURL
+                    repaired = true
+                }
+            } catch {
+                print("Studio repair failed: \(error)")
+            }
+            
+            DispatchQueue.main.async {
+                self.validationRunner.openDocument(at: finalURL,
+                                              quickValidationPageLimit: 0,
+                                              progress: { [weak self] processed, total in
+                                                  guard let self = self else { return }
+                                                  guard total > 0 else { return }
+                                                  let clamped = min(processed, total)
+                                                  self.loadingStatus = "Validating \(clamped)/\(total)"
+                                              },
+                                              completion: { [weak self] result in
+                                                  guard let self = self else { return }
+                                                  self.isDocumentLoading = false
+                                                  self.loadingStatus = nil
+                                                  switch result {
+                                                  case .success(let doc):
+                                                      self.finishOpen(document: doc, url: finalURL, isRepaired: repaired)
+                                                  case .failure(let error):
+                                                      self.handleOpenError(error)
+                                                  }
+                                              })
+            }
+        }
     }
 
-    private func finishOpen(document newDocument: PDFDocument, url: URL) {
+    private func finishOpen(document newDocument: PDFDocument, url: URL, isRepaired: Bool = false) {
         let sp = PerfLog.begin("StudioFinishOpen")
         defer { PerfLog.end("StudioFinishOpen", sp) }
         document = newDocument
@@ -222,6 +243,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         validationStatus = nil
         validationMode = .idle
         isFullValidationRunning = false
+        self.isRepaired = isRepaired
 
         let shouldSkipAutoValidation = DocumentValidationRunner.shouldSkipQuickValidation(
             estimatedPages: nil,
