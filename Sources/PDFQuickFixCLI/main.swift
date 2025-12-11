@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 import PDFCore
 import PDFQuickFixKit
 

@@ -298,6 +298,8 @@ public class PDFCoreParser {
             let saved = lexer.currentOffset()
             guard let token = lexer.nextToken() else { break }
             if case .arrayEnd = token { break }
+            // Handle EOF to prevent infinite loop on malformed PDFs
+            if case .eof = token { break }
             lexer.seek(to: saved)
             
             let obj = try parseObject()
@@ -565,6 +567,8 @@ public class PDFCoreParser {
             let saved = customLexer.currentOffset()
             guard let token = customLexer.nextToken() else { break }
             if case .arrayEnd = token { break }
+            // Handle EOF to prevent infinite loop on malformed PDFs
+            if case .eof = token { break }
             customLexer.seek(to: saved)
             let obj = try parseObject(with: customLexer)
             arr.append(obj)
