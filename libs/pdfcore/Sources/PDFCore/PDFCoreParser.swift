@@ -339,15 +339,10 @@ public class PDFCoreParser {
     }
     
     private func parseXRefStream(stream: PDFCoreStream, into offsets: inout [PDFCoreObjectRef: Int], freed: inout Set<Int>) throws {
-        // 1. Check Filter
-        if let filter = stream.dictionary["Filter"] {
-            if case .name(let name) = filter, name == "FlateDecode" {
-                // OK
-            } else if case .array(let arr) = filter, arr.isEmpty {
-                // Empty array OK?
-            } else {
-                throw PDFCoreError.unsupportedFeature("xrefFilter: \(filter)")
-            }
+        // 1. Check Filter - accept bare /FlateDecode or single-element array [/FlateDecode]
+        let needsDecompress = Self.isFlateDecode(stream.dictionary["Filter"])
+        if let filter = stream.dictionary["Filter"], !Self.isSupportedFilter(filter) {
+            throw PDFCoreError.unsupportedFeature("xrefFilter: \(filter)")
         }
         
         // 2. Get W (Widths)
@@ -374,8 +369,7 @@ public class PDFCoreParser {
         
         // 4. Decompress Data
         let decompressedData: Data
-        if let filter = stream.dictionary["Filter"], case .name("FlateDecode") = filter {
-            // Simple zlib inflate
+        if needsDecompress {
             do {
                 decompressedData = try (stream.data as NSData).decompressed(using: .zlib) as Data
             } catch {
@@ -443,6 +437,42 @@ public class PDFCoreParser {
         return value
     }
     
+    // MARK: - Filter Helpers
+    
+    /// Check if filter is FlateDecode (bare name or single-element array)
+    private static func isFlateDecode(_ filter: PDFCoreObject?) -> Bool {
+        guard let filter = filter else { return false }
+        
+        switch filter {
+        case .name(let name):
+            return name == "FlateDecode"
+        case .array(let arr):
+            if arr.count == 1, case .name(let name) = arr[0], name == "FlateDecode" {
+                return true
+            }
+        default:
+            break
+        }
+        return false
+    }
+    
+    /// Check if filter is supported (nil, FlateDecode, or single-element FlateDecode array)
+    private static func isSupportedFilter(_ filter: PDFCoreObject) -> Bool {
+        switch filter {
+        case .name(let name):
+            return name == "FlateDecode"
+        case .array(let arr):
+            // Empty array or single FlateDecode
+            if arr.isEmpty { return true }
+            if arr.count == 1, case .name(let name) = arr[0], name == "FlateDecode" {
+                return true
+            }
+            return false
+        default:
+            return false
+        }
+    }
+    
     private func processObjectStreams(into objects: inout [PDFCoreObjectRef: PDFCoreObject]) throws {
         for (objNum, stream) in objStmCandidates {
             try decodeObjectStream(stream, objNum: objNum, into: &objects)
@@ -450,20 +480,15 @@ public class PDFCoreParser {
     }
     
     private func decodeObjectStream(_ stream: PDFCoreStream, objNum: Int, into objects: inout [PDFCoreObjectRef: PDFCoreObject]) throws {
-        // 1. Check Filter (only FlateDecode or nil allowed for Level 1)
-        if let filter = stream.dictionary["Filter"] {
-            if case .name(let name) = filter, name == "FlateDecode" {
-                // OK
-            } else if case .array(let arr) = filter, arr.isEmpty {
-                // OK
-            } else {
-                throw PDFCoreError.unsupportedFeature("complexObjStm (filter: \(filter))")
-            }
+        // 1. Check Filter - accept bare /FlateDecode or single-element array [/FlateDecode]
+        let needsDecompress = Self.isFlateDecode(stream.dictionary["Filter"])
+        if let filter = stream.dictionary["Filter"], !Self.isSupportedFilter(filter) {
+            throw PDFCoreError.unsupportedFeature("complexObjStm (filter: \(filter))")
         }
         
         // 2. Decompress
         let decompressedData: Data
-        if let filter = stream.dictionary["Filter"], case .name("FlateDecode") = filter {
+        if needsDecompress {
             do {
                 decompressedData = try (stream.data as NSData).decompressed(using: .zlib) as Data
             } catch {
