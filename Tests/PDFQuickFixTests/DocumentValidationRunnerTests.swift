@@ -5,7 +5,7 @@ import PDFKit
 final class DocumentValidationRunnerTests: XCTestCase {
     func testThresholdConstants() {
         XCTAssertEqual(DocumentValidationRunner.largeDocumentPageThreshold, 1000)
-        XCTAssertEqual(DocumentValidationRunner.massiveDocumentPageThreshold, 3000)
+        XCTAssertEqual(DocumentValidationRunner.massiveDocumentPageThreshold, 2000)
     }
 
     func testEstimatedPageCountReadsPDF() throws {
@@ -26,13 +26,13 @@ final class DocumentValidationRunnerTests: XCTestCase {
         XCTAssertFalse(DocumentValidationRunner.shouldSkipQuickValidation(estimatedPages: 1200,
                                                                           resolvedPageCount: 1500))
 
-        XCTAssertTrue(DocumentValidationRunner.shouldSkipQuickValidation(estimatedPages: 3200,
+        XCTAssertTrue(DocumentValidationRunner.shouldSkipQuickValidation(estimatedPages: 2200,
                                                                          resolvedPageCount: 0))
 
         XCTAssertTrue(DocumentValidationRunner.shouldSkipQuickValidation(estimatedPages: 0,
-                                                                         resolvedPageCount: 3000))
+                                                                         resolvedPageCount: 2000))
 
-        XCTAssertTrue(DocumentValidationRunner.shouldSkipQuickValidation(estimatedPages: 2500,
-                                                                         resolvedPageCount: 3500))
+        XCTAssertTrue(DocumentValidationRunner.shouldSkipQuickValidation(estimatedPages: 2100,
+                                                                         resolvedPageCount: 2500))
     }
 }

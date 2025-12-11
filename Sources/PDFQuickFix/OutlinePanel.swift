@@ -19,6 +19,12 @@ struct OutlinePanel: View {
                 .disabled(controller.document == nil)
             }
 
+            if controller.isMassiveDocument && controller.outlineRows.isEmpty {
+                Text("Outline loads when opened for very large documents.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
             List {
                 ForEach(controller.outlineRows) { row in
                     OutlineRowView(row: row,
@@ -28,6 +34,9 @@ struct OutlinePanel: View {
             }
         }
         .padding()
+        .onAppear {
+            controller.loadOutlineIfNeeded()
+        }
     }
 }
 
@@ -93,22 +102,51 @@ struct ReaderOutlineNode: View {
 struct ReaderOutlineRow: View {
     let child: PDFOutline
     let controller: ReaderControllerPro
+    @State private var isExpanded: Bool = false
     
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(child.label ?? "Untitled")
-                .font(.caption)
-                .padding(.leading, CGFloat(child.level) * 10)
-                .padding(.vertical, 4)
-                .padding(.horizontal, 4)
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    if let dest = child.destination {
-                        controller.pdfView?.go(to: dest)
-                    }
+            HStack(spacing: 4) {
+                // Chevron for expansion
+                if child.numberOfChildren > 0 {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 16, height: 16)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            withAnimation(.snappy(duration: 0.2)) {
+                                isExpanded.toggle()
+                            }
+                        }
+                } else {
+                    Spacer().frame(width: 16, height: 16)
                 }
-            // Recursive call
-            ReaderOutlineNode(node: child, controller: controller)
+                
+                Text(child.label ?? "Untitled")
+                    .font(.caption)
+                    .lineLimit(1)
+                    .foregroundStyle(.primary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        if let dest = child.destination {
+                            controller.pdfView?.go(to: dest)
+                        }
+                    }
+            }
+            .padding(.leading, CGFloat(child.level) * 16)
+            .padding(.vertical, 4)
+            .padding(.trailing, 4)
+            .background(
+                Rectangle()
+                    .fill(Color.primary.opacity(0.0001)) // For full row hit testing if needed, though mostly covered by components
+            )
+
+            // Recursive call for children
+            if isExpanded {
+                ReaderOutlineNode(node: child, controller: controller)
+            }
         }
     }
 }

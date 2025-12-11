@@ -22,6 +22,7 @@ struct PDFQuickFixApp: App {
 @MainActor
 protocol FileExportable: AnyObject {
     func saveAs()
+    func repairAndSaveAs()
     func exportToImages(format: NSBitmapImageRep.FileType)
     func exportToText()
 }
@@ -83,6 +84,12 @@ struct AppCommands: Commands {
                 fileExportable?.saveAs()
             }
             .keyboardShortcut("s", modifiers: [.command, .shift])
+            .keyboardShortcut("s", modifiers: [.command, .shift])
+            .disabled(fileExportable == nil)
+            
+            Button("Repair & Save As…") {
+                fileExportable?.repairAndSaveAs()
+            }
             .disabled(fileExportable == nil)
             
             Menu("Export") {

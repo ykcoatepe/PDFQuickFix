@@ -144,13 +144,19 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         let profile = DocumentProfile.from(pageCount: newDocument.pageCount, fileSizeBytes: fileSize)
         isLargeDocument = profile.isLarge
         isMassiveDocument = profile.isMassive
+        if isMassiveDocument {
+            logMassiveDocument(pageCount: newDocument.pageCount, url: url)
+        }
 
         if !isMassiveDocument {
             pdfView?.document = newDocument
             configurePDFView()
         } else {
-            // Massive docs: avoid attaching to PDFView to prevent UI lockups.
-            pdfView?.document = nil
+            // Massive docs: still display but with performance optimizations
+            pdfView?.document = newDocument
+            pdfView?.displayMode = .singlePage
+            pdfView?.displaysPageBreaks = false
+            pdfView?.autoScales = true
         }
         currentPageIndex = 0
         searchMatches.removeAll()
@@ -202,6 +208,53 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         panel.nameFieldStringValue = (doc.documentURL?.deletingPathExtension().lastPathComponent ?? "Document") + "-copy.pdf"
         if panel.runModal() == .OK, let url = panel.url {
             doc.write(to: url)
+        }
+    }
+    
+    func repairAndSaveAs() {
+        guard let url = currentURL else { return }
+        
+        isProcessing = true
+        loadingStatus = "Normalizing document..."
+        
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            do {
+                let service = PDFRepairService()
+                let repairedURL = try service.repairForExport(inputURL: url)
+                
+                DispatchQueue.main.async {
+                    self.isProcessing = false
+                    self.loadingStatus = nil
+                    
+                    let panel = NSSavePanel()
+                    panel.allowedContentTypes = [.pdf]
+                    panel.nameFieldStringValue = (url.deletingPathExtension().lastPathComponent) + "-repaired.pdf"
+                    
+                    if panel.runModal() == .OK, let destination = panel.url {
+                        do {
+                            if FileManager.default.fileExists(atPath: destination.path) {
+                                try FileManager.default.removeItem(at: destination)
+                            }
+                            try FileManager.default.moveItem(at: repairedURL, to: destination)
+                            // Optional: Ask to open? For now just notify or do nothing.
+                            // Maybe show in Finder
+                            NSWorkspace.shared.activateFileViewerSelecting([destination])
+                        } catch {
+                            self.present(error)
+                        }
+                    } else {
+                        // Cleanup temp file if cancelled
+                        try? FileManager.default.removeItem(at: repairedURL)
+                    }
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self.isProcessing = false
+                    self.loadingStatus = nil
+                    self.present(error)
+                }
+            }
         }
     }
     
@@ -610,6 +663,10 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
             alert.runModal()
         }
     }
+
+    private func logMassiveDocument(pageCount: Int, url: URL?) {
+        NSLog("PDFPerfTelemetry: massiveDocEnabled pageCount=%d file=%@", pageCount, url?.lastPathComponent ?? "unknown")
+    }
 }
 extension ReaderControllerPro: FileExportable {}
 
@@ -658,6 +715,16 @@ struct ReaderProView: View, Equatable {
                             profile: profile,
                             selectedTab: $selectedTab,
                             syncEnabled: $documentHub.syncEnabled)
+            .overlay(alignment: .bottomTrailing) {
+                if controller.isRepaired {
+                    Text("Normalized")
+                        .font(.caption)
+                        .padding(6)
+                        .background(.thinMaterial)
+                        .cornerRadius(8)
+                        .padding()
+                }
+            }
             .focusedSceneValue(\.fileExportable, controller)
         .focusedSceneValue(\.pdfActionable, controller)
         .onDrop(of: [.fileURL, .url, .pdf], delegate: PDFURLDropDelegate { url in
@@ -802,15 +869,9 @@ struct ReaderHomeView: View {
                 }
                 .buttonStyle(.plain)
                 .onDrop(of: [.fileURL, .url, .pdf], isTargeted: $isDragging) { providers in
-                    guard let provider = providers.first else { return false }
-                    _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                        if let url = url {
-                            DispatchQueue.main.async {
-                                controller.open(url: url)
-                            }
-                        }
+                    return handlePDFDrop(providers) { url in
+                        controller.open(url: url)
                     }
-                    return true
                 }
                 
                 // Recent Files
@@ -1223,7 +1284,7 @@ struct ReaderCanvas: View {
     
     var body: some View {
         ZStack {
-            if controller.document != nil && !controller.isMassiveDocument {
+            if controller.document != nil {
                 ZStack(alignment: .top) {
                     PDFViewProRepresented(document: controller.document, controller: controller) { view in
                         controller.pdfView = view
@@ -1254,22 +1315,29 @@ struct ReaderCanvas: View {
                         .padding(.top, 8)
                         .frame(maxWidth: 400)
                     }
-                }
-            } else if controller.isMassiveDocument, let url = controller.currentURL {
-                VStack(spacing: 12) {
-                    Text("Performance Mode Active")
-                        .font(.headline)
-                        .foregroundColor(AppTheme.Colors.primaryText)
-                    Text("This document is too large for the full editor.")
-                        .foregroundColor(AppTheme.Colors.secondaryText)
-                    Button("Open in Preview") {
-                        NSWorkspace.shared.open(url)
-                    }
                     
-                    Button("Load First 50 Pages") {
-                        controller.loadPartialDocument()
+                    // Performance mode banner for massive documents
+                    if controller.isMassiveDocument {
+                        HStack(spacing: 8) {
+                            Image(systemName: "bolt.fill")
+                                .foregroundColor(.yellow)
+                            Text("Performance Mode • \(controller.document?.pageCount ?? 0) pages")
+                                .font(.caption.weight(.medium))
+                            Spacer()
+                            if let url = controller.currentURL {
+                                Button("Open in Preview") {
+                                    NSWorkspace.shared.open(url)
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                            }
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(.ultraThinMaterial)
+                        .cornerRadius(8)
+                        .padding(8)
                     }
-                    .buttonStyle(.borderedProminent)
                 }
             } else {
                 Text("Open a PDF")
@@ -1278,6 +1346,11 @@ struct ReaderCanvas: View {
             
             if controller.isLoadingDocument {
                 LoadingOverlayView(status: controller.loadingStatus ?? "Loading...")
+            }
+        }
+        .onDrop(of: [.fileURL, .url, .pdf], isTargeted: nil) { providers in
+            return handlePDFDrop(providers) { url in
+                controller.open(url: url)
             }
         }
     }

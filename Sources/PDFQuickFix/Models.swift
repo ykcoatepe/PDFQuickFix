@@ -49,12 +49,14 @@ struct DocumentProfile {
         return DocumentProfile(
             isLarge: isLarge,
             isMassive: isMassive,
-            searchEnabled: !isMassive,
-            thumbnailsEnabled: !isMassive,
-            // Outline is tricky; for now disable full tree in massive mode
-            outlineEnabled: !isMassive,
-            // Studio heavy analysis disabled in massive mode
-            studioEnabled: !isMassive,
+            // Search is inexpensive; keep enabled to allow find-in-document even in massive mode
+            searchEnabled: true,
+            // Thumbnails stay enabled but should be low-res & lazy when massive
+            thumbnailsEnabled: true,
+            // Outline stays available but should be loaded lazily for massive docs
+            outlineEnabled: true,
+            // Keep Studio available; heavy paths must self-guard when massive
+            studioEnabled: true,
             // Global annotation scanning is very expensive
             globalAnnotationsEnabled: !isMassive
         )

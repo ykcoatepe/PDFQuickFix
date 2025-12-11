@@ -145,57 +145,55 @@ extension View {
 
 /// Resolve a dropped PDF URL from the provided item providers. Returns `false` when no PDF-like item was found.
 func handlePDFDrop(_ providers: [NSItemProvider], onResolvedURL: @escaping (URL) -> Void) -> Bool {
-    let identifiers = [
-        UTType.fileURL.identifier,
-        UTType.url.identifier,
-        UTType.pdf.identifier,
-        UTType.item.identifier,
-        UTType.data.identifier,
-        UTType.content.identifier
-    ]
+    guard let provider = providers.first(where: {
+        $0.hasItemConformingToTypeIdentifier(UTType.pdf.identifier) ||
+        $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) ||
+        $0.hasItemConformingToTypeIdentifier(UTType.url.identifier)
+    }) else { return false }
 
-    var finished = false
-
-    func finish(with url: URL?) {
-        guard !finished else { return }
-        guard let url, url.pathExtension.lowercased() == "pdf" else { return }
-        finished = true
-        DispatchQueue.main.async {
-            onResolvedURL(url)
-        }
-    }
-
-    guard !providers.isEmpty else { return false }
-
-    for provider in providers {
-        for identifier in identifiers {
-            // Prefer an in-place URL, then a temporary representation from a file promise, and finally a data payload.
-            provider.loadInPlaceFileRepresentation(forTypeIdentifier: identifier) { url, _, _ in
-                finish(with: url)
-            }
-
-            provider.loadFileRepresentation(forTypeIdentifier: identifier) { tempURL, _ in
-                finish(with: tempURL)
-            }
-
-            provider.loadItem(forTypeIdentifier: identifier, options: nil) { item, _ in
-                if let url = item as? URL {
-                    finish(with: url)
-                } else if let data = item as? Data {
-                    finish(with: URL(dataRepresentation: data, relativeTo: nil))
-                } else if let nsurl = item as? NSURL {
-                    finish(with: nsurl as URL)
+    // 1. Try to load as a simple URL (Best for Finder drops)
+    if provider.canLoadObject(ofClass: URL.self) {
+        _ = provider.loadObject(ofClass: URL.self) { url, error in
+            if let url = url {
+                // Determine if it's a file URL and if it looks like a PDF
+                // For Finder drops, it's usually a file URL.
+                DispatchQueue.main.async {
+                    onResolvedURL(url)
                 }
-            }
-
-            provider.loadDataRepresentation(forTypeIdentifier: identifier) { data, _ in
-                guard let data else { return }
-                finish(with: URL(dataRepresentation: data, relativeTo: nil))
+            } else if let error = error {
+                print("Drop loadObject failed: \(error)")
             }
         }
+        return true
     }
 
-    return true
+    // 2. Fallback: Try loading file representation (works for some apps that don't vend a URL object directly)
+    if provider.hasItemConformingToTypeIdentifier(UTType.pdf.identifier) {
+        provider.loadFileRepresentation(forTypeIdentifier: UTType.pdf.identifier) { url, error in
+            guard let url = url else { return }
+            
+            // Accessing the URL is only valid within this block for file representations.
+            // Copy it to a safe temporary location.
+            let tempDir = FileManager.default.temporaryDirectory
+            let dst = tempDir.appendingPathComponent(url.lastPathComponent)
+            do {
+                // If it exists, remove it
+                if FileManager.default.fileExists(atPath: dst.path) {
+                    try FileManager.default.removeItem(at: dst)
+                }
+                try FileManager.default.copyItem(at: url, to: dst)
+                
+                DispatchQueue.main.async {
+                    onResolvedURL(dst)
+                }
+            } catch {
+                print("Failed to copy dropped PDF: \(error)")
+            }
+        }
+        return true
+    }
+    
+    return false
 }
 
 struct FullscreenPDFDropView: View {

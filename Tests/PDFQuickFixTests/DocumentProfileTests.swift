@@ -28,13 +28,13 @@ final class DocumentProfileTests: XCTestCase {
         let profile = DocumentProfile.from(pageCount: threshold)
         XCTAssertTrue(profile.isLarge) // Massive implies large
         XCTAssertTrue(profile.isMassive)
-        
-        // Features disabled
-        XCTAssertFalse(profile.searchEnabled)
-        XCTAssertFalse(profile.thumbnailsEnabled)
-        XCTAssertFalse(profile.studioEnabled)
+
+        // Heavy scans disabled, UI features remain available
+        XCTAssertTrue(profile.searchEnabled)
+        XCTAssertTrue(profile.thumbnailsEnabled)
+        XCTAssertTrue(profile.studioEnabled)
         XCTAssertFalse(profile.globalAnnotationsEnabled)
-        XCTAssertFalse(profile.outlineEnabled)
+        XCTAssertTrue(profile.outlineEnabled)
     }
     
     func testMassiveFileSize() {
@@ -42,7 +42,7 @@ final class DocumentProfileTests: XCTestCase {
         let size: Int64 = 201 * 1024 * 1024
         let profile = DocumentProfile.from(pageCount: 100, fileSizeBytes: size)
         XCTAssertTrue(profile.isMassive)
-        XCTAssertFalse(profile.searchEnabled)
+        XCTAssertTrue(profile.searchEnabled)
     }
     
     func testMixedMassiveConditions() {
