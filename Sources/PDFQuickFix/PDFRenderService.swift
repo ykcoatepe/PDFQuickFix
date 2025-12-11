@@ -385,6 +385,7 @@ extension PDFRenderService {
         ctx.scaleBy(x: scaleX, y: scaleY)
         ctx.translateBy(x: 0, y: mediaBox.height)
         ctx.scaleBy(x: 1, y: -1)
+        ctx.translateBy(x: -mediaBox.origin.x, y: -mediaBox.origin.y)
         ctx.drawPDFPage(page)
         ctx.restoreGState()
         
