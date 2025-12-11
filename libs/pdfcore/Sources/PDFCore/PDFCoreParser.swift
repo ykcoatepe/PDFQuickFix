@@ -286,6 +286,8 @@ public class PDFCoreParser {
                 return dictObj
             }
             return dictObj
+        case .eof:
+            throw PDFCoreError.syntax("Unexpected EOF")
         default:
             return .null
         }
@@ -556,6 +558,8 @@ public class PDFCoreParser {
             let dictObj = try parseDictContent(with: customLexer)
             // Check for stream is NOT allowed in ObjStm (streams cannot be inside ObjStm)
             return dictObj
+        case .eof:
+            throw PDFCoreError.syntax("Unexpected EOF in ObjStm")
         default:
             return .null
         }
