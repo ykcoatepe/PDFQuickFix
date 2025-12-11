@@ -28,8 +28,8 @@ struct PageOrganizerView: View {
                 .disabled(controller.selectedPageIDs.isEmpty)
             }
 
-            if controller.isLargeDocument {
-                Text("Thumbnails are disabled for large documents to keep the app responsive. Use page numbers to navigate and reorder.")
+            if controller.isMassiveDocument {
+                Text("Thumbnails load lazily at low resolution for very large documents.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -94,9 +94,7 @@ struct PageOrganizerView: View {
                         .tag(snapshot.id)
                         .padding(.vertical, 4)
                         .onAppear {
-                            if !controller.isLargeDocument {
-                                controller.ensureThumbnail(for: snapshot.index)
-                            }
+                            controller.ensureThumbnail(for: snapshot.index)
                         }
                         .onDrag {
                             let provider = NSItemProvider()

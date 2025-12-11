@@ -5,6 +5,8 @@ import Vision
 import CoreGraphics
 import CoreText
 
+import PDFQuickFixKit
+
 final class PDFQuickFixEngine {
     let options: QuickFixOptions
     let languages: [String]
@@ -24,9 +26,12 @@ final class PDFQuickFixEngine {
         
         let doc: PDFDocument
         do {
+            // Repair/Pre-process
+            let repairedURL = try PDFRepairService().repairIfNeeded(inputURL: inputURL)
+            
             // Load without rebuilding, as the engine will process/rasterize pages anyway.
             let loadOptions = PDFDocumentSanitizer.Options(rebuildMode: .never, sanitizeAnnotations: false, sanitizeOutline: false)
-            doc = try PDFDocumentSanitizer.loadDocument(at: inputURL, options: loadOptions)
+            doc = try PDFDocumentSanitizer.loadDocument(at: repairedURL, options: loadOptions)
         } catch {
             throw NSError(domain: "PDFQuickFix", code: -1, userInfo: [NSLocalizedDescriptionKey: error.localizedDescription])
         }

@@ -20,24 +20,33 @@ struct CommentsPanel: View {
             Text("Annotations")
                 .font(.headline)
 
-            if controller.isLargeDocument {
-                Text("Annotation listing is disabled for large documents to keep things responsive. Jump to specific pages to inspect annotations.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            } else {
-                TextField("Filter comments", text: $filterText)
-                    .textFieldStyle(.roundedBorder)
-
-                List {
-                    ForEach(filteredAnnotations) { row in
-                        CommentRow(row: row,
-                                   focus: controller.focus,
-                                   delete: controller.delete)
+            if controller.isMassiveDocument && controller.annotationRows.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Annotations load on demand for very large documents.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    Button("Load annotations") {
+                        controller.loadAnnotationsIfNeeded()
                     }
+                    .disabled(controller.document == nil)
+                }
+            }
+
+            TextField("Filter comments", text: $filterText)
+                .textFieldStyle(.roundedBorder)
+
+            List {
+                ForEach(filteredAnnotations) { row in
+                    CommentRow(row: row,
+                               focus: controller.focus,
+                               delete: controller.delete)
                 }
             }
         }
         .padding()
+        .onAppear {
+            controller.loadAnnotationsIfNeeded()
+        }
     }
 }
 

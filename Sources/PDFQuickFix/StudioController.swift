@@ -4,6 +4,7 @@ import AppKit
 @preconcurrency import PDFKit
 import UniformTypeIdentifiers
 import os.log
+import PDFQuickFixKit
 
 struct PageSnapshot: Identifiable, Hashable {
     let id: Int
@@ -63,6 +64,11 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     @Published var document: PDFDocument?
     @Published var currentURL: URL?
     @Published var pageSnapshots: [PageSnapshot] = []
+    
+    /// Virtualized page provider for massive documents (7000+ pages)
+    lazy var virtualPageProvider: VirtualPageProvider = {
+        VirtualPageProvider(thumbnailCache: self.thumbnailCache)
+    }()
     @Published var selectedPageIDs: Set<Int> = []
     @Published var outlineRows: [OutlineRow] = []
     @Published var annotationRows: [AnnotationRow] = []
@@ -76,6 +82,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     @Published var isMassiveDocument: Bool = false
     @Published var selectedAnnotation: PDFAnnotation?
     @Published var selectedTool: StudioTool = .organize
+    @Published var isRepaired: Bool = false
     
     // MARK: - PDFActionable
     func zoomIn() {
@@ -100,6 +107,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     private var snapshotGenerationID = UUID()
     private var snapshotOperation: PageSnapshotRenderOperation?
     private let renderService = PDFRenderService.shared
+    private let renderThrottle = RenderThrottle()
     private let snapshotUpdateThrottle = AsyncThrottle(.milliseconds(80))
     private let thumbnailCache: NSCache<NSNumber, CGImage> = {
         let cache = NSCache<NSNumber, CGImage>()
@@ -117,6 +125,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         return queue
     }()
     private let snapshotTargetSize = CGSize(width: 140, height: 180)
+    private let massiveThumbnailTargetSize = CGSize(width: 120, height: 150)
     private let largeDocumentPageThreshold = DocumentValidationRunner.largeDocumentPageThreshold
     private enum ValidationMode { case idle, quick, full }
     private var validationMode: ValidationMode = .idle
@@ -124,6 +133,11 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     #if DEBUG
     private var studioOpenStart: Date?
     #endif
+    private var deferOutlineLoad = false
+    private var deferAnnotationScan = false
+    
+    /// Streaming loader for efficient massive document handling
+    private let streamingLoader = StreamingPDFLoader()
 
 
 
@@ -155,6 +169,19 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
               let page = pdfView.currentPage,
               let doc = document else { return }
         let index = doc.index(for: page)
+        
+        // Update virtual provider center for massive docs
+        if virtualPageProvider.isVirtualized {
+            virtualPageProvider.updateCenter(index)
+            pageSnapshots = virtualPageProvider.visibleSnapshots
+        }
+        
+        // For massive documents, cancel outdated thumbnail requests and reprioritize
+        if isMassiveDocument {
+            renderService.cancelRequestsOutsideWindow(center: index, window: 50)
+            renderService.reprioritizeRequests(center: index)
+        }
+        
         prefetchThumbnails(around: index, window: 2, farWindow: 6)
     }
 
@@ -169,28 +196,47 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         studioOpenStart = Date()
         #endif
 
-        validationRunner.openDocument(at: url,
-                                      quickValidationPageLimit: 0,
-                                      progress: { [weak self] processed, total in
-                                          guard let self = self else { return }
-                                          guard total > 0 else { return }
-                                          let clamped = min(processed, total)
-                                          self.loadingStatus = "Validating \(clamped)/\(total)"
-                                      },
-                                      completion: { [weak self] result in
-                                          guard let self = self else { return }
-                                          self.isDocumentLoading = false
-                                          self.loadingStatus = nil
-                                          switch result {
-                                          case .success(let doc):
-                                              self.finishOpen(document: doc, url: url)
-                                          case .failure(let error):
-                                              self.handleOpenError(error)
-                                          }
-                                      })
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            
+            // Repair/Normalize
+            var finalURL = url
+            var repaired = false
+            do {
+                let repairedURL = try PDFRepairService().repairIfNeeded(inputURL: url)
+                if repairedURL != url {
+                    finalURL = repairedURL
+                    repaired = true
+                }
+            } catch {
+                print("Studio repair failed: \(error)")
+            }
+            
+            DispatchQueue.main.async {
+                self.validationRunner.openDocument(at: finalURL,
+                                              quickValidationPageLimit: 0,
+                                              progress: { [weak self] processed, total in
+                                                  guard let self = self else { return }
+                                                  guard total > 0 else { return }
+                                                  let clamped = min(processed, total)
+                                                  self.loadingStatus = "Validating \(clamped)/\(total)"
+                                              },
+                                              completion: { [weak self] result in
+                                                  guard let self = self else { return }
+                                                  self.isDocumentLoading = false
+                                                  self.loadingStatus = nil
+                                                  switch result {
+                                                  case .success(let doc):
+                                                      self.finishOpen(document: doc, url: finalURL, isRepaired: repaired)
+                                                  case .failure(let error):
+                                                      self.handleOpenError(error)
+                                                  }
+                                              })
+            }
+        }
     }
 
-    private func finishOpen(document newDocument: PDFDocument, url: URL) {
+    private func finishOpen(document newDocument: PDFDocument, url: URL, isRepaired: Bool = false) {
         let sp = PerfLog.begin("StudioFinishOpen")
         defer { PerfLog.end("StudioFinishOpen", sp) }
         document = newDocument
@@ -198,30 +244,22 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         let profile = DocumentProfile.from(pageCount: newDocument.pageCount)
         isLargeDocument = profile.isLarge
         isMassiveDocument = profile.isMassive
+        deferOutlineLoad = isMassiveDocument
+        deferAnnotationScan = isMassiveDocument
         resetThumbnailState()
         let isMassive = isMassiveDocument
         if isMassive {
-            pdfView?.document = nil
-            let count = newDocument.pageCount
-            pageSnapshots = (0..<count).map { index in
-                PageSnapshot(id: index,
-                             index: index,
-                             thumbnail: nil,
-                             label: "Page \(index + 1)")
-            }
-            outlineRows = []
-            annotationRows = []
-            isThumbnailsLoading = false
-            pushLog("Opened massive document (\(count) pages); Studio disabled for this file.")
-        } else {
-            pdfView?.document = newDocument
-            applyPDFViewConfiguration()
-            refreshAll()
-            pushLog("Opened \(url.lastPathComponent)")
+            logMassiveDocument(pageCount: newDocument.pageCount, url: url)
         }
+
+        pdfView?.document = newDocument
+        applyPDFViewConfiguration()
+        refreshAll()
+        pushLog("Opened \(url.lastPathComponent)")
         validationStatus = nil
         validationMode = .idle
         isFullValidationRunning = false
+        self.isRepaired = isRepaired
 
         let shouldSkipAutoValidation = DocumentValidationRunner.shouldSkipQuickValidation(
             estimatedPages: nil,
@@ -259,6 +297,8 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         validationStatus = nil
         validationMode = .idle
         isFullValidationRunning = false
+        deferOutlineLoad = false
+        deferAnnotationScan = false
         pageSnapshots = []
         outlineRows = []
         annotationRows = []
@@ -382,6 +422,10 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
             self.registerRotationUndo(page: page, oldRotation: newRotation, newRotation: oldRotation)
         }
         undoManager.setActionName("Rotate Page")
+    }
+
+    private func logMassiveDocument(pageCount: Int, url: URL?) {
+        NSLog("PDFPerfTelemetry: massiveDocEnabled pageCount=%d file=%@", pageCount, url?.lastPathComponent ?? "unknown")
     }
     
     func deleteSelectedAnnotation() {
@@ -610,11 +654,13 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     }
     
     private func forceRedraw(rect: CGRect, on page: PDFPage) {
-        guard let view = pdfView else { return }
-        let viewRect = view.convert(rect, from: page)
-        // Expand slightly to cover anti-aliasing/handles
-        let expanded = viewRect.insetBy(dx: -10, dy: -10)
-        view.setNeedsDisplay(expanded)
+        renderThrottle.schedule { [weak self] in
+            guard let self = self, let view = self.pdfView else { return }
+            let viewRect = view.convert(rect, from: page)
+            // Expand slightly to cover anti-aliasing/handles
+            let expanded = viewRect.insetBy(dx: -10, dy: -10)
+            view.setNeedsDisplay(expanded)
+        }
     }
 
     func setDocument(_ document: PDFDocument?, url: URL? = nil) {
@@ -623,7 +669,19 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         if let url {
             currentURL = url
         }
-        isLargeDocument = (document?.pageCount ?? 0) > largeDocumentPageThreshold
+        let profile = DocumentProfile.from(pageCount: document?.pageCount ?? 0)
+        isLargeDocument = profile.isLarge
+        isMassiveDocument = profile.isMassive
+        deferOutlineLoad = isMassiveDocument
+        deferAnnotationScan = isMassiveDocument
+        
+        // Initialize streaming loader for massive documents
+        if isMassiveDocument, let url = currentURL ?? document?.documentURL {
+            _ = streamingLoader.open(url: url)
+        } else {
+            streamingLoader.close()
+        }
+        
         resetThumbnailState()
         pdfView?.document = document
         applyPDFViewConfiguration()
@@ -637,8 +695,16 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
 
     func refreshAll() {
         refreshPages()
-        refreshOutline()
-        refreshAnnotations()
+        if deferOutlineLoad {
+            outlineRows = []
+        } else {
+            refreshOutline()
+        }
+        if deferAnnotationScan {
+            annotationRows = []
+        } else {
+            refreshAnnotations()
+        }
     }
 
     func refreshPages() {
@@ -652,19 +718,6 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
             isThumbnailsLoading = false
             return
         }
-        if DocumentProfile.from(pageCount: doc.pageCount).isMassive {
-            let count = doc.pageCount
-            pageSnapshots = (0..<count).map { index in
-                PageSnapshot(id: index,
-                             index: index,
-                             thumbnail: nil,
-                             label: "Page \(index + 1)")
-            }
-            isThumbnailsLoading = false
-            snapshotOperation = nil
-            return
-        }
-
         let pageCount = doc.pageCount
         guard pageCount > 0 else {
             snapshotOperation = nil
@@ -673,13 +726,18 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
             return
         }
 
+        if isMassiveDocument {
+            // Use virtualized provider for massive documents
+            virtualPageProvider.configure(pageCount: pageCount, forceVirtualize: true)
+            pageSnapshots = virtualPageProvider.visibleSnapshots
+            isThumbnailsLoading = false
+            return
+        }
+        
         if isLargeDocument {
-            pageSnapshots = (0..<pageCount).map { index in
-                PageSnapshot(id: index,
-                             index: index,
-                             thumbnail: thumbnailCache.object(forKey: NSNumber(value: index)),
-                             label: "Page \(index + 1)")
-            }
+            // For large (but not massive) docs, use provider but don't virtualize
+            virtualPageProvider.configure(pageCount: pageCount, forceVirtualize: false)
+            pageSnapshots = virtualPageProvider.visibleSnapshots
             isThumbnailsLoading = false
             return
         }
@@ -705,13 +763,10 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     }
 
     func refreshOutline() {
+        if deferOutlineLoad && isMassiveDocument { return }
+        deferOutlineLoad = false
         guard let doc = document else {
             outlineRows = []
-            return
-        }
-        if DocumentProfile.from(pageCount: doc.pageCount).isMassive {
-            outlineRows = []
-            pushLog("Outline disabled for massive documents (too many pages).")
             return
         }
         guard let root = doc.outlineRoot else {
@@ -737,12 +792,20 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         outlineRows = rows
     }
 
+    func loadOutlineIfNeeded() {
+        guard isMassiveDocument else { return }
+        deferOutlineLoad = false
+        refreshOutline()
+    }
+
     func refreshAnnotations() {
+        if deferAnnotationScan && isMassiveDocument { return }
+        deferAnnotationScan = false
         guard let doc = document else {
             annotationRows = []
             return
         }
-        guard !isLargeDocument else {
+        guard !(isLargeDocument && !isMassiveDocument) else {
             annotationRows = []
             return
         }
@@ -754,6 +817,12 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
             }
         }
         annotationRows = rows
+    }
+
+    func loadAnnotationsIfNeeded() {
+        guard isMassiveDocument else { return }
+        deferAnnotationScan = false
+        refreshAnnotations()
     }
 
     func goTo(page index: Int) {
@@ -833,6 +902,53 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
                 pushLog("Saved as \(url.lastPathComponent)")
             } else {
                 pushLog("Failed to save to \(url.path)")
+            }
+        }
+    }
+
+    func repairAndSaveAs() {
+        guard let url = currentURL else { return }
+        
+        isDocumentLoading = true
+        loadingStatus = "Normalizing document..."
+        
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            do {
+                let service = PDFRepairService()
+                let repairedURL = try service.repairForExport(inputURL: url)
+                
+                DispatchQueue.main.async {
+                    self.isDocumentLoading = false
+                    self.loadingStatus = nil
+                    
+                    let panel = NSSavePanel()
+                    panel.allowedContentTypes = [.pdf]
+                    panel.nameFieldStringValue = (url.deletingPathExtension().lastPathComponent) + "-repaired.pdf"
+                    
+                    if panel.runModal() == .OK, let destination = panel.url {
+                        do {
+                            if FileManager.default.fileExists(atPath: destination.path) {
+                                try FileManager.default.removeItem(at: destination)
+                            }
+                            try FileManager.default.moveItem(at: repairedURL, to: destination)
+                            self.pushLog("Saved repaired document to \(destination.lastPathComponent)")
+                            NSWorkspace.shared.activateFileViewerSelecting([destination])
+                        } catch {
+                            self.pushLog("Failed to save repaired document: \(error.localizedDescription)")
+                            self.present(error)
+                        }
+                    } else {
+                        try? FileManager.default.removeItem(at: repairedURL)
+                    }
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self.isDocumentLoading = false
+                    self.loadingStatus = nil
+                    self.pushLog("Repair failed: \(error.localizedDescription)")
+                    self.present(error)
+                }
             }
         }
     }
@@ -1223,29 +1339,41 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
             return
         }
 
-        let targetSize = snapshotTargetSize
+        let thumbSize = isMassiveDocument ? massiveThumbnailTargetSize : snapshotTargetSize
+        
+        // For massive documents, use the streaming loader for faster thumbnail rendering
+        if isMassiveDocument && streamingLoader.isOpen {
+            thumbnailQueue.async { [weak self] in
+                guard let self else { return }
+                let image = self.streamingLoader.renderThumbnail(at: index, size: thumbSize)
+                
+                self.inflightLock.lock()
+                self.inflightThumbnails.remove(index)
+                self.inflightLock.unlock()
+                
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, let image else { return }
+                    self.thumbnailCache.setObject(image, forKey: key)
+                    self.updateSnapshot(at: index, thumbnail: image)
+                }
+            }
+            return
+        }
+        
+        // Standard path for non-massive documents
         let docURL = doc.documentURL
         let docData: Data?
-        if !DocumentProfile.from(pageCount: doc.pageCount).isMassive {
+        if !isMassiveDocument {
             docData = doc.dataRepresentation()
         } else {
-            // For very large documents, avoid serializing the entire file.
             docData = nil
         }
 
-        // Build a scale bucket to improve cache hit rate.
-        let mediaWidth = max(targetSize.width, 1)
-        let bucket = Int(mediaWidth.rounded(.toNearestOrEven))
-
-        let request = PDFRenderRequest(kind: .thumbnail,
-                                       pageIndex: index,
-                                       scaleBucket: bucket,
-                                       size: targetSize)
-
-        renderService.image(for: request,
-                            documentURL: docURL,
-                            documentData: docData,
-                            priority: .high) { [weak self] image in
+        renderService.thumbnail(pageIndex: index,
+                                targetSize: thumbSize,
+                                documentURL: docURL,
+                                documentData: docData,
+                                priority: .high) { [weak self] image in
             guard let self else { return }
             self.inflightLock.lock()
             self.inflightThumbnails.remove(index)
@@ -1263,6 +1391,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         guard let doc = document else { return }
         let sp = PerfLog.begin("StudioPrefetch")
         defer { PerfLog.end("StudioPrefetch", sp) }
+        guard !isMassiveDocument else { return }
         let count = doc.pageCount
         guard count > 0 else { return }
 
@@ -1280,11 +1409,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
 
         let docURL = doc.documentURL
         let docData: Data?
-        if !DocumentProfile.from(pageCount: doc.pageCount).isMassive {
-            docData = doc.dataRepresentation()
-        } else {
-            docData = nil
-        }
+        docData = isMassiveDocument ? nil : doc.dataRepresentation()
 
         // Near window (±window) with high priority.
         for offset in -window...window {
@@ -1325,13 +1450,21 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
 
 
     private func updateSnapshot(at index: Int, thumbnail: CGImage) {
-        guard index >= 0 && index < pageSnapshots.count else { return }
+        guard index >= 0 && index < (virtualPageProvider.isVirtualized ? virtualPageProvider.totalCount : pageSnapshots.count) else { return }
         
         Task { [weak self] in
             guard let self else { return }
             await self.snapshotUpdateThrottle.run { [weak self] in
                 guard let self else { return }
                 await MainActor.run {
+                    // Use virtual provider if active
+                    if self.virtualPageProvider.isVirtualized {
+                        self.virtualPageProvider.updateThumbnail(at: index, thumbnail: thumbnail)
+                        self.pageSnapshots = self.virtualPageProvider.visibleSnapshots
+                        return
+                    }
+                    
+                    // Fallback to direct array update
                     guard index >= 0 && index < self.pageSnapshots.count else { return }
                     var snapshots = self.pageSnapshots
                     let existing = snapshots[index]

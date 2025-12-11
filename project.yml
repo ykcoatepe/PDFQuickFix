@@ -21,8 +21,8 @@ targets:
         CFBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
         CFBundleName: PDFQuickFix
         CFBundleDisplayName: PDFQuickFix
-        CFBundleVersion: 1
-        CFBundleShortVersionString: 0.2.0
+        CFBundleVersion: "1"
+        CFBundleShortVersionString: "1.0.0"
         LSApplicationCategoryType: public.app-category.productivity
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
@@ -32,12 +32,53 @@ targets:
         com.apple.security.app-sandbox: true
         com.apple.security.files.user-selected.read-write: true
         com.apple.security.network.client: true
+    dependencies:
+      - target: PDFCore
+      - target: PDFQuickFixKit
     settings:
       base:
         CODE_SIGNING_ALLOWED: NO
         PRODUCT_BUNDLE_IDENTIFIER: com.yordamkocatepe.PDFQuickFix
         SWIFT_OBJC_BRIDGING_HEADER: Sources/PDFQuickFix/Bridging-Header.h
         ASSETCATALOG_COMPILER_APPICON_NAME: PDFQuickFixIcon
+  PDFCore:
+    type: framework
+    platform: macOS
+    deploymentTarget: "13.0"
+    sources:
+      - path: libs/pdfcore/Sources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.yordamkocatepe.PDFCore
+        CODE_SIGNING_ALLOWED: NO
+        GENERATE_INFOPLIST_FILE: YES
+  PDFQuickFixKit:
+    type: framework
+    platform: macOS
+    deploymentTarget: "13.0"
+    sources:
+      - path: libs/pdfquickfix-kit/Sources
+    dependencies:
+      - target: PDFCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.yordamkocatepe.PDFQuickFixKit
+        CODE_SIGNING_ALLOWED: NO
+        GENERATE_INFOPLIST_FILE: YES
+  PDFQuickFixCLI:
+    type: tool
+    platform: macOS
+    deploymentTarget: "13.0"
+    sources:
+      - path: Sources/PDFQuickFixCLI
+    dependencies:
+      - target: PDFCore
+      - target: PDFQuickFixKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.yordamkocatepe.PDFQuickFixCLI
+        CODE_SIGNING_ALLOWED: NO
+        GENERATE_INFOPLIST_FILE: YES
   PDFQuickFixTests:
     type: bundle.unit-test
     platform: macOS
@@ -46,6 +87,9 @@ targets:
       - path: Tests/PDFQuickFixTests
     dependencies:
       - target: PDFQuickFix
+      - target: PDFCore
+      - target: PDFQuickFixKit
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGNING_ALLOWED: NO

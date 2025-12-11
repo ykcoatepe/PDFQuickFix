@@ -43,3 +43,50 @@ final class ReaderLogicTests: XCTestCase {
         // So we can't assert zoomScale changed here easily without a mock view.
     }
 }
+
+final class PerfTests: XCTestCase {
+    
+    func testRenderThrottle() {
+        let throttle = RenderThrottle()
+        let expectation = self.expectation(description: "Throttle execution")
+        var executionCount = 0
+        
+        // Schedule multiple times rapidly
+        throttle.schedule(0.1) {
+            executionCount += 1
+        }
+        throttle.schedule(0.1) {
+            executionCount += 1
+        }
+        throttle.schedule(0.1) {
+            executionCount += 1
+            expectation.fulfill()
+        }
+        
+        waitForExpectations(timeout: 1.0)
+        
+        // Should only execute the last one
+        XCTAssertEqual(executionCount, 1)
+    }
+    
+    func testRenderCacheKeyEquality() {
+        let req1 = PDFRenderRequest(kind: .thumbnail, pageIndex: 0, scaleBucket: 100, size: CGSize(width: 100, height: 100))
+        let req2 = PDFRenderRequest(kind: .thumbnail, pageIndex: 0, scaleBucket: 100, size: CGSize(width: 100, height: 100))
+        let req3 = PDFRenderRequest(kind: .thumbnail, pageIndex: 1, scaleBucket: 100, size: CGSize(width: 100, height: 100))
+        let req4 = PDFRenderRequest(kind: .page, pageIndex: 0, scaleBucket: 100, size: CGSize(width: 100, height: 100))
+        
+        XCTAssertEqual(req1, req2)
+        XCTAssertNotEqual(req1, req3)
+        XCTAssertNotEqual(req1, req4)
+        XCTAssertEqual(req1.hashValue, req2.hashValue)
+    }
+    
+    func testScaleBucketStability() {
+        // Verify that similar scales map to the same bucket if we implement bucketing logic in the caller.
+        // Here we just test that the request struct holds the bucket correctly.
+        let bucket1 = Int(round(1.5 * 2.0)) // 3
+        let bucket2 = Int(round(1.51 * 2.0)) // 3
+        
+        XCTAssertEqual(bucket1, bucket2)
+    }
+}

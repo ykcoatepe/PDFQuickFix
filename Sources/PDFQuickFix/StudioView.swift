@@ -29,7 +29,7 @@ enum StudioTool: String, CaseIterable, Identifiable {
     }
 }
 
-struct StudioView: View {
+struct StudioView: View, Equatable {
     @ObservedObject var controller: StudioController
     @Binding var selectedTab: AppMode
     @EnvironmentObject private var documentHub: SharedDocumentHub
@@ -37,7 +37,7 @@ struct StudioView: View {
     @Binding var showQuickFix: Bool
     @Binding var quickFixURL: URL?
     @State private var navSelection: Int = 0 // 0 = Pages, 1 = Outline
-
+    
     @Binding var showingWatermarkSheet: Bool
     @Binding var showingHeaderFooterSheet: Bool
     @Binding var showingBatesSheet: Bool
@@ -48,6 +48,18 @@ struct StudioView: View {
     @State private var batesOptions = BatesOptions()
     @State private var cropOptions = CropOptions()
     @State private var alertMessage: String?
+    
+    static func == (lhs: StudioView, rhs: StudioView) -> Bool {
+        return lhs.controller === rhs.controller &&
+               lhs.selectedTab == rhs.selectedTab &&
+               lhs.selectedTool == rhs.selectedTool &&
+               lhs.showQuickFix == rhs.showQuickFix &&
+               lhs.quickFixURL == rhs.quickFixURL &&
+               lhs.showingWatermarkSheet == rhs.showingWatermarkSheet &&
+               lhs.showingHeaderFooterSheet == rhs.showingHeaderFooterSheet &&
+               lhs.showingBatesSheet == rhs.showingBatesSheet &&
+               lhs.showingCropSheet == rhs.showingCropSheet
+    }
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
@@ -173,6 +185,7 @@ struct StudioView: View {
             syncFromHub()
         }
         .onChange(of: controller.currentURL) { url in
+            guard let url, url != documentHub.currentURL else { return }
             if documentHub.syncEnabled {
                 documentHub.update(url: url, from: .studio)
             }
@@ -242,7 +255,7 @@ struct StudioView: View {
             centerHeader
 
             Group {
-                if let doc = controller.document, !controller.isMassiveDocument {
+                if let doc = controller.document {
                     ZStack {
                         RoundedRectangle(cornerRadius: AppTheme.Metrics.cardCornerRadius, style: .continuous)
                             .fill(AppTheme.Colors.cardBackground)
@@ -288,10 +301,35 @@ struct StudioView: View {
                             Color.black.opacity(0.08)
                             LoadingOverlayView(status: controller.loadingStatus ?? "Loading…")
                         }
+                        
+                        // Performance mode banner for massive documents
+                        if controller.isMassiveDocument {
+                            VStack {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "bolt.fill")
+                                        .foregroundColor(.yellow)
+                                    Text("Performance Mode • \(doc.pageCount) pages")
+                                        .font(.caption.weight(.medium))
+                                    Spacer()
+                                    if let url = controller.currentURL {
+                                        Button("Open in Preview") {
+                                            NSWorkspace.shared.open(url)
+                                        }
+                                        .buttonStyle(.bordered)
+                                        .controlSize(.small)
+                                    }
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(.ultraThinMaterial)
+                                .cornerRadius(8)
+                                .padding(12)
+                                
+                                Spacer()
+                            }
+                        }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if controller.isMassiveDocument, let url = controller.currentURL {
-                    massiveNotice(url: url)
                 } else {
                     emptyPlaceholder
                 }
@@ -335,7 +373,7 @@ struct StudioView: View {
     private func pageRow(for snapshot: PageSnapshot) -> some View {
         let isSelected = controller.selectedPageIDs.contains(snapshot.index)
         return HStack(spacing: 10) {
-            if let thumb = snapshot.thumbnail, !controller.isMassiveDocument {
+            if let thumb = snapshot.thumbnail {
                 Image(decorative: thumb, scale: 1, orientation: .up)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
@@ -386,37 +424,26 @@ struct StudioView: View {
     @ViewBuilder
     private var outlineList: some View {
         if controller.outlineRows.isEmpty {
-            Text(controller.isMassiveDocument ? "Outline disabled for massive documents." : "No outline available.")
-                .font(.caption)
-                .foregroundColor(AppTheme.Colors.secondaryText)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        } else {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(controller.outlineRows) { row in
-                        HStack(spacing: 8) {
-                            Text(row.outline.label ?? "Untitled")
-                                .foregroundColor(AppTheme.Colors.primaryText)
-                            Spacer()
-                            Button {
-                                if let dest = row.outline.destination {
-                                    controller.pdfView?.go(to: dest)
-                                }
-                            } label: {
-                                Image(systemName: "arrow.uturn.down")
-                            }
-                            .buttonStyle(.plain)
-                        }
+            VStack(spacing: 12) {
+                if controller.isMassiveDocument {
+                    Text("Outline loading deferred for performance")
                         .font(.caption)
-                        .padding(6)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(AppTheme.Colors.cardBackground)
-                        )
-                        .padding(.leading, CGFloat(row.depth) * 12)
+                        .foregroundColor(AppTheme.Colors.secondaryText)
+                    Button("Load Outline") {
+                        controller.loadOutlineIfNeeded()
                     }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                } else {
+                    Text("No outline available.")
+                        .font(.caption)
+                        .foregroundColor(AppTheme.Colors.secondaryText)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .center)
+            .padding(.top, 20)
+        } else {
+            OutlineTreeView(rows: controller.outlineRows, pdfView: controller.pdfView)
         }
     }
 
@@ -521,22 +548,6 @@ struct StudioView: View {
         } else {
             return "Page 1 of \(doc.pageCount)"
         }
-    }
-
-    private func massiveNotice(url: URL) -> some View {
-        VStack(spacing: 12) {
-            Text("Studio is disabled for massive documents.")
-                .font(.headline)
-                .foregroundColor(AppTheme.Colors.primaryText)
-            Text("Page count: \(controller.document?.pageCount ?? 0). Use the system viewer to browse this file.")
-                .font(.subheadline)
-                .foregroundColor(AppTheme.Colors.secondaryText)
-            Button("Open in Preview") {
-                NSWorkspace.shared.open(url)
-            }
-            .buttonStyle(.borderedProminent)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var emptyPlaceholder: some View {
@@ -707,9 +718,9 @@ struct StudioPDFViewRepresented: NSViewRepresentable {
         view.controller = controller
         view.wantsLayer = true
         view.document = document
-        view.applyPerformanceTuning(isLargeDocument: false,
-                                    desiredDisplayMode: .singlePageContinuous,
-                                    resetScale: true)
+        view.autoScales = true
+        view.displayMode = .singlePage
+        view.displaysPageBreaks = false
         
         didCreate(view)
         return view
@@ -718,6 +729,7 @@ struct StudioPDFViewRepresented: NSViewRepresentable {
     func updateNSView(_ nsView: PDFView, context: Context) {
         if nsView.document !== document {
             nsView.document = document
+            nsView.autoScales = true
         }
     }
 }
@@ -993,5 +1005,139 @@ private struct StudioLayout {
 
     var rightColumnWidth: CGFloat {
         width > 1200 ? 260 : 0
+    }
+}
+
+// MARK: - Collapsible Outline Tree
+
+struct OutlineTreeView: View {
+    let rows: [OutlineRow]
+    weak var pdfView: PDFView?
+    
+    @State private var expandedIds: Set<ObjectIdentifier> = []
+    
+    var body: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 2) {
+                ForEach(topLevelItems, id: \.id) { item in
+                    OutlineNodeView(
+                        item: item,
+                        allRows: rows,
+                        expandedIds: $expandedIds,
+                        pdfView: pdfView
+                    )
+                }
+            }
+            .padding(.vertical, 4)
+        }
+    }
+    
+    private var topLevelItems: [OutlineRow] {
+        rows.filter { $0.depth == 0 }
+    }
+}
+
+private struct OutlineNodeView: View {
+    let item: OutlineRow
+    let allRows: [OutlineRow]
+    @Binding var expandedIds: Set<ObjectIdentifier>
+    weak var pdfView: PDFView?
+    
+    private var isExpanded: Bool {
+        expandedIds.contains(item.id)
+    }
+    
+    private var children: [OutlineRow] {
+        // Find children: items that follow this one with depth = item.depth + 1
+        // until we hit another item at same depth or lower
+        guard let startIndex = allRows.firstIndex(where: { $0.id == item.id }) else { return [] }
+        var result: [OutlineRow] = []
+        for i in (startIndex + 1)..<allRows.count {
+            let row = allRows[i]
+            if row.depth <= item.depth { break }
+            if row.depth == item.depth + 1 {
+                result.append(row)
+            }
+        }
+        return result
+    }
+    
+    private var hasChildren: Bool {
+        !children.isEmpty
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 6) {
+                // Disclosure indicator
+                if hasChildren {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            if isExpanded {
+                                expandedIds.remove(item.id)
+                            } else {
+                                expandedIds.insert(item.id)
+                            }
+                        }
+                    } label: {
+                        Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(AppTheme.Colors.secondaryText)
+                            .frame(width: 14, height: 14)
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    Spacer().frame(width: 14)
+                }
+                
+                // Label
+                Text(item.outline.label ?? "Untitled")
+                    .font(.caption)
+                    .fontWeight(item.depth == 0 ? .semibold : .regular)
+                    .foregroundColor(AppTheme.Colors.primaryText)
+                    .lineLimit(2)
+                
+                Spacer()
+                
+                // Navigate button
+                Button {
+                    if let dest = item.outline.destination {
+                        pdfView?.go(to: dest)
+                    }
+                } label: {
+                    Image(systemName: "arrow.right.circle")
+                        .font(.system(size: 12))
+                        .foregroundColor(AppTheme.Colors.secondaryText)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.vertical, 5)
+            .padding(.horizontal, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(item.depth == 0 ? AppTheme.Colors.cardBackground : Color.clear)
+            )
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if let dest = item.outline.destination {
+                    pdfView?.go(to: dest)
+                }
+            }
+            
+            // Children (when expanded)
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(children, id: \.id) { child in
+                        OutlineNodeView(
+                            item: child,
+                            allRows: allRows,
+                            expandedIds: $expandedIds,
+                            pdfView: pdfView
+                        )
+                        .padding(.leading, 16)
+                    }
+                }
+            }
+        }
     }
 }

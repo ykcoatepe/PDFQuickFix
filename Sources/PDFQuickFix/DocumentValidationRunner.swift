@@ -103,7 +103,7 @@ final class DocumentValidationRunner: ObservableObject {
 
 extension DocumentValidationRunner {
     static var largeDocumentPageThreshold: Int { 1000 }
-    static var massiveDocumentPageThreshold: Int { 3000 }
+    static var massiveDocumentPageThreshold: Int { 2000 }
 
     static func estimatedPageCount(at url: URL) -> Int? {
         guard let provider = CGDataProvider(url: url as CFURL),
