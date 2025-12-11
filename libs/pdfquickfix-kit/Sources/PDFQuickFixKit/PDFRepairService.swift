@@ -304,9 +304,7 @@ extension PDFRepairService {
             } catch {
                 outcome = .parseFailed
                 reason = error.localizedDescription
-                // Check for unsupported feature error specifically if possible
-                let nsError = error as NSError
-                // "unsupportedFeature" string check on description or custom error type
+                // Check for unsupported feature error specifically
                 if "\(error)".contains("unsupportedFeature") {
                     outcome = .unsupportedFeature
                 }

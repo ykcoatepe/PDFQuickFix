@@ -1343,16 +1343,18 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         
         // For massive documents, use the streaming loader for faster thumbnail rendering
         if isMassiveDocument && streamingLoader.isOpen {
-            thumbnailQueue.async { [weak self] in
-                guard let self else { return }
-                let image = self.streamingLoader.renderThumbnail(at: index, size: thumbSize)
-                
-                self.inflightLock.lock()
-                self.inflightThumbnails.remove(index)
-                self.inflightLock.unlock()
+            // Capture loader reference before async block
+            let loader = streamingLoader
+            thumbnailQueue.async {
+                let image = loader.renderThumbnail(at: index, size: thumbSize)
                 
                 DispatchQueue.main.async { [weak self] in
-                    guard let self, let image else { return }
+                    guard let self else { return }
+                    self.inflightLock.lock()
+                    self.inflightThumbnails.remove(index)
+                    self.inflightLock.unlock()
+                    
+                    guard let image else { return }
                     self.thumbnailCache.setObject(image, forKey: key)
                     self.updateSnapshot(at: index, thumbnail: image)
                 }

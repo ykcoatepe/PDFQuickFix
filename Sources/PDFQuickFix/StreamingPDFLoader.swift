@@ -196,6 +196,8 @@ final class StreamingPDFLoader {
     }
 }
 
+extension StreamingPDFLoader: @unchecked Sendable {}
+
 // MARK: - Batch Operations
 
 extension StreamingPDFLoader {
