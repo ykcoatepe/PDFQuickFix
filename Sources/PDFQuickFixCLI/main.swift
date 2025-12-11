@@ -77,60 +77,34 @@ struct CLI {
         }
         
         let data = try Data(contentsOf: inputURL)
+        
+        // Parse with PDFCore to validate structure
         let parser = PDFCoreParser(data: data)
-        let doc = try parser.parseDocument()
+        _ = try parser.parseDocument()
         
-        // Gather info
-        // Note: PDFCoreDocument needs to expose checking for objStm, xref type, encryption if possible.
-        // If not exposed, we might need a quick hack or extended PDFCore API.
-        // For now, let's assume simple properties or simulate if unavailable.
-        // Based on previous chats, PDFCore doesn't fully expose all metadata publicly yet.
-        // But let's check what we can get.
-        // Revisions? Not tracked explicitly yet.
-        // Encrypted? Not fully handled yet.
-        
-        // Let's inspect raw parser properties if possible, or just what we have.
-        // For this sprint purpose, we output basic JSON.
-        
-        // We can simulate some for now if core doesn't support them, or try to check structure.
-        
-        // Attempt to guess XRef type
-        // The parser has `findStartXref`. A real check would require parsing logic exposure.
-        // We will default some fields or use placeholders if necessary.
-        
-        let result = InspectResult(
-            file: inputURL.lastPathComponent,
-            size: data.count,
-            pageCount: 0, // doc.trailer["Root"] -> Pages -> Count?
-                          // PDFCore doesn't resolve page tree fully publicly yet.
-                          // But we can fallback to CGPDFDocument for page count for inspection?
-            xrefType: "unknown", // Need core support
-            hasObjStm: false,    // Need core support
-            revisions: 1,
-            encrypted: false     // Need core support
-        )
-        
-        // To be more accurate, let's try CGPDFDocument for pageCount at least
-        var actualPageCount = 0
+        // Use CGPDFDocument for reliable metadata extraction
+        var pageCount = 0
         var isEncrypted = false
         if let cgDoc = CGPDFDocument(inputURL as CFURL) {
-            actualPageCount = cgDoc.numberOfPages
+            pageCount = cgDoc.numberOfPages
             isEncrypted = cgDoc.isEncrypted
         }
         
-        let refinedResult = InspectResult(
+        // Note: PDFCore doesn't yet expose xrefType, hasObjStm, or revision count.
+        // Rather than returning misleading placeholders, we report "unknown".
+        let result = InspectResult(
             file: inputURL.lastPathComponent,
             size: data.count,
-            pageCount: actualPageCount,
-            xrefType: "standard", // Placeholder
-            hasObjStm: false,     // Placeholder
-            revisions: 1,
+            pageCount: pageCount,
+            xrefType: "unknown",  // PDFCore doesn't expose this
+            hasObjStm: false,     // PDFCore doesn't expose this reliably
+            revisions: 0,         // 0 = unknown (PDFCore doesn't track revision count)
             encrypted: isEncrypted
         )
         
         let encoder = JSONEncoder()
         encoder.outputFormatting = .sortedKeys
-        let json = try encoder.encode(refinedResult)
+        let json = try encoder.encode(result)
         if let str = String(data: json, encoding: .utf8) {
             print(str)
         }
