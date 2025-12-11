@@ -15,7 +15,65 @@ public enum PDFRepairOutcome: Error {
 public struct PDFRepairService {
     private let logger = Logger(subsystem: "com.yordamkocatepe.PDFQuickFixKit", category: "PDFRepairService")
     
-    public init() {}
+    /// Dedicated temp directory for repaired PDFs
+    private static let tempSubdirectory = "PDFQuickFix-Repaired"
+    
+    /// Max age for temp files before automatic cleanup (1 hour)
+    private static let maxTempFileAge: TimeInterval = 3600
+    
+    public init() {
+        // Clean up old temp files on init
+        Self.cleanupOldTempFiles()
+    }
+    
+    /// Returns the dedicated temp directory for repaired PDFs
+    private static var repairedTempDirectory: URL {
+        let tempDir = FileManager.default.temporaryDirectory
+        let repairDir = tempDir.appendingPathComponent(tempSubdirectory)
+        
+        // Create if needed
+        if !FileManager.default.fileExists(atPath: repairDir.path) {
+            try? FileManager.default.createDirectory(at: repairDir, withIntermediateDirectories: true)
+        }
+        
+        return repairDir
+    }
+    
+    /// Clean up temp files older than maxTempFileAge
+    public static func cleanupOldTempFiles() {
+        let repairDir = repairedTempDirectory
+        let cutoff = Date().addingTimeInterval(-maxTempFileAge)
+        
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: repairDir,
+            includingPropertiesForKeys: [.contentModificationDateKey],
+            options: .skipsHiddenFiles
+        ) else { return }
+        
+        for file in files {
+            guard let attrs = try? file.resourceValues(forKeys: [.contentModificationDateKey]),
+                  let modDate = attrs.contentModificationDate else { continue }
+            
+            if modDate < cutoff {
+                try? FileManager.default.removeItem(at: file)
+            }
+        }
+    }
+    
+    /// Clean up all temp files immediately
+    public static func cleanupAllTempFiles() {
+        let repairDir = repairedTempDirectory
+        try? FileManager.default.removeItem(at: repairDir)
+        // Recreate the directory
+        try? FileManager.default.createDirectory(at: repairDir, withIntermediateDirectories: true)
+    }
+    
+    /// Generate a temp URL for repaired PDF
+    private static func makeTempURL() -> URL {
+        return repairedTempDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("pdf")
+    }
     
     public func repairIfNeeded(inputURL: URL) throws -> URL {
         let start = Date()
@@ -64,8 +122,7 @@ public struct PDFRepairService {
                 throw error
             }
             
-            let tempDir = FileManager.default.temporaryDirectory
-            let tempURL = tempDir.appendingPathComponent(UUID().uuidString).appendingPathExtension("pdf")
+            let tempURL = Self.makeTempURL()
             try normalizedData.write(to: tempURL, options: .atomic)
             
             // Validate output
@@ -121,8 +178,7 @@ public struct PDFRepairService {
                 throw error
             }
             
-            let tempDir = FileManager.default.temporaryDirectory
-            let tempURL = tempDir.appendingPathComponent(UUID().uuidString).appendingPathExtension("pdf")
+            let tempURL = Self.makeTempURL()
             try normalizedData.write(to: tempURL, options: .atomic)
             
             // Validate output
