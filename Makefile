@@ -6,7 +6,7 @@ PROJECT := $(APP).xcodeproj
 USER ?= $(shell id -un)
 export USER
 
-.PHONY: bootstrap generate build run clean dmg debug release
+.PHONY: bootstrap generate security-check build run clean dmg debug release
 
 bootstrap:
 	brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
@@ -15,13 +15,24 @@ bootstrap:
 generate:
 	xcodegen generate
 
-build: generate
-	set -o pipefail && xcodebuild -project $(PROJECT) -scheme $(SCHEME) -configuration Release -derivedDataPath $(DERIVED) build | xcpretty
+security-check:
+	./scripts/security_check.sh
+
+build: generate security-check
+	if command -v xcpretty >/dev/null 2>&1; then \
+		set -o pipefail && xcodebuild -project $(PROJECT) -scheme $(SCHEME) -configuration Release -derivedDataPath $(DERIVED) build | xcpretty; \
+	else \
+		xcodebuild -project $(PROJECT) -scheme $(SCHEME) -configuration Release -derivedDataPath $(DERIVED) build; \
+	fi
 	@echo "✅ Build done"
 	@ls -1 $(DERIVED)/Build/Products/Release/$(APP).app >/dev/null && echo "Artifact: $(DERIVED)/Build/Products/Release/$(APP).app"
 
-debug: generate
-	set -o pipefail && xcodebuild -project $(PROJECT) -scheme $(SCHEME) -configuration Debug -derivedDataPath $(DERIVED) build | xcpretty
+debug: generate security-check
+	if command -v xcpretty >/dev/null 2>&1; then \
+		set -o pipefail && xcodebuild -project $(PROJECT) -scheme $(SCHEME) -configuration Debug -derivedDataPath $(DERIVED) build | xcpretty; \
+	else \
+		xcodebuild -project $(PROJECT) -scheme $(SCHEME) -configuration Debug -derivedDataPath $(DERIVED) build; \
+	fi
 	open $(DERIVED)/Build/Products/Debug/$(APP).app || true
 
 run:

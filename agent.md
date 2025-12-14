@@ -23,6 +23,7 @@ Version: 2025-11-30 • Owner: CodeForge AI
    • Run: `make run` (or via Xcode).
    • DMG: `make dmg`.
    • CI Local: `make ci-home`.
+   • Security: `make security-check` (runs automatically from `make build` / `make debug`).
    • Lint: `swiftformat .` (if installed), `swiftlint` (if installed).
    • Test: `make sanity-fast` or `xcodebuild test`.
 
@@ -46,7 +47,7 @@ Version: 2025-11-30 • Owner: CodeForge AI
 
 7. Troubleshooting
    • `xcodegen` issues: Check `project.yml`.
-   • Build fails: Clean build folder, check `xcpretty` path.
+   • Build fails: Clean build folder, check Xcode CLT setup. `xcpretty` is optional (install for prettier logs).
 
 8. Doc Control
    • Owner: CodeForge AI.
