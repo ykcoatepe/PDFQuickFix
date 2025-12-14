@@ -16,12 +16,12 @@ generate:
 	xcodegen generate
 
 build: generate
-	xcodebuild -project $(PROJECT) -scheme $(SCHEME) -configuration Release -derivedDataPath $(DERIVED) build | xcpretty || true
+	set -o pipefail && xcodebuild -project $(PROJECT) -scheme $(SCHEME) -configuration Release -derivedDataPath $(DERIVED) build | xcpretty
 	@echo "✅ Build done"
 	@ls -1 $(DERIVED)/Build/Products/Release/$(APP).app >/dev/null && echo "Artifact: $(DERIVED)/Build/Products/Release/$(APP).app"
 
 debug: generate
-	xcodebuild -project $(PROJECT) -scheme $(SCHEME) -configuration Debug -derivedDataPath $(DERIVED) build | xcpretty || true
+	set -o pipefail && xcodebuild -project $(PROJECT) -scheme $(SCHEME) -configuration Debug -derivedDataPath $(DERIVED) build | xcpretty
 	open $(DERIVED)/Build/Products/Debug/$(APP).app || true
 
 run:
