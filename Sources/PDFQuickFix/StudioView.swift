@@ -184,7 +184,7 @@ struct StudioView: View, Equatable {
         .onChange(of: documentHub.currentURL) { _ in
             syncFromHub()
         }
-        .onChange(of: controller.currentURL) { url in
+        .onChange(of: controller.sourceURL) { url in
             guard let url, url != documentHub.currentURL else { return }
             if documentHub.syncEnabled {
                 documentHub.update(url: url, from: .studio)
@@ -209,8 +209,18 @@ struct StudioView: View, Equatable {
         guard documentHub.syncEnabled,
               documentHub.lastSource == .reader,
               let target = documentHub.currentURL,
-              controller.currentURL != target else { return }
-        controller.open(url: target)
+              controller.sourceURL != target else { return }
+        
+        // Anti-Gravity: Try to resolve a security scope from Recents if available,
+        // to ensure we have long-lived access.
+        if let recent = RecentFilesManager.shared.find(url: target),
+           let resolved = try? RecentFilesManager.shared.resolveForOpen(recent) {
+            // Use the resolved URL and scope
+            controller.open(url: resolved.url, access: resolved.access)
+        } else {
+            // Fallback (might fail sandbox check if not already open)
+            controller.open(url: target)
+        }
     }
 
     // MARK: - Columns

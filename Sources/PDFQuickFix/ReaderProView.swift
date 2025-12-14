@@ -24,6 +24,8 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
     @Published var validationStatus: String?
     @Published var isFullValidationRunning: Bool = false
     @Published private(set) var currentURL: URL?
+    @Published private(set) var sourceURL: URL?
+    private var activeSecurityScope: SecurityScopedAccess?
     @Published var isLoadingDocument: Bool = false
     @Published var loadingStatus: String?
     @Published var isLargeDocument: Bool = false
@@ -47,7 +49,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         validationRunner.cancelAll()
     }
 
-    func open(url: URL) {
+    func open(url: URL, access: SecurityScopedAccess? = nil) {
         validationRunner.cancelValidation()
         validationRunner.cancelOpen()
         isLoadingDocument = true
@@ -95,7 +97,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
                 DispatchQueue.main.async {
                     self.loadingStatus = nil
                     self.isLoadingDocument = false
-                    self.finishOpen(document: rawDoc, url: finalURL, isRepaired: repaired)
+                    self.finishOpen(document: rawDoc, sourceURL: url, workingURL: finalURL, access: access, isRepaired: repaired)
                     #if DEBUG
                     let duration = Date().timeIntervalSince(openStart)
                     PerfMetrics.shared.recordReaderOpen(duration: duration)
@@ -118,7 +120,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
                                                           self.loadingStatus = nil
                                                           switch result {
                                                           case .success(let doc):
-                                                              self.finishOpen(document: doc, url: finalURL, isRepaired: repaired)
+                                                              self.finishOpen(document: doc, sourceURL: url, workingURL: finalURL, access: access, isRepaired: repaired)
                                                               #if DEBUG
                                                               let duration = Date().timeIntervalSince(openStart)
                                                               PerfMetrics.shared.recordReaderOpen(duration: duration)
@@ -134,18 +136,20 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         }
     }
 
-    private func finishOpen(document newDocument: PDFDocument, url: URL, isRepaired: Bool = false) {
+    private func finishOpen(document newDocument: PDFDocument, sourceURL: URL, workingURL: URL, access: SecurityScopedAccess?, isRepaired: Bool = false) {
         let sp = PerfLog.begin("ReaderApplyDocument")
         defer { PerfLog.end("ReaderApplyDocument", sp) }
-        currentURL = url
+        self.currentURL = workingURL
+        self.sourceURL = sourceURL
+        self.activeSecurityScope = access
         document = newDocument
         
-        let fileSize = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int64) ?? 0
+        let fileSize = (try? FileManager.default.attributesOfItem(atPath: workingURL.path)[.size] as? Int64) ?? 0
         let profile = DocumentProfile.from(pageCount: newDocument.pageCount, fileSizeBytes: fileSize)
         isLargeDocument = profile.isLarge
         isMassiveDocument = profile.isMassive
         if isMassiveDocument {
-            logMassiveDocument(pageCount: newDocument.pageCount, url: url)
+            logMassiveDocument(pageCount: newDocument.pageCount, url: workingURL)
         }
 
         if !isMassiveDocument {
@@ -174,20 +178,23 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         )
         let isMassive = profile.isMassive
         if !isMassive && !shouldSkipAutoValidation {
-            scheduleValidation(for: url, pageLimit: 10, mode: .quick)
+            scheduleValidation(for: workingURL, pageLimit: 10, mode: .quick)
         }
         
         // Add to Recent Files
         DispatchQueue.main.async {
-            RecentFilesManager.shared.add(url: url, pageCount: newDocument.pageCount)
-            NotificationCenter.default.post(name: .readerDidOpenDocument, object: url)
+            RecentFilesManager.shared.add(url: sourceURL, pageCount: newDocument.pageCount)
+            NotificationCenter.default.post(name: .readerDidOpenDocument, object: sourceURL)
         }
     }
 
     private func handleOpenError(_ error: Error) {
         document = nil
         pdfView?.document = nil
+        pdfView?.document = nil
         currentURL = nil
+        sourceURL = nil
+        activeSecurityScope = nil
         isLargeDocument = false
         validationStatus = nil
         isFullValidationRunning = false
@@ -890,12 +897,24 @@ struct ReaderHomeView: View {
                             .foregroundColor(AppTheme.Colors.secondaryText)
                         }
                         
-                        LazyVGrid(columns: columns, spacing: 16) {
-                            ForEach(recentFiles.recentFiles.prefix(6)) { file in
-                                Button(action: {
-                                    controller.open(url: file.url)
-                                }) {
-                                    HStack(spacing: 16) {
+                            LazyVGrid(columns: columns, spacing: 16) {
+                                ForEach(recentFiles.recentFiles.prefix(6)) { file in
+                                    Button(action: {
+                                        do {
+                                            let resolved = try recentFiles.resolveForOpen(file)
+                                            controller.open(url: resolved.url, access: resolved.access)
+                                        } catch {
+                                            let alert = NSAlert()
+                                            alert.messageText = "Cannot open file"
+                                            alert.informativeText = "The file at '\(file.displayName)' could not be found or opened. It may have been moved or deleted."
+                                            alert.addButton(withTitle: "OK")
+                                            alert.addButton(withTitle: "Remove from Recents")
+                                            if alert.runModal() == .alertSecondButtonReturn {
+                                                recentFiles.remove(file)
+                                            }
+                                        }
+                                    }) {
+                                        HStack(spacing: 16) {
                                         // Thumbnail / Icon
                                         ZStack {
                                             RoundedRectangle(cornerRadius: AppTheme.Metrics.thumbnailCornerRadius, style: .continuous)
@@ -924,7 +943,7 @@ struct ReaderHomeView: View {
                                         
                                         // Info
                                         VStack(alignment: .leading, spacing: 6) {
-                                            Text(file.name)
+                                            Text(file.displayName)
                                                 .font(.headline)
                                                 .fontWeight(.medium)
                                                 .foregroundColor(AppTheme.Colors.primaryText)

@@ -63,6 +63,8 @@ struct StudioDebugInfo {
 final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFActionable, StudioToolSwitchable {
     @Published var document: PDFDocument?
     @Published var currentURL: URL?
+    @Published var sourceURL: URL?
+    private var activeSecurityScope: SecurityScopedAccess?
     @Published var pageSnapshots: [PageSnapshot] = []
     
     /// Virtualized page provider for massive documents (7000+ pages)
@@ -185,7 +187,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         prefetchThumbnails(around: index, window: 2, farWindow: 6)
     }
 
-    func open(url: URL) {
+    func open(url: URL, access: SecurityScopedAccess? = nil) {
         validationRunner.cancelValidation()
         validationRunner.cancelOpen()
         isDocumentLoading = true
@@ -227,7 +229,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
                                                   self.loadingStatus = nil
                                                   switch result {
                                                   case .success(let doc):
-                                                      self.finishOpen(document: doc, url: finalURL, isRepaired: repaired)
+                                                      self.finishOpen(document: doc, sourceURL: url, workingURL: finalURL, access: access, isRepaired: repaired)
                                                   case .failure(let error):
                                                       self.handleOpenError(error)
                                                   }
@@ -236,11 +238,13 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         }
     }
 
-    private func finishOpen(document newDocument: PDFDocument, url: URL, isRepaired: Bool = false) {
+    private func finishOpen(document newDocument: PDFDocument, sourceURL: URL, workingURL: URL, access: SecurityScopedAccess?, isRepaired: Bool = false) {
         let sp = PerfLog.begin("StudioFinishOpen")
         defer { PerfLog.end("StudioFinishOpen", sp) }
         document = newDocument
-        currentURL = url
+        self.currentURL = workingURL
+        self.sourceURL = sourceURL
+        self.activeSecurityScope = access
         let profile = DocumentProfile.from(pageCount: newDocument.pageCount)
         isLargeDocument = profile.isLarge
         isMassiveDocument = profile.isMassive
@@ -249,13 +253,13 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         resetThumbnailState()
         let isMassive = isMassiveDocument
         if isMassive {
-            logMassiveDocument(pageCount: newDocument.pageCount, url: url)
+            logMassiveDocument(pageCount: newDocument.pageCount, url: workingURL)
         }
 
         pdfView?.document = newDocument
         applyPDFViewConfiguration()
         refreshAll()
-        pushLog("Opened \(url.lastPathComponent)")
+        pushLog("Opened \(sourceURL.lastPathComponent)")
         validationStatus = nil
         validationMode = .idle
         isFullValidationRunning = false
@@ -266,7 +270,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
             resolvedPageCount: newDocument.pageCount
         )
         if !isMassive && !shouldSkipAutoValidation {
-            scheduleValidation(for: url, pageLimit: 10, mode: .quick)
+            scheduleValidation(for: workingURL, pageLimit: 10, mode: .quick)
         }
 
         if let openSP = studioOpenSignpost {
@@ -290,7 +294,11 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         }
         document = nil
         pdfView?.document = nil
+        document = nil
+        pdfView?.document = nil
         currentURL = nil
+        sourceURL = nil
+        activeSecurityScope = nil
         isLargeDocument = false
         isMassiveDocument = false
         resetThumbnailState()
@@ -668,6 +676,9 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         self.document = document
         if let url {
             currentURL = url
+            // If setting document manually, we assume source=working unless specified otherwise.
+            // But this method is mostly for save-as or internal updates.
+            // Let's assume it updates working URL.
         }
         let profile = DocumentProfile.from(pageCount: document?.pageCount ?? 0)
         isLargeDocument = profile.isLarge
