@@ -226,4 +226,137 @@ final class PDFQuickFixEngineTests: XCTestCase {
         XCTAssertEqual(result.redactionReport.totalRedactionRectCount, 1)
         XCTAssertEqual(result.redactionReport.totalSuppressedOCRRunCount, 1)
     }
+
+    func testManualRedactionCoordinatesFromCropBoxUIMapCorrectly() throws {
+        let baseURL = try TestPDFBuilder.makeSimplePDF(text: "", size: CGSize(width: 200, height: 200))
+        let doc = try XCTUnwrap(PDFDocument(url: baseURL))
+        let page = try XCTUnwrap(doc.page(at: 0))
+        page.setBounds(CGRect(x: 0, y: 0, width: 200, height: 200), for: .mediaBox)
+        page.setBounds(CGRect(x: 50, y: 50, width: 100, height: 100), for: .cropBox)
+
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("pdf")
+        XCTAssertTrue(doc.write(to: url))
+
+        let secret = "SECRET123"
+        let view = PDFView(frame: CGRect(x: 0, y: 0, width: 400, height: 400))
+        view.document = doc
+        view.displayMode = .singlePage
+        view.autoScales = true
+        view.displayBox = .cropBox
+        view.go(to: page)
+        view.layoutSubtreeIfNeeded()
+
+        let pagePoint = view.convert(CGPoint(x: 200, y: 200), to: page)
+        let manualRect = CGRect(x: pagePoint.x - 10, y: pagePoint.y - 10, width: 20, height: 20)
+
+        let cgPage = try XCTUnwrap(page.pageRef)
+        let renderBox: CGPDFBox = .mediaBox
+        let sourceBox = cgPage.getBoxRect(renderBox)
+        let rotationAngle = ((cgPage.rotationAngle % 360) + 360) % 360
+        let pageSizePoints: CGSize = (rotationAngle == 90 || rotationAngle == 270)
+            ? CGSize(width: sourceBox.height, height: sourceBox.width)
+            : sourceBox.size
+        let dpi: CGFloat = 72
+        let widthPx = max(1, Int(ceil(pointsToPixels(pageSizePoints.width, dpi: dpi))))
+        let heightPx = max(1, Int(ceil(pointsToPixels(pageSizePoints.height, dpi: dpi))))
+        let targetRectPx = CGRect(x: 0, y: 0, width: CGFloat(widthPx), height: CGFloat(heightPx))
+        let pageToPixelTransform = cgPage.getDrawingTransform(renderBox,
+                                                              rect: targetRectPx,
+                                                              rotate: 0,
+                                                              preserveAspectRatio: true)
+        let manualRectPx = manualRect.applying(pageToPixelTransform).standardized
+        let normalizedBox = CGRect(
+            x: manualRectPx.minX / targetRectPx.width,
+            y: manualRectPx.minY / targetRectPx.height,
+            width: manualRectPx.width / targetRectPx.width,
+            height: manualRectPx.height / targetRectPx.height
+        )
+
+        let ocr = StubOCRProvider(candidates: [
+            StubOCRCandidate(string: secret, boundingBox: normalizedBox)
+        ])
+
+        let engine = PDFQuickFixEngine(
+            options: QuickFixOptions(doOCR: true, dpi: dpi, redactionPadding: 0),
+            languages: ["en-US"],
+            ocrProvider: ocr
+        )
+
+        let result = try engine.processWithReport(
+            inputURL: url,
+            outputURL: nil,
+            redactionPatterns: [],
+            customRegexes: [],
+            findReplace: [],
+            manualRedactions: [0: [manualRect]]
+        )
+
+        let outDoc = try XCTUnwrap(PDFDocument(url: result.outputURL))
+        XCTAssertTrue(outDoc.findString(secret, withOptions: []).isEmpty, "Manual redactions created in cropBox UI space must suppress OCR in output")
+        XCTAssertEqual(result.redactionReport.totalSuppressedOCRRunCount, 1)
+    }
+
+    func testUnionBoundsUsesSameEpsilonExpansionAsPerRectChecks() throws {
+        let inputURL = try TestPDFBuilder.makeSimplePDF(text: "", size: CGSize(width: 200, height: 200))
+        let doc = try XCTUnwrap(PDFDocument(url: inputURL))
+        let page = try XCTUnwrap(doc.page(at: 0))
+        let cgPage = try XCTUnwrap(page.pageRef)
+
+        let secret = "SECRET123"
+        let manualRect = CGRect(x: 20, y: 20, width: 80, height: 20)
+
+        let renderBox: CGPDFBox = .mediaBox
+        let sourceBox = cgPage.getBoxRect(renderBox)
+        let rotationAngle = ((cgPage.rotationAngle % 360) + 360) % 360
+        let pageSizePoints: CGSize = (rotationAngle == 90 || rotationAngle == 270)
+            ? CGSize(width: sourceBox.height, height: sourceBox.width)
+            : sourceBox.size
+
+        let dpi: CGFloat = 72
+        let widthPx = max(1, Int(ceil(pointsToPixels(pageSizePoints.width, dpi: dpi))))
+        let heightPx = max(1, Int(ceil(pointsToPixels(pageSizePoints.height, dpi: dpi))))
+        let targetRectPx = CGRect(x: 0, y: 0, width: CGFloat(widthPx), height: CGFloat(heightPx))
+        let pageToPixelTransform = cgPage.getDrawingTransform(renderBox,
+                                                              rect: targetRectPx,
+                                                              rotate: 0,
+                                                              preserveAspectRatio: true)
+        let manualRectPx = manualRect.applying(pageToPixelTransform).standardized
+
+        // Construct a run that only overlaps the redaction after the engine's epsilon expansion (1px).
+        let runRectPx = CGRect(x: manualRectPx.maxX + 0.5,
+                               y: manualRectPx.minY,
+                               width: 10,
+                               height: manualRectPx.height)
+        let normalizedBox = CGRect(
+            x: runRectPx.minX / targetRectPx.width,
+            y: runRectPx.minY / targetRectPx.height,
+            width: runRectPx.width / targetRectPx.width,
+            height: runRectPx.height / targetRectPx.height
+        )
+
+        let ocr = StubOCRProvider(candidates: [
+            StubOCRCandidate(string: secret, boundingBox: normalizedBox)
+        ])
+
+        let engine = PDFQuickFixEngine(
+            options: QuickFixOptions(doOCR: true, dpi: dpi, redactionPadding: 0),
+            languages: ["en-US"],
+            ocrProvider: ocr
+        )
+
+        let result = try engine.processWithReport(
+            inputURL: inputURL,
+            outputURL: nil,
+            redactionPatterns: [],
+            customRegexes: [],
+            findReplace: [],
+            manualRedactions: [0: [manualRect]]
+        )
+
+        let outDoc = try XCTUnwrap(PDFDocument(url: result.outputURL))
+        XCTAssertTrue(outDoc.findString(secret, withOptions: []).isEmpty, "Union-bounds fast-path must not skip epsilon-based suppression")
+        XCTAssertEqual(result.redactionReport.totalSuppressedOCRRunCount, 1)
+    }
 }

@@ -345,9 +345,10 @@ final class PDFQuickFixEngine {
             }
         }
 
-        // Redaction must win over replacement, even with slight rounding differences.
-        let redactionRectsForOverlapPx = redactionRectsPx.map {
-            $0.insetBy(dx: -suppressionEpsilonPx, dy: -suppressionEpsilonPx)
+        // Redaction must win, even with slight rounding differences.
+        // Use the same epsilon-expanded list both for union fast-path and per-rect intersection checks.
+        let redactionRectsForOverlapPx = redactionRectsPx.map { rect in
+            rect.insetBy(dx: -suppressionEpsilonPx, dy: -suppressionEpsilonPx)
         }
         let redactionUnionBoundsPx = redactionRectsForOverlapPx.reduce(CGRect.null) { $0.union($1) }
         replacementRunsPx.removeAll { run in
@@ -402,11 +403,6 @@ final class PDFQuickFixEngine {
         var runsInPoints: [RecognizedRun] = []
         var suppressedOCRRunCount = 0
         if options.doOCR {
-            let redactionRectsForOverlapPx = redactionRectsPx.map {
-                $0.insetBy(dx: -suppressionEpsilonPx, dy: -suppressionEpsilonPx)
-            }
-            let redactionUnionBoundsPx = redactionRectsForOverlapPx.reduce(CGRect.null) { $0.union($1) }
-
             let filteredTextRuns: [RecognizedRun] = textRuns.filter { run in
                 guard !redactionRectsForOverlapPx.isEmpty else { return true }
                 if !run.rect.intersects(redactionUnionBoundsPx) { return true }
