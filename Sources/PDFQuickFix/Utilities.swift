@@ -14,9 +14,9 @@ extension NSImage {
 }
 
 func visionRectToPixelRect(_ bb: CGRect, imageSize: CGSize) -> CGRect {
-    // Vision uses normalized coords with origin at bottom-left
+    // Vision uses normalized coords with origin at bottom-left (same direction as Core Graphics user space)
     let x = bb.origin.x * imageSize.width
-    let y = (1 - bb.origin.y - bb.size.height) * imageSize.height
+    let y = bb.origin.y * imageSize.height
     let w = bb.size.width * imageSize.width
     let h = bb.size.height * imageSize.height
     return CGRect(x: x, y: y, width: w, height: h)
@@ -37,7 +37,7 @@ struct RecognizedRun {
         case skip // redacted
     }
     var kind: Kind
-    var rectInPixels: CGRect
+    var rect: CGRect
 }
 
 struct PageProcessResult {
