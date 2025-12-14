@@ -49,9 +49,17 @@ final class QuickFixOptionsModel: ObservableObject {
     func runQuickFix(inputURL: URL,
                      outputURL: URL? = nil,
                      manualRedactions: [Int: [CGRect]] = [:]) throws -> URL {
+        try runQuickFixResult(inputURL: inputURL,
+                              outputURL: outputURL,
+                              manualRedactions: manualRedactions).outputURL
+    }
+
+    func runQuickFixResult(inputURL: URL,
+                           outputURL: URL? = nil,
+                           manualRedactions: [Int: [CGRect]] = [:]) throws -> QuickFixResult {
         let parameters = makeParameters(manualRedactions: manualRedactions)
         let engine = PDFQuickFixEngine(options: parameters.options, languages: parameters.languages)
-        return try engine.process(
+        return try engine.processResult(
             inputURL: inputURL,
             outputURL: outputURL,
             redactionPatterns: parameters.redactionPatterns,

@@ -44,6 +44,8 @@ struct PageProcessResult {
     var pageSizePoints: CGSize
     var cgImage: CGImage
     var textRunsInPoints: [RecognizedRun] // rects converted to points; only keep/replace
+    var redactionRectCount: Int
+    var suppressedOCRRunCount: Int
 }
 
 // MARK: - Design System
