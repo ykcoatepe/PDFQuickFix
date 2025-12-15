@@ -1,12 +1,13 @@
 import XCTest
 import PDFKit
 @testable import PDFQuickFix
+import PDFQuickFixKit
 
 final class PDFPerformanceTests: XCTestCase {
 
     func testQuickOpenOptionsAreOptimized() {
         let options = PDFDocumentSanitizer.Options.quickOpen()
-        XCTAssertEqual(options.rebuildMode, .never, "QuickOpen should never rebuild")
+        XCTAssertEqual(options.rebuildMode, PDFDocumentSanitizer.Options.RebuildMode.never, "QuickOpen should never rebuild")
         XCTAssertFalse(options.sanitizeAnnotations, "QuickOpen should not sanitize annotations")
         XCTAssertFalse(options.sanitizeOutline, "QuickOpen should not sanitize outline")
         XCTAssertEqual(options.validationPageLimit, 10, "QuickOpen should limit validation pages")
@@ -15,7 +16,7 @@ final class PDFPerformanceTests: XCTestCase {
     func testQuickOpenOptionsAllowCustomLimit() {
         let options = PDFDocumentSanitizer.Options.quickOpen(limit: 0)
         XCTAssertEqual(options.validationPageLimit, 0, "Custom limit should be applied")
-        XCTAssertEqual(options.rebuildMode, .never)
+        XCTAssertEqual(options.rebuildMode, PDFDocumentSanitizer.Options.RebuildMode.never)
         XCTAssertFalse(options.sanitizeAnnotations)
         XCTAssertFalse(options.sanitizeOutline)
     }
@@ -33,8 +34,10 @@ final class PDFPerformanceTests: XCTestCase {
         annotation.contents = "Test Annotation"
         page.addAnnotation(annotation)
         
+        page.addAnnotation(annotation)
+        
         // Sanitize with sanitizeAnnotations = false
-        let options = PDFDocumentSanitizer.Options(rebuildMode: .never, sanitizeAnnotations: false, sanitizeOutline: false)
+        let options = PDFDocumentSanitizer.Options(rebuildMode: PDFDocumentSanitizer.Options.RebuildMode.never, sanitizeAnnotations: false, sanitizeOutline: false)
         
         // We can't easily mock the internal method call, but we can verify it doesn't crash or fail
         _ = try PDFDocumentSanitizer.sanitize(document: document, sourceURL: url, options: options)

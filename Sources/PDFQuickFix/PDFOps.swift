@@ -5,6 +5,8 @@ import AppKit
 enum PDFOpsError: LocalizedError {
     case missingDocument
     case invalidInput(String)
+    case saveFailed
+
 
     var errorDescription: String? {
         switch self {
@@ -12,6 +14,8 @@ enum PDFOpsError: LocalizedError {
             return "No PDF document is loaded."
         case .invalidInput(let message):
             return message
+        case .saveFailed:
+            return "Failed to save the document."
         }
     }
 }

@@ -43,6 +43,9 @@ struct CLI {
             case "repair":
                 try runRepair(args: Array(args.dropFirst(2)))
                 
+            case "sanitize":
+                try SanitizeCommand.run(args: Array(args.dropFirst(2)))
+                
             default:
                 print("Unknown command: \(command)")
                 printUsage()
@@ -59,8 +62,9 @@ struct CLI {
         Usage: pdfquickfix-cli <command> [options]
         
         Commands:
-          inspect <input.pdf>
-          repair <input.pdf> <output.pdf> [--no-size-limit]
+        inspect <input.pdf>
+        repair <input.pdf> <output.pdf> [--no-size-limit]
+        sanitize <input.pdf> <output.pdf> [--profile <privacyClean|lightClean|keepEditable>]
         """)
     }
     

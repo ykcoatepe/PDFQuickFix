@@ -16,31 +16,36 @@ final class PDFQuickFixEngine {
         self.options = options
         self.languages = languages
     }
-    
-    func process(inputURL: URL,
-                 outputURL: URL? = nil,
-                 redactionPatterns: [RedactionPattern] = DefaultPatterns.defaults(),
-                 customRegexes: [NSRegularExpression] = [],
-                 findReplace: [FindReplaceRule] = [],
-                 manualRedactions: [Int:[CGRect]] = [:]) throws -> URL {
-        
+
+    func processResult(inputURL: URL,
+                       outputURL: URL? = nil,
+                       redactionPatterns: [RedactionPattern] = DefaultPatterns.defaults(),
+                       customRegexes: [NSRegularExpression] = [],
+                       findReplace: [FindReplaceRule] = [],
+                       manualRedactions: [Int:[CGRect]] = [:]) throws -> QuickFixResult {
+
         let doc: PDFDocument
         do {
             // Repair/Pre-process
             let repairedURL = try PDFRepairService().repairIfNeeded(inputURL: inputURL)
-            
+
             // Load without rebuilding, as the engine will process/rasterize pages anyway.
             let loadOptions = PDFDocumentSanitizer.Options(rebuildMode: .never, sanitizeAnnotations: false, sanitizeOutline: false)
             doc = try PDFDocumentSanitizer.loadDocument(at: repairedURL, options: loadOptions)
         } catch {
             throw NSError(domain: "PDFQuickFix", code: -1, userInfo: [NSLocalizedDescriptionKey: error.localizedDescription])
         }
+
         let outURL: URL = outputURL ?? inputURL.deletingPathExtension().appendingPathExtension("fixed.pdf")
-        
+
         let pageCount = doc.pageCount
         var processedPages: [PageProcessResult] = []
         processedPages.reserveCapacity(pageCount)
-        
+
+        var pagesWithRedactions: [Int] = []
+        var totalRedactionRectCount = 0
+        var suppressedOCRRunCount = 0
+
         for i in 0..<pageCount {
             guard let page = doc.page(at: i) else { continue }
             let result = try processPage(page: page,
@@ -49,11 +54,36 @@ final class PDFQuickFixEngine {
                                          redactionPatterns: redactionPatterns,
                                          customRegexes: customRegexes,
                                          findReplace: findReplace)
+
+            if result.redactionRectCount > 0 {
+                pagesWithRedactions.append(i)
+            }
+            totalRedactionRectCount += result.redactionRectCount
+            suppressedOCRRunCount += result.suppressedOCRRunCount
+
             processedPages.append(result)
         }
-        
+
         try writePDF(pages: processedPages, to: outURL)
-        return outURL
+
+        let report = RedactionReport(pagesWithRedactions: pagesWithRedactions,
+                                     totalRedactionRectCount: totalRedactionRectCount,
+                                     suppressedOCRRunCount: suppressedOCRRunCount)
+        return QuickFixResult(outputURL: outURL, redactionReport: report)
+    }
+
+    func process(inputURL: URL,
+                 outputURL: URL? = nil,
+                 redactionPatterns: [RedactionPattern] = DefaultPatterns.defaults(),
+                 customRegexes: [NSRegularExpression] = [],
+                 findReplace: [FindReplaceRule] = [],
+                 manualRedactions: [Int:[CGRect]] = [:]) throws -> URL {
+        try processResult(inputURL: inputURL,
+                          outputURL: outputURL,
+                          redactionPatterns: redactionPatterns,
+                          customRegexes: customRegexes,
+                          findReplace: findReplace,
+                          manualRedactions: manualRedactions).outputURL
     }
     
     private func processPage(page: PDFPage,
@@ -106,6 +136,7 @@ final class PDFQuickFixEngine {
         var redactionRectsPx: [CGRect] = []
         var replacementRunsPx: [(rect: CGRect, replacement: String)] = []
         var textRuns: [RecognizedRun] = []
+        var suppressedOCRRunsByRedactionMatches = 0
         
         for rect in manualRedactions {
             let converted = CGRect(
@@ -184,6 +215,9 @@ final class PDFQuickFixEngine {
                     case .skip:
                         let padded = rectPx.insetBy(dx: -options.redactionPadding, dy: -options.redactionPadding)
                         redactionRectsPx.append(padded)
+                        if options.doOCR {
+                            suppressedOCRRunsByRedactionMatches += 1
+                        }
                     case .replace(let repl):
                         replacementRunsPx.append((rectPx, repl))
                         textRuns.append(RecognizedRun(kind: .replace(repl), rectInPixels: rectPx))
@@ -239,7 +273,12 @@ final class PDFQuickFixEngine {
         // Prepare OCR text runs in POINTS (for invisible overlay)
         var runsInPoints: [RecognizedRun] = []
         if options.doOCR {
+            var suppressedByOverlap = 0
             for r in textRuns {
+                if !redactionRectsPx.isEmpty, redactionRectsPx.contains(where: { $0.intersects(r.rectInPixels) }) {
+                    suppressedByOverlap += 1
+                    continue
+                }
                 let rectPt = CGRect(
                     x: pixelsToPoints(r.rectInPixels.origin.x, dpi: options.dpi),
                     y: pixelsToPoints(r.rectInPixels.origin.y, dpi: options.dpi),
@@ -248,9 +287,14 @@ final class PDFQuickFixEngine {
                 )
                 runsInPoints.append(RecognizedRun(kind: r.kind, rectInPixels: rectPt))
             }
+            suppressedOCRRunsByRedactionMatches += suppressedByOverlap
         }
         
-        return PageProcessResult(pageSizePoints: mediaBox.size, cgImage: finalImage, textRunsInPoints: runsInPoints)
+        return PageProcessResult(pageSizePoints: mediaBox.size,
+                                 cgImage: finalImage,
+                                 textRunsInPoints: runsInPoints,
+                                 redactionRectCount: redactionRectsPx.count,
+                                 suppressedOCRRunCount: options.doOCR ? suppressedOCRRunsByRedactionMatches : 0)
     }
     
     private func ruleReplacement(text: String, repl: String) -> String {

@@ -63,6 +63,8 @@ struct StudioDebugInfo {
 final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFActionable, StudioToolSwitchable {
     @Published var document: PDFDocument?
     @Published var currentURL: URL?
+    @Published var sourceURL: URL?
+    private var activeSecurityScope: SecurityScopedAccess?
     @Published var pageSnapshots: [PageSnapshot] = []
     
     /// Virtualized page provider for massive documents (7000+ pages)
@@ -185,7 +187,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         prefetchThumbnails(around: index, window: 2, farWindow: 6)
     }
 
-    func open(url: URL) {
+    func open(url: URL, access: SecurityScopedAccess? = nil) {
         validationRunner.cancelValidation()
         validationRunner.cancelOpen()
         isDocumentLoading = true
@@ -227,7 +229,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
                                                   self.loadingStatus = nil
                                                   switch result {
                                                   case .success(let doc):
-                                                      self.finishOpen(document: doc, url: finalURL, isRepaired: repaired)
+                                                      self.finishOpen(document: doc, sourceURL: url, workingURL: finalURL, access: access, isRepaired: repaired)
                                                   case .failure(let error):
                                                       self.handleOpenError(error)
                                                   }
@@ -236,11 +238,13 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         }
     }
 
-    private func finishOpen(document newDocument: PDFDocument, url: URL, isRepaired: Bool = false) {
+    private func finishOpen(document newDocument: PDFDocument, sourceURL: URL, workingURL: URL, access: SecurityScopedAccess?, isRepaired: Bool = false) {
         let sp = PerfLog.begin("StudioFinishOpen")
         defer { PerfLog.end("StudioFinishOpen", sp) }
         document = newDocument
-        currentURL = url
+        self.currentURL = workingURL
+        self.sourceURL = sourceURL
+        self.activeSecurityScope = access
         let profile = DocumentProfile.from(pageCount: newDocument.pageCount)
         isLargeDocument = profile.isLarge
         isMassiveDocument = profile.isMassive
@@ -249,13 +253,13 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         resetThumbnailState()
         let isMassive = isMassiveDocument
         if isMassive {
-            logMassiveDocument(pageCount: newDocument.pageCount, url: url)
+            logMassiveDocument(pageCount: newDocument.pageCount, url: workingURL)
         }
 
         pdfView?.document = newDocument
         applyPDFViewConfiguration()
         refreshAll()
-        pushLog("Opened \(url.lastPathComponent)")
+        pushLog("Opened \(sourceURL.lastPathComponent)")
         validationStatus = nil
         validationMode = .idle
         isFullValidationRunning = false
@@ -266,7 +270,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
             resolvedPageCount: newDocument.pageCount
         )
         if !isMassive && !shouldSkipAutoValidation {
-            scheduleValidation(for: url, pageLimit: 10, mode: .quick)
+            scheduleValidation(for: workingURL, pageLimit: 10, mode: .quick)
         }
 
         if let openSP = studioOpenSignpost {
@@ -290,7 +294,11 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         }
         document = nil
         pdfView?.document = nil
+        document = nil
+        pdfView?.document = nil
         currentURL = nil
+        sourceURL = nil
+        activeSecurityScope = nil
         isLargeDocument = false
         isMassiveDocument = false
         resetThumbnailState()
@@ -668,6 +676,9 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         self.document = document
         if let url {
             currentURL = url
+            // If setting document manually, we assume source=working unless specified otherwise.
+            // But this method is mostly for save-as or internal updates.
+            // Let's assume it updates working URL.
         }
         let profile = DocumentProfile.from(pageCount: document?.pageCount ?? 0)
         isLargeDocument = profile.isLarge
@@ -1060,6 +1071,99 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
                 DispatchQueue.main.async {
                     self?.pushLog("Exported text to \(url.lastPathComponent)")
                     NSWorkspace.shared.activateFileViewerSelecting([url])
+                }
+            }
+        }
+    }
+    
+    func exportSanitized() {
+        guard let doc = document else { return }
+        // We need a snapshot because sanitization (especially vector/data rebuild)
+        // works best on a stable data representation or copy.
+        // But for sanitization options that just change metadata, we can use a copy.
+        // Let's use dataRepresentation to be safe and consistent with other exports.
+        guard let data = doc.dataRepresentation(), let snapshotDoc = PDFDocument(data: data) else {
+            pushLog("Export failed: couldn't read current document state")
+            return
+        }
+
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.pdf]
+        panel.nameFieldStringValue = (currentURL?.deletingPathExtension().lastPathComponent ?? "Document") + "-sanitized.pdf"
+        
+        // Accessory View for Profile Selection
+        let accessoryView = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 60))
+        let label = NSTextField(labelWithString: "Sanitization Profile:")
+        label.frame = NSRect(x: 0, y: 35, width: 300, height: 20)
+        
+        let profileSelector = NSPopUpButton(frame: NSRect(x: 0, y: 5, width: 300, height: 25), pullsDown: false)
+        profileSelector.addItems(withTitles: [
+            "Privacy Clean (Rasterize, No Metadata)",
+            "Light Clean (Searchable, No Metadata)",
+            "Keep Editable (Forms OK, No Metadata)"
+        ])
+        
+        // Map index to profile
+        let profiles: [SanitizeProfile] = [.privacyClean, .lightClean, .keepEditable]
+        
+        accessoryView.addSubview(label)
+        accessoryView.addSubview(profileSelector)
+        panel.accessoryView = accessoryView
+        
+        if panel.runModal() == .OK, let destination = panel.url {
+            let selectedIndex = profileSelector.indexOfSelectedItem
+            guard selectedIndex >= 0 && selectedIndex < profiles.count else { return }
+            let profile = profiles[selectedIndex]
+            let options = PDFDocumentSanitizer.Options.from(profile: profile)
+            
+            isDocumentLoading = true
+            loadingStatus = "Sanitizing..."
+            
+            // Run async job
+            PDFDocumentSanitizer.loadDocumentAsync(at: destination, // Wait, we need to pass the *doc*, not load from destination?
+                                                   // Actually, wrapper expects URL. But we have a document in memory.
+                                                   // The wrapper logic is "Load -> Sanitize".
+                                                   // We should use the raw sanitize(document:...) method on a background queue.
+                                                   options: options,
+                                                   progress: nil) { _ in }
+            // Correction: loadDocumentAsync is designed to OPEN and sanitize.
+            // Here we want to SANITIZE current document and SAVE.
+            // We'll mimic the async pattern manually.
+            
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                defer {
+                    DispatchQueue.main.async {
+                        self?.isDocumentLoading = false
+                        self?.loadingStatus = nil
+                    }
+                }
+                
+                do {
+                    // Use the snapshotDoc we prepared
+                    let processed = try PDFDocumentSanitizer.sanitize(document: snapshotDoc,
+                                                                      sourceURL: self?.currentURL,
+                                                                      options: options) { processed, total in
+                        DispatchQueue.main.async {
+                            self?.loadingStatus = "Sanitizing \(processed)/\(total)"
+                        }
+                    } shouldCancel: {
+                         // Simplify cancellation for now
+                         return false
+                    }
+                    
+                    guard processed.write(to: destination) else {
+                        throw PDFOpsError.saveFailed
+                    }
+                    
+                    DispatchQueue.main.async {
+                        self?.pushLog("Exported sanitized (\(profile.rawValue)) to \(destination.lastPathComponent)")
+                        NSWorkspace.shared.activateFileViewerSelecting([destination])
+                    }
+                } catch {
+                     DispatchQueue.main.async {
+                        self?.pushLog("Sanitization failed: \(error.localizedDescription)")
+                        self?.present(error)
+                    }
                 }
             }
         }

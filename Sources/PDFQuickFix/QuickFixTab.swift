@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 
 struct QuickFixTab: View {
     @State private var inputURL: URL?
-    @State private var outputURL: URL?
+    @State private var quickFixResult: QuickFixResult?
     @StateObject private var optionsModel = QuickFixOptionsModel()
     @State private var isProcessing: Bool = false
     @State private var log: String = ""
@@ -86,7 +86,8 @@ struct QuickFixTab: View {
                 )
             }
             
-            if let outputURL {
+            if let quickFixResult {
+                let outputURL = quickFixResult.outputURL
                 HStack {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(AppColors.success)
@@ -111,11 +112,18 @@ struct QuickFixTab: View {
                 .background(AppColors.success.opacity(0.1))
                 .cornerRadius(AppLayout.cornerRadius)
             }
+
+            if let report = quickFixResult?.redactionReport {
+                RedactionReportView(report: report)
+            }
             
             Spacer()
         }
         .padding(24)
         .background(AppColors.background)
+        .onChange(of: inputURL) { _ in
+            quickFixResult = nil
+        }
     }
     
     private func pickInput() {
@@ -125,6 +133,7 @@ struct QuickFixTab: View {
         panel.allowedContentTypes = [.pdf]
         if panel.runModal() == .OK {
             inputURL = panel.url
+            quickFixResult = nil
         }
     }
     
@@ -136,10 +145,11 @@ struct QuickFixTab: View {
         let model = optionsModel
         Task.detached(priority: .userInitiated) {
             do {
-                let out = try model.runQuickFix(inputURL: inputURL)
+                let result = try model.runQuickFixResult(inputURL: inputURL)
                 await MainActor.run {
-                    self.outputURL = out
-                    self.log += "✅ Done → \(out.path)\n"
+                    self.quickFixResult = result
+                    QuickFixResultStore.shared.set(result)
+                    self.log += "✅ Done → \(result.outputURL.path)\n"
                     self.isProcessing = false
                 }
             } catch {

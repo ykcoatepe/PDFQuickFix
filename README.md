@@ -24,6 +24,8 @@ A local, on‑device macOS app that **reads & annotates PDFs**, **redacts sensit
 ## Build (XcodeGen)
 1. Install Xcode 15+ and Command Line Tools.
 2. `brew install xcodegen`
+   - Optional: `brew install xcpretty` (nicer `xcodebuild` logs; Makefile falls back if missing)
+   - `make build` runs `./scripts/security_check.sh` and fails if network entitlement or ATS arbitrary loads are enabled
 3. ```bash
    cd PDFQuickFix
    xcodegen generate

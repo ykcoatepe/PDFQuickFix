@@ -24,6 +24,8 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
     @Published var validationStatus: String?
     @Published var isFullValidationRunning: Bool = false
     @Published private(set) var currentURL: URL?
+    @Published private(set) var sourceURL: URL?
+    private var activeSecurityScope: SecurityScopedAccess?
     @Published var isLoadingDocument: Bool = false
     @Published var loadingStatus: String?
     @Published var isLargeDocument: Bool = false
@@ -47,7 +49,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         validationRunner.cancelAll()
     }
 
-    func open(url: URL) {
+    func open(url: URL, access: SecurityScopedAccess? = nil) {
         validationRunner.cancelValidation()
         validationRunner.cancelOpen()
         isLoadingDocument = true
@@ -95,7 +97,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
                 DispatchQueue.main.async {
                     self.loadingStatus = nil
                     self.isLoadingDocument = false
-                    self.finishOpen(document: rawDoc, url: finalURL, isRepaired: repaired)
+                    self.finishOpen(document: rawDoc, sourceURL: url, workingURL: finalURL, access: access, isRepaired: repaired)
                     #if DEBUG
                     let duration = Date().timeIntervalSince(openStart)
                     PerfMetrics.shared.recordReaderOpen(duration: duration)
@@ -118,7 +120,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
                                                           self.loadingStatus = nil
                                                           switch result {
                                                           case .success(let doc):
-                                                              self.finishOpen(document: doc, url: finalURL, isRepaired: repaired)
+                                                              self.finishOpen(document: doc, sourceURL: url, workingURL: finalURL, access: access, isRepaired: repaired)
                                                               #if DEBUG
                                                               let duration = Date().timeIntervalSince(openStart)
                                                               PerfMetrics.shared.recordReaderOpen(duration: duration)
@@ -134,18 +136,20 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         }
     }
 
-    private func finishOpen(document newDocument: PDFDocument, url: URL, isRepaired: Bool = false) {
+    private func finishOpen(document newDocument: PDFDocument, sourceURL: URL, workingURL: URL, access: SecurityScopedAccess?, isRepaired: Bool = false) {
         let sp = PerfLog.begin("ReaderApplyDocument")
         defer { PerfLog.end("ReaderApplyDocument", sp) }
-        currentURL = url
+        self.currentURL = workingURL
+        self.sourceURL = sourceURL
+        self.activeSecurityScope = access
         document = newDocument
         
-        let fileSize = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int64) ?? 0
+        let fileSize = (try? FileManager.default.attributesOfItem(atPath: workingURL.path)[.size] as? Int64) ?? 0
         let profile = DocumentProfile.from(pageCount: newDocument.pageCount, fileSizeBytes: fileSize)
         isLargeDocument = profile.isLarge
         isMassiveDocument = profile.isMassive
         if isMassiveDocument {
-            logMassiveDocument(pageCount: newDocument.pageCount, url: url)
+            logMassiveDocument(pageCount: newDocument.pageCount, url: workingURL)
         }
 
         if !isMassiveDocument {
@@ -174,20 +178,23 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         )
         let isMassive = profile.isMassive
         if !isMassive && !shouldSkipAutoValidation {
-            scheduleValidation(for: url, pageLimit: 10, mode: .quick)
+            scheduleValidation(for: workingURL, pageLimit: 10, mode: .quick)
         }
         
         // Add to Recent Files
         DispatchQueue.main.async {
-            RecentFilesManager.shared.add(url: url, pageCount: newDocument.pageCount)
-            NotificationCenter.default.post(name: .readerDidOpenDocument, object: url)
+            RecentFilesManager.shared.add(url: sourceURL, pageCount: newDocument.pageCount)
+            NotificationCenter.default.post(name: .readerDidOpenDocument, object: sourceURL)
         }
     }
 
     private func handleOpenError(_ error: Error) {
         document = nil
         pdfView?.document = nil
+        pdfView?.document = nil
         currentURL = nil
+        sourceURL = nil
+        activeSecurityScope = nil
         isLargeDocument = false
         validationStatus = nil
         isFullValidationRunning = false
@@ -373,10 +380,8 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         searchMatches.removeAll()
         currentMatchIndex = nil
         guard let doc = document, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        if DocumentProfile.from(pageCount: doc.pageCount).isMassive {
-            log = "Search disabled for massive documents (too many pages)."
-            return
-        }
+        // PDFKit's beginFindString is asynchronous and fires per-match notifications,
+        // so it's safe to run on massive documents without freezing the UI.
         
         findObserver.flatMap { NotificationCenter.default.removeObserver($0) }
         findObserver = NotificationCenter.default.addObserver(
@@ -668,7 +673,83 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         NSLog("PDFPerfTelemetry: massiveDocEnabled pageCount=%d file=%@", pageCount, url?.lastPathComponent ?? "unknown")
     }
 }
-extension ReaderControllerPro: FileExportable {}
+extension ReaderControllerPro: FileExportable {
+     func exportSanitized() {
+        guard let doc = document else { return }
+        guard let data = doc.dataRepresentation(), let snapshotDoc = PDFDocument(data: data) else {
+            log = "Export failed: couldn't read current document state"
+            return
+        }
+
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.pdf]
+        panel.nameFieldStringValue = (doc.documentURL?.deletingPathExtension().lastPathComponent ?? "Document") + "-sanitized.pdf"
+        
+        let accessoryView = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 60))
+        let label = NSTextField(labelWithString: "Sanitization Profile:")
+        label.frame = NSRect(x: 0, y: 35, width: 300, height: 20)
+        
+        let profileSelector = NSPopUpButton(frame: NSRect(x: 0, y: 5, width: 300, height: 25), pullsDown: false)
+        profileSelector.addItems(withTitles: [
+            "Privacy Clean (Rasterize, No Metadata)",
+            "Light Clean (Searchable, No Metadata)",
+            "Keep Editable (Forms OK, No Metadata)"
+        ])
+        
+        // Map index to profile
+        let profiles: [SanitizeProfile] = [.privacyClean, .lightClean, .keepEditable]
+        
+        accessoryView.addSubview(label)
+        accessoryView.addSubview(profileSelector)
+        panel.accessoryView = accessoryView
+        
+        if panel.runModal() == .OK, let destination = panel.url {
+            let selectedIndex = profileSelector.indexOfSelectedItem
+            guard selectedIndex >= 0 && selectedIndex < profiles.count else { return }
+            let profile = profiles[selectedIndex]
+            let options = PDFDocumentSanitizer.Options.from(profile: profile)
+            
+            isProcessing = true
+            loadingStatus = "Sanitizing..."
+            
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                defer {
+                    Task { @MainActor [weak self] in
+                        self?.isProcessing = false
+                        self?.loadingStatus = nil
+                    }
+                }
+                
+                do {
+                    let processed = try PDFDocumentSanitizer.sanitize(document: snapshotDoc,
+                                                                      sourceURL: self?.currentURL,
+                                                                      options: options) { processed, total in
+                        Task { @MainActor [weak self] in
+                            self?.loadingStatus = "Sanitizing \(processed)/\(total)"
+                        }
+                    } shouldCancel: {
+                         return false
+                    }
+                    
+                    guard processed.write(to: destination) else {
+                        // Throwing a generic error since we don't have access to PDFOpsError easily here without importing it or defining it
+                        throw NSError(domain: "PDFQuickFix", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to save sanitized document"])
+                    }
+                    
+                    Task { @MainActor [weak self] in
+                        self?.log = "Exported sanitized (\(profile.rawValue)) to \(destination.lastPathComponent)"
+                        NSWorkspace.shared.activateFileViewerSelecting([destination])
+                    }
+                } catch {
+                     Task { @MainActor [weak self] in
+                        self?.log = "Sanitization failed: \(error.localizedDescription)"
+                        self?.present(error)
+                    }
+                }
+            }
+        }
+    }
+}
 
 // PDFViewDelegate conformance kept nonisolated to satisfy protocol requirements
 // while updating state on the main actor explicitly.
@@ -890,12 +971,24 @@ struct ReaderHomeView: View {
                             .foregroundColor(AppTheme.Colors.secondaryText)
                         }
                         
-                        LazyVGrid(columns: columns, spacing: 16) {
-                            ForEach(recentFiles.recentFiles.prefix(6)) { file in
-                                Button(action: {
-                                    controller.open(url: file.url)
-                                }) {
-                                    HStack(spacing: 16) {
+                            LazyVGrid(columns: columns, spacing: 16) {
+                                ForEach(recentFiles.recentFiles.prefix(6)) { file in
+                                    Button(action: {
+                                        do {
+                                            let resolved = try recentFiles.resolveForOpen(file)
+                                            controller.open(url: resolved.url, access: resolved.access)
+                                        } catch {
+                                            let alert = NSAlert()
+                                            alert.messageText = "Cannot open file"
+                                            alert.informativeText = "The file at '\(file.displayName)' could not be found or opened. It may have been moved or deleted."
+                                            alert.addButton(withTitle: "OK")
+                                            alert.addButton(withTitle: "Remove from Recents")
+                                            if alert.runModal() == .alertSecondButtonReturn {
+                                                recentFiles.remove(file)
+                                            }
+                                        }
+                                    }) {
+                                        HStack(spacing: 16) {
                                         // Thumbnail / Icon
                                         ZStack {
                                             RoundedRectangle(cornerRadius: AppTheme.Metrics.thumbnailCornerRadius, style: .continuous)
@@ -924,7 +1017,7 @@ struct ReaderHomeView: View {
                                         
                                         // Info
                                         VStack(alignment: .leading, spacing: 6) {
-                                            Text(file.name)
+                                            Text(file.displayName)
                                                 .font(.headline)
                                                 .fontWeight(.medium)
                                                 .foregroundColor(AppTheme.Colors.primaryText)

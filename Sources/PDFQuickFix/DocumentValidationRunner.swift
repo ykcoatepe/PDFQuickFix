@@ -1,6 +1,7 @@
 import CoreGraphics
 import Foundation
 import PDFKit
+import PDFQuickFixKit
 
 final class DocumentValidationRunner: ObservableObject {
     private enum Kind: Hashable {

@@ -1,7 +1,17 @@
 #!/bin/bash
 set -euo pipefail
 
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "${ROOT_DIR}"
+
+export USER="${USER:-$(id -un)}"
+
 echo "🚀 Starting CI Run..."
+
+./scripts/security_check.sh
+
+echo "🧰 Tooling:"
+xcodebuild -version
 
 # Generate project
 if command -v xcodegen &> /dev/null; then

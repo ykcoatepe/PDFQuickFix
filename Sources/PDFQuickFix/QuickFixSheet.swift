@@ -11,6 +11,7 @@ struct QuickFixSheet: View {
     @StateObject private var optionsModel = QuickFixOptionsModel()
     @State private var isProcessing: Bool = false
     @State private var log: String = ""
+    @State private var quickFixResult: QuickFixResult?
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -18,7 +19,9 @@ struct QuickFixSheet: View {
                 Text("QuickFix").font(.title2).bold()
                 Spacer()
                 Button("Close") {
-                    onDone(nil)
+                    if quickFixResult == nil {
+                        onDone(nil)
+                    }
                     dismiss()
                 }
             }
@@ -49,6 +52,10 @@ struct QuickFixSheet: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .frame(minHeight: 120)
+
+            if let report = quickFixResult?.redactionReport {
+                RedactionReportView(report: report)
+            }
             
             HStack {
                 Spacer()
@@ -58,6 +65,17 @@ struct QuickFixSheet: View {
             }
         }
         .padding(16)
+        .onChange(of: inputURL) { _ in
+            guard let inputURL else {
+                quickFixResult = nil
+                return
+            }
+            if let outputURL = quickFixResult?.outputURL,
+               inputURL.standardizedFileURL == outputURL.standardizedFileURL {
+                return
+            }
+            quickFixResult = nil
+        }
     }
     
     private func run() {
@@ -69,15 +87,16 @@ struct QuickFixSheet: View {
         let manualRects = manualRedactions
         Task.detached(priority: .userInitiated) {
             do {
-                let output = try model.runQuickFix(
+                let result = try model.runQuickFixResult(
                     inputURL: inputURL,
                     manualRedactions: manualRects
                 )
                 await MainActor.run {
-                    self.log += "✅ Done → \(output.path)\n"
+                    self.quickFixResult = result
+                    QuickFixResultStore.shared.set(result)
+                    self.log += "✅ Done → \(result.outputURL.path)\n"
                     self.isProcessing = false
-                    self.onDone(output)
-                    self.dismiss()
+                    self.onDone(result.outputURL)
                 }
             } catch {
                 await MainActor.run {

@@ -1,5 +1,6 @@
 import Foundation
 import PDFKit
+import PDFQuickFixKit
 
 enum PDFMerge {
     static func merge(urls: [URL], outputURL: URL) throws -> URL {
