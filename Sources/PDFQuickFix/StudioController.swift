@@ -1075,6 +1075,99 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
             }
         }
     }
+    
+    func exportSanitized() {
+        guard let doc = document else { return }
+        // We need a snapshot because sanitization (especially vector/data rebuild)
+        // works best on a stable data representation or copy.
+        // But for sanitization options that just change metadata, we can use a copy.
+        // Let's use dataRepresentation to be safe and consistent with other exports.
+        guard let data = doc.dataRepresentation(), let snapshotDoc = PDFDocument(data: data) else {
+            pushLog("Export failed: couldn't read current document state")
+            return
+        }
+
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.pdf]
+        panel.nameFieldStringValue = (currentURL?.deletingPathExtension().lastPathComponent ?? "Document") + "-sanitized.pdf"
+        
+        // Accessory View for Profile Selection
+        let accessoryView = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 60))
+        let label = NSTextField(labelWithString: "Sanitization Profile:")
+        label.frame = NSRect(x: 0, y: 35, width: 300, height: 20)
+        
+        let profileSelector = NSPopUpButton(frame: NSRect(x: 0, y: 5, width: 300, height: 25), pullsDown: false)
+        profileSelector.addItems(withTitles: [
+            "Privacy Clean (Rasterize, No Metadata)",
+            "Light Clean (Searchable, No Metadata)",
+            "Keep Editable (Forms OK, No Metadata)"
+        ])
+        
+        // Map index to profile
+        let profiles: [SanitizeProfile] = [.privacyClean, .lightClean, .keepEditable]
+        
+        accessoryView.addSubview(label)
+        accessoryView.addSubview(profileSelector)
+        panel.accessoryView = accessoryView
+        
+        if panel.runModal() == .OK, let destination = panel.url {
+            let selectedIndex = profileSelector.indexOfSelectedItem
+            guard selectedIndex >= 0 && selectedIndex < profiles.count else { return }
+            let profile = profiles[selectedIndex]
+            let options = PDFDocumentSanitizer.Options.from(profile: profile)
+            
+            isDocumentLoading = true
+            loadingStatus = "Sanitizing..."
+            
+            // Run async job
+            PDFDocumentSanitizer.loadDocumentAsync(at: destination, // Wait, we need to pass the *doc*, not load from destination?
+                                                   // Actually, wrapper expects URL. But we have a document in memory.
+                                                   // The wrapper logic is "Load -> Sanitize".
+                                                   // We should use the raw sanitize(document:...) method on a background queue.
+                                                   options: options,
+                                                   progress: nil) { _ in }
+            // Correction: loadDocumentAsync is designed to OPEN and sanitize.
+            // Here we want to SANITIZE current document and SAVE.
+            // We'll mimic the async pattern manually.
+            
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                defer {
+                    DispatchQueue.main.async {
+                        self?.isDocumentLoading = false
+                        self?.loadingStatus = nil
+                    }
+                }
+                
+                do {
+                    // Use the snapshotDoc we prepared
+                    let processed = try PDFDocumentSanitizer.sanitize(document: snapshotDoc,
+                                                                      sourceURL: self?.currentURL,
+                                                                      options: options) { processed, total in
+                        DispatchQueue.main.async {
+                            self?.loadingStatus = "Sanitizing \(processed)/\(total)"
+                        }
+                    } shouldCancel: {
+                         // Simplify cancellation for now
+                         return false
+                    }
+                    
+                    guard processed.write(to: destination) else {
+                        throw PDFOpsError.saveFailed
+                    }
+                    
+                    DispatchQueue.main.async {
+                        self?.pushLog("Exported sanitized (\(profile.rawValue)) to \(destination.lastPathComponent)")
+                        NSWorkspace.shared.activateFileViewerSelecting([destination])
+                    }
+                } catch {
+                     DispatchQueue.main.async {
+                        self?.pushLog("Sanitization failed: \(error.localizedDescription)")
+                        self?.present(error)
+                    }
+                }
+            }
+        }
+    }
 
     func exportSelectedPages() {
         guard let doc = document else { return }

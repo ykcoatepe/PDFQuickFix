@@ -380,10 +380,8 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         searchMatches.removeAll()
         currentMatchIndex = nil
         guard let doc = document, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        if DocumentProfile.from(pageCount: doc.pageCount).isMassive {
-            log = "Search disabled for massive documents (too many pages)."
-            return
-        }
+        // PDFKit's beginFindString is asynchronous and fires per-match notifications,
+        // so it's safe to run on massive documents without freezing the UI.
         
         findObserver.flatMap { NotificationCenter.default.removeObserver($0) }
         findObserver = NotificationCenter.default.addObserver(
@@ -675,7 +673,83 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         NSLog("PDFPerfTelemetry: massiveDocEnabled pageCount=%d file=%@", pageCount, url?.lastPathComponent ?? "unknown")
     }
 }
-extension ReaderControllerPro: FileExportable {}
+extension ReaderControllerPro: FileExportable {
+     func exportSanitized() {
+        guard let doc = document else { return }
+        guard let data = doc.dataRepresentation(), let snapshotDoc = PDFDocument(data: data) else {
+            log = "Export failed: couldn't read current document state"
+            return
+        }
+
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.pdf]
+        panel.nameFieldStringValue = (doc.documentURL?.deletingPathExtension().lastPathComponent ?? "Document") + "-sanitized.pdf"
+        
+        let accessoryView = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 60))
+        let label = NSTextField(labelWithString: "Sanitization Profile:")
+        label.frame = NSRect(x: 0, y: 35, width: 300, height: 20)
+        
+        let profileSelector = NSPopUpButton(frame: NSRect(x: 0, y: 5, width: 300, height: 25), pullsDown: false)
+        profileSelector.addItems(withTitles: [
+            "Privacy Clean (Rasterize, No Metadata)",
+            "Light Clean (Searchable, No Metadata)",
+            "Keep Editable (Forms OK, No Metadata)"
+        ])
+        
+        // Map index to profile
+        let profiles: [SanitizeProfile] = [.privacyClean, .lightClean, .keepEditable]
+        
+        accessoryView.addSubview(label)
+        accessoryView.addSubview(profileSelector)
+        panel.accessoryView = accessoryView
+        
+        if panel.runModal() == .OK, let destination = panel.url {
+            let selectedIndex = profileSelector.indexOfSelectedItem
+            guard selectedIndex >= 0 && selectedIndex < profiles.count else { return }
+            let profile = profiles[selectedIndex]
+            let options = PDFDocumentSanitizer.Options.from(profile: profile)
+            
+            isProcessing = true
+            loadingStatus = "Sanitizing..."
+            
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                defer {
+                    Task { @MainActor [weak self] in
+                        self?.isProcessing = false
+                        self?.loadingStatus = nil
+                    }
+                }
+                
+                do {
+                    let processed = try PDFDocumentSanitizer.sanitize(document: snapshotDoc,
+                                                                      sourceURL: self?.currentURL,
+                                                                      options: options) { processed, total in
+                        Task { @MainActor [weak self] in
+                            self?.loadingStatus = "Sanitizing \(processed)/\(total)"
+                        }
+                    } shouldCancel: {
+                         return false
+                    }
+                    
+                    guard processed.write(to: destination) else {
+                        // Throwing a generic error since we don't have access to PDFOpsError easily here without importing it or defining it
+                        throw NSError(domain: "PDFQuickFix", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to save sanitized document"])
+                    }
+                    
+                    Task { @MainActor [weak self] in
+                        self?.log = "Exported sanitized (\(profile.rawValue)) to \(destination.lastPathComponent)"
+                        NSWorkspace.shared.activateFileViewerSelecting([destination])
+                    }
+                } catch {
+                     Task { @MainActor [weak self] in
+                        self?.log = "Sanitization failed: \(error.localizedDescription)"
+                        self?.present(error)
+                    }
+                }
+            }
+        }
+    }
+}
 
 // PDFViewDelegate conformance kept nonisolated to satisfy protocol requirements
 // while updating state on the main actor explicitly.

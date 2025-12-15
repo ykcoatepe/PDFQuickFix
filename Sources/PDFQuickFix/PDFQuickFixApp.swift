@@ -25,6 +25,7 @@ protocol FileExportable: AnyObject {
     func repairAndSaveAs()
     func exportToImages(format: NSBitmapImageRep.FileType)
     func exportToText()
+    func exportSanitized()
 }
 
 struct FileExportableKey: FocusedValueKey {
@@ -101,6 +102,12 @@ struct AppCommands: Commands {
                 
                 Button("Text") {
                     fileExportable?.exportToText()
+                }
+                
+                Divider()
+                
+                Button("Sanitize for Sharing…") {
+                    fileExportable?.exportSanitized()
                 }
             }
             .disabled(fileExportable == nil)

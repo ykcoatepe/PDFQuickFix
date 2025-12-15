@@ -1,14 +1,13 @@
-import AppKit
 import CoreGraphics
 import Foundation
 import PDFKit
 
-enum PDFDocumentSanitizerError: LocalizedError {
+public enum PDFDocumentSanitizerError: LocalizedError {
     case unableToOpen(URL)
     case pageRenderFailed(page: Int, reason: String)
     case cancelled
 
-    var errorDescription: String? {
+    public var errorDescription: String? {
         switch self {
         case .unableToOpen(let url):
             return "Belge açılamadı: \(url.lastPathComponent)."
@@ -20,130 +19,111 @@ enum PDFDocumentSanitizerError: LocalizedError {
     }
 }
 
-enum PDFDocumentSanitizer {
-    struct Options {
-        enum RebuildMode {
+public enum SanitizeProfile: String, CaseIterable {
+    case privacyClean
+    case lightClean
+    case keepEditable
+}
+
+public enum PDFDocumentSanitizer {
+    public struct Options {
+        public enum RebuildMode {
             case auto
             case never
             case rasterize
+            case alwaysRebuildVectorOrData
         }
 
-        var rebuildMode: RebuildMode
-        var validationPageLimit: Int?
-        var sanitizeAnnotations: Bool
-        var sanitizeOutline: Bool
+        public var rebuildMode: RebuildMode
+        public var validationPageLimit: Int?
+        public var sanitizeAnnotations: Bool
+        public var sanitizeOutline: Bool
+        public var removeOutline: Bool
+        public var scrubMetadata: Bool
 
-        init(rebuildMode: RebuildMode = .auto, validationPageLimit: Int? = nil, sanitizeAnnotations: Bool = true, sanitizeOutline: Bool = true) {
+        public init(rebuildMode: RebuildMode = .auto,
+                    validationPageLimit: Int? = nil,
+                    sanitizeAnnotations: Bool = true,
+                    sanitizeOutline: Bool = true,
+                    removeOutline: Bool = false,
+                    scrubMetadata: Bool = false) {
             self.rebuildMode = rebuildMode
             self.validationPageLimit = validationPageLimit
             self.sanitizeAnnotations = sanitizeAnnotations
             self.sanitizeOutline = sanitizeOutline
+            self.removeOutline = removeOutline
+            self.scrubMetadata = scrubMetadata
         }
 
-        static var full: Options { Options() }
-        static func quickOpen(limit: Int = 10) -> Options {
-            Options(rebuildMode: .never,
-                    validationPageLimit: limit,
-                    sanitizeAnnotations: false,
-                    sanitizeOutline: false)
+        public static var full: Options { Options() }
+        
+        public static func from(profile: SanitizeProfile) -> Options {
+            switch profile {
+            case .privacyClean:
+                return Options(rebuildMode: .rasterize,
+                               sanitizeAnnotations: true, // effectively removed by rasterization
+                               sanitizeOutline: false,    // removed explicitly
+                               removeOutline: true,
+                               scrubMetadata: true)
+            case .lightClean:
+                return Options(rebuildMode: .alwaysRebuildVectorOrData,
+                               sanitizeAnnotations: true,
+                               sanitizeOutline: false,    // removed explicitly
+                               removeOutline: true,
+                               scrubMetadata: true)
+            case .keepEditable:
+                return Options(rebuildMode: .never,
+                               sanitizeAnnotations: false,
+                               sanitizeOutline: false,    // removed explicitly
+                               removeOutline: true,
+                               scrubMetadata: true)
+            }
         }
     }
+    
+    public struct ValidationOptions {
+        public var pageLimit: Int?
 
-    struct ValidationOptions {
-        var pageLimit: Int?
-
-        init(pageLimit: Int? = nil) {
+        public init(pageLimit: Int? = nil) {
             self.pageLimit = pageLimit
         }
     }
 
-    final class Job {
-        private let lock = NSLock()
-        private var _isCancelled = false
+    public typealias ProgressHandler = (_ processedPages: Int, _ totalPages: Int) -> Void
 
-        var isCancelled: Bool {
-            lock.lock(); defer { lock.unlock() }
-            return _isCancelled
-        }
-
-        func cancel() {
-            lock.lock(); defer { lock.unlock() }
-            _isCancelled = true
-        }
-    }
-
-    typealias ProgressHandler = (_ processedPages: Int, _ totalPages: Int) -> Void
-
-    private static let sanitizerQueue = DispatchQueue(label: "com.pdfquickfix.sanitizer", qos: .userInitiated)
     private static let dateFormatter = ISO8601DateFormatter()
     private static let dateFormatterLock = NSLock()
 
-    static func loadDocument(at url: URL,
-                             options: Options = .full,
-                             progress: ProgressHandler? = nil) throws -> PDFDocument {
-        guard let original = PDFDocument(url: url) else {
-            throw PDFDocumentSanitizerError.unableToOpen(url)
-        }
-        return try sanitize(document: original,
-                             sourceURL: url,
-                             options: options,
-                             progress: progress)
-    }
-
     @discardableResult
-    static func loadDocumentAsync(at url: URL,
-                                  options: Options = .quickOpen(),
-                                  progress: ProgressHandler? = nil,
-                                  completion: @escaping (Result<PDFDocument, Error>) -> Void) -> Job {
-        let job = Job()
-        sanitizerQueue.async {
-            let sp = PerfLog.begin("SanitizerOpen")
-            defer { PerfLog.end("SanitizerOpen", sp) }
-            guard !job.isCancelled else { return }
-            do {
-                guard let doc = PDFDocument(url: url) else {
-                    throw PDFDocumentSanitizerError.unableToOpen(url)
-                }
-                let sanitized = try sanitize(document: doc,
-                                             sourceURL: url,
-                                             options: options,
-                                             progress: { processed, total in
-                                                 guard !job.isCancelled else { return }
-                                                 dispatchToMain {
-                                                     progress?(processed, total)
-                                                 }
-                                             },
-                                             shouldCancel: { job.isCancelled })
-                guard !job.isCancelled else { return }
-                dispatchToMain {
-                    completion(.success(sanitized))
-                }
-            } catch {
-                guard !job.isCancelled else { return }
-                dispatchToMain {
-                    completion(.failure(error))
-                }
-            }
-        }
-        return job
-    }
-
-    @discardableResult
-    static func sanitize(document original: PDFDocument,
-                         sourceURL: URL? = nil,
-                         options: Options = .full,
-                         progress: ProgressHandler? = nil,
-                         shouldCancel: () -> Bool = { false }) throws -> PDFDocument {
+    public static func sanitize(document original: PDFDocument,
+                                sourceURL: URL? = nil,
+                                options: Options = .full,
+                                progress: ProgressHandler? = nil,
+                                shouldCancel: () -> Bool = { false }) throws -> PDFDocument {
         enforceStructureTreeOff(original)
 
-        let (cleanedAttributes, attributesChanged) = sanitizeAttributes(from: original.documentAttributes)
-        original.documentAttributes = cleanedAttributes
-        
-        let outlineChanged: Bool
-        if options.sanitizeOutline {
-            outlineChanged = sanitizeOutline(original.outlineRoot)
+        var attributesChanged = false
+        if options.scrubMetadata {
+            original.documentAttributes = [:]
+            attributesChanged = true
         } else {
-            outlineChanged = false
+            let (cleanedAttributes, changed) = sanitizeAttributes(from: original.documentAttributes)
+            original.documentAttributes = cleanedAttributes
+            attributesChanged = changed
+        }
+        
+        // Handle Outline: either sanitize or remove
+        var outlineChanged = false
+        if options.removeOutline {
+            // Explicit removal for keepEditable or any profile requesting it
+            if let root = original.outlineRoot {
+                while root.numberOfChildren > 0 {
+                   root.child(at: 0)?.removeFromParent()
+                }
+                outlineChanged = true
+            }
+        } else if options.sanitizeOutline {
+            outlineChanged = sanitizeOutline(original.outlineRoot)
         }
         
         let annotationsChanged: Bool
@@ -161,20 +141,47 @@ enum PDFDocumentSanitizer {
             requiresRebuild = false
         case .auto:
             requiresRebuild = attributesChanged || outlineChanged || annotationsChanged
+        case .alwaysRebuildVectorOrData:
+            requiresRebuild = true
         }
 
         let workingDocument: PDFDocument
-        if requiresRebuild, let redrawn = rebuildDocumentByRasterizing(original, shouldCancel: shouldCancel) {
+        if requiresRebuild && options.rebuildMode == .rasterize,
+           let redrawn = rebuildDocumentByRasterizing(original, shouldCancel: shouldCancel) {
             enforceStructureTreeOff(redrawn)
-            redrawn.documentAttributes = cleanedAttributes
+            if options.scrubMetadata {
+                redrawn.documentAttributes = [:]
+            } else {
+                redrawn.documentAttributes = original.documentAttributes
+            }
             workingDocument = redrawn
         } else if requiresRebuild,
                   let data = original.dataRepresentation(),
                   let rebuilt = PDFDocument(data: data) {
             enforceStructureTreeOff(rebuilt)
-            rebuilt.documentAttributes = cleanedAttributes
-            _ = sanitizeOutline(rebuilt.outlineRoot)
-            _ = try sanitizeAnnotations(in: rebuilt, shouldCancel: shouldCancel)
+             if options.scrubMetadata {
+                rebuilt.documentAttributes = [:]
+            } else {
+                rebuilt.documentAttributes = original.documentAttributes
+            }
+            
+            // Re-apply outline removal on rebuilt doc
+            if options.removeOutline, let root = rebuilt.outlineRoot {
+                 while root.numberOfChildren > 0 {
+                   root.child(at: 0)?.removeFromParent()
+                }
+            } else if options.sanitizeOutline {
+                _ = sanitizeOutline(rebuilt.outlineRoot)
+            }
+            
+            // Annotations are part of data, but we might clean them again if needed?
+            // Actually dataRepresentation() bakes current state.
+            // If we modified original's annotations before dataRep, they are baked.
+            // But let's be safe.
+             if options.sanitizeAnnotations {
+                _ = try sanitizeAnnotations(in: rebuilt, shouldCancel: shouldCancel)
+            }
+            
             workingDocument = rebuilt
         } else {
             workingDocument = original
@@ -183,10 +190,16 @@ enum PDFDocumentSanitizer {
         if shouldCancel() { throw PDFDocumentSanitizerError.cancelled }
 
         let validationOptions = ValidationOptions(pageLimit: options.validationPageLimit)
-        let validationURL = sourceURL ?? workingDocument.documentURL
+        // If we have a sourceURL, validation might fail if it tries to read from disk and we just have data.
+        // If we rebuilt, workingDocument.documentURL is likely nil.
+        // For validation, we prefer data based source if possible.
+        let validationURL = workingDocument.documentURL ?? sourceURL
         guard let cgDocument = makeCGPDFDocument(for: workingDocument, url: validationURL) else {
-            throw PDFDocumentSanitizerError.pageRenderFailed(page: 0, reason: "PDF doğrulama kaynağı oluşturulamadı")
+            // Not a fatal error per se, but validation can't run.
+            // Let's assume strictness for now.
+             throw PDFDocumentSanitizerError.pageRenderFailed(page: 0, reason: "PDF doğrulama kaynağı oluşturulamadı")
         }
+        
         try validate(cgDocument: cgDocument,
                      options: validationOptions,
                      progress: progress,
@@ -194,10 +207,10 @@ enum PDFDocumentSanitizer {
         return workingDocument
     }
 
-    static func validate(cgDocument: CGPDFDocument,
-                         options: ValidationOptions = ValidationOptions(),
-                         progress: ProgressHandler? = nil,
-                         shouldCancel: () -> Bool = { false }) throws {
+    public static func validate(cgDocument: CGPDFDocument,
+                                options: ValidationOptions = ValidationOptions(),
+                                progress: ProgressHandler? = nil,
+                                shouldCancel: () -> Bool = { false }) throws {
         let pageCount = cgDocument.numberOfPages
         guard pageCount > 0 else { return }
 
@@ -234,6 +247,7 @@ enum PDFDocumentSanitizer {
                     return
                 }
                 ctx.interpolationQuality = .high
+                // Replaced NSColor.white
                 ctx.setFillColor(gray: 1, alpha: 1)
                 ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
 
@@ -486,7 +500,8 @@ enum PDFDocumentSanitizer {
                                   space: colorSpace,
                                   bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
         ctx.interpolationQuality = .high
-        ctx.setFillColor(NSColor.white.cgColor)
+        // Replaced NSColor.white
+        ctx.setFillColor(gray: 1, alpha: 1)
         ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
 
         ctx.saveGState()
@@ -497,14 +512,6 @@ enum PDFDocumentSanitizer {
         ctx.restoreGState()
 
         return ctx.makeImage()
-    }
-
-    private static func dispatchToMain(_ block: @escaping () -> Void) {
-        if Thread.isMainThread {
-            block()
-        } else {
-            DispatchQueue.main.async(execute: block)
-        }
     }
 
     private static func debugLogUnsupportedAttributeKey(_ key: AnyHashable) {
