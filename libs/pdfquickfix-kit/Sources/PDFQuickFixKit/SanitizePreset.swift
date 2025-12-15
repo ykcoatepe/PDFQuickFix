@@ -36,7 +36,44 @@ public struct SanitizePreset: Codable, Equatable, Sendable {
         }
         
         self.version = v
-        self.name = try container.decode(String.self, forKey: .name)
+        
+        // Validate name is not empty/whitespace-only
+        let rawName = try container.decode(String.self, forKey: .name)
+        let trimmedName = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .name,
+                in: container,
+                debugDescription: "Preset name cannot be empty."
+            )
+        }
+        self.name = trimmedName
+        
         self.profile = try container.decode(SanitizeProfile.self, forKey: .profile)
     }
 }
+
+// MARK: - Flexible Profile Parsing
+
+extension SanitizeProfile {
+    /// Parses profile from string, accepting camelCase, kebab-case, and lowercase.
+    /// Examples: "privacyClean", "privacy-clean", "privacy_clean" all map to .privacyClean
+    public static func parse(_ input: String) -> SanitizeProfile? {
+        let normalized = input
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "_", with: "-")
+        
+        switch normalized {
+        case "privacyclean", "privacy-clean":
+            return .privacyClean
+        case "lightclean", "light-clean":
+            return .lightClean
+        case "keepeditable", "keep-editable":
+            return .keepEditable
+        default:
+            return nil
+        }
+    }
+}
+

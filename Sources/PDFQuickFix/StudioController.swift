@@ -1091,12 +1091,11 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         panel.allowedContentTypes = [.pdf]
         panel.nameFieldStringValue = (currentURL?.deletingPathExtension().lastPathComponent ?? "Document") + "-sanitized.pdf"
         
-        // Accessory View for Profile Selection
-        let accessoryView = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 85))
+        // Build accessory view with NSStackView for robust layout
         let label = NSTextField(labelWithString: "Sanitization Profile:")
-        label.frame = NSRect(x: 0, y: 60, width: 300, height: 20)
+        label.setContentHuggingPriority(.required, for: .vertical)
         
-        let profileSelector = NSPopUpButton(frame: NSRect(x: 0, y: 30, width: 300, height: 25), pullsDown: false)
+        let profileSelector = NSPopUpButton(frame: .zero, pullsDown: false)
         profileSelector.addItems(withTitles: [
             "Privacy Clean (Rasterize, No Metadata)",
             "Light Clean (Searchable, No Metadata)",
@@ -1113,12 +1112,23 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         
         // "Set as default" checkbox
         let checkbox = NSButton(checkboxWithTitle: "Set as default", target: nil, action: nil)
-        checkbox.frame = NSRect(x: 0, y: 5, width: 300, height: 20)
         checkbox.state = .on
         
-        accessoryView.addSubview(label)
-        accessoryView.addSubview(profileSelector)
-        accessoryView.addSubview(checkbox)
+        let stackView = NSStackView(views: [label, profileSelector, checkbox])
+        stackView.orientation = .vertical
+        stackView.alignment = .leading
+        stackView.spacing = 8
+        stackView.translatesAutoresizingMaskIntoConstraints = false
+        
+        // Wrap in container for proper sizing
+        let accessoryView = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 90))
+        accessoryView.addSubview(stackView)
+        NSLayoutConstraint.activate([
+            stackView.leadingAnchor.constraint(equalTo: accessoryView.leadingAnchor),
+            stackView.trailingAnchor.constraint(equalTo: accessoryView.trailingAnchor),
+            stackView.topAnchor.constraint(equalTo: accessoryView.topAnchor),
+            stackView.bottomAnchor.constraint(lessThanOrEqualTo: accessoryView.bottomAnchor)
+        ])
         panel.accessoryView = accessoryView
         
         if panel.runModal() == .OK, let destination = panel.url {

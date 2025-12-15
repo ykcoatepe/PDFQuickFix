@@ -64,6 +64,48 @@ final class SanitizePresetTests: XCTestCase {
         }
     }
     
+    // MARK: - Name Validation
+    
+    func testRejectsEmptyName() throws {
+        let json = """
+        {"name": "", "profile": "lightClean"}
+        """
+        let data = json.data(using: .utf8)!
+        
+        XCTAssertThrowsError(try JSONDecoder().decode(SanitizePreset.self, from: data)) { error in
+            guard case DecodingError.dataCorrupted(let context) = error else {
+                XCTFail("Expected dataCorrupted error, got \(error)")
+                return
+            }
+            XCTAssertTrue(context.debugDescription.contains("cannot be empty"))
+        }
+    }
+    
+    func testRejectsWhitespaceOnlyName() throws {
+        let json = """
+        {"name": "   ", "profile": "lightClean"}
+        """
+        let data = json.data(using: .utf8)!
+        
+        XCTAssertThrowsError(try JSONDecoder().decode(SanitizePreset.self, from: data)) { error in
+            guard case DecodingError.dataCorrupted(let context) = error else {
+                XCTFail("Expected dataCorrupted error, got \(error)")
+                return
+            }
+            XCTAssertTrue(context.debugDescription.contains("cannot be empty"))
+        }
+    }
+    
+    func testTrimsNameWhitespace() throws {
+        let json = """
+        {"name": "  My Preset  ", "profile": "lightClean"}
+        """
+        let data = json.data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(SanitizePreset.self, from: data)
+        
+        XCTAssertEqual(decoded.name, "My Preset", "Name should be trimmed")
+    }
+    
     // MARK: - Profile Codable
     
     func testProfileRawValues() {
@@ -77,6 +119,42 @@ final class SanitizePresetTests: XCTestCase {
         XCTAssertEqual(SanitizeProfile(rawValue: "lightClean"), .lightClean)
         XCTAssertEqual(SanitizeProfile(rawValue: "keepEditable"), .keepEditable)
         XCTAssertNil(SanitizeProfile(rawValue: "invalid"))
+    }
+    
+    // MARK: - Flexible Profile Parsing (CLI support)
+    
+    func testProfileParsesCamelCase() {
+        XCTAssertEqual(SanitizeProfile.parse("privacyClean"), .privacyClean)
+        XCTAssertEqual(SanitizeProfile.parse("lightClean"), .lightClean)
+        XCTAssertEqual(SanitizeProfile.parse("keepEditable"), .keepEditable)
+    }
+    
+    func testProfileParsesKebabCase() {
+        XCTAssertEqual(SanitizeProfile.parse("privacy-clean"), .privacyClean)
+        XCTAssertEqual(SanitizeProfile.parse("light-clean"), .lightClean)
+        XCTAssertEqual(SanitizeProfile.parse("keep-editable"), .keepEditable)
+    }
+    
+    func testProfileParsesLowercase() {
+        XCTAssertEqual(SanitizeProfile.parse("privacyclean"), .privacyClean)
+        XCTAssertEqual(SanitizeProfile.parse("lightclean"), .lightClean)
+        XCTAssertEqual(SanitizeProfile.parse("keepeditable"), .keepEditable)
+    }
+    
+    func testProfileParsesUnderscoreCase() {
+        XCTAssertEqual(SanitizeProfile.parse("privacy_clean"), .privacyClean)
+        XCTAssertEqual(SanitizeProfile.parse("light_clean"), .lightClean)
+        XCTAssertEqual(SanitizeProfile.parse("keep_editable"), .keepEditable)
+    }
+    
+    func testProfileParseTrimsWhitespace() {
+        XCTAssertEqual(SanitizeProfile.parse("  privacy-clean  "), .privacyClean)
+    }
+    
+    func testProfileParseRejectsInvalid() {
+        XCTAssertNil(SanitizeProfile.parse("invalid"))
+        XCTAssertNil(SanitizeProfile.parse(""))
+        XCTAssertNil(SanitizeProfile.parse("privacy"))
     }
     
     // MARK: - JSON Roundtrip (proves CLI can load user-written JSON)
@@ -98,3 +176,4 @@ final class SanitizePresetTests: XCTestCase {
         XCTAssertEqual(loadedPreset.name, "CLI Test")
     }
 }
+

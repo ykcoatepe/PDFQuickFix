@@ -64,7 +64,7 @@ struct CLI {
         Commands:
         inspect <input.pdf>
         repair <input.pdf> <output.pdf> [--no-size-limit]
-        sanitize <input.pdf> <output.pdf> [--profile <privacyClean|lightClean|keepEditable>]
+        sanitize <input.pdf> <output.pdf> [--profile <privacy-clean|light-clean|keep-editable>]
                                           [--preset <path>]
         """)
     }

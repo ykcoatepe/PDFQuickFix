@@ -30,10 +30,10 @@ struct SanitizeCommand {
             if arg == "--profile" {
                 i += 1
                 if i < args.count {
-                    if let p = SanitizeProfile(rawValue: args[i]) {
+                    if let p = SanitizeProfile.parse(args[i]) {
                         profile = p
                     } else {
-                        print("Error: Unknown profile '\(args[i])'. Available: privacyClean, lightClean, keepEditable")
+                        print("Error: Unknown profile '\(args[i])'. Available: privacy-clean, light-clean, keep-editable")
                         exit(1)
                     }
                 }
