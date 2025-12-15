@@ -22,6 +22,7 @@ struct SanitizeCommand {
         var inputPath: String?
         var outputPath: String?
         var profile: SanitizeProfile = .privacyClean
+        var presetPath: String?
         
         var i = 0
         while i < args.count {
@@ -36,6 +37,14 @@ struct SanitizeCommand {
                         exit(1)
                     }
                 }
+            } else if arg == "--preset" {
+                i += 1
+                if i < args.count {
+                    presetPath = args[i]
+                } else {
+                    print("Error: --preset requires a path argument")
+                    exit(1)
+                }
             } else if inputPath == nil {
                 inputPath = arg
             } else if outputPath == nil {
@@ -46,6 +55,26 @@ struct SanitizeCommand {
         
         guard let input = inputPath, let output = outputPath else {
             throw CLIError.invalidArguments
+        }
+        
+        // Load preset if specified (overrides --profile)
+        if let presetPath = presetPath {
+            let presetURL = URL(fileURLWithPath: presetPath)
+            guard FileManager.default.fileExists(atPath: presetURL.path) else {
+                print("Error: Preset file not found at '\(presetPath)'")
+                exit(1)
+            }
+            do {
+                let presetData = try Data(contentsOf: presetURL)
+                let preset = try JSONDecoder().decode(SanitizePreset.self, from: presetData)
+                profile = preset.profile
+            } catch let error as DecodingError {
+                print("Error: Invalid preset JSON - \(error.localizedDescription)")
+                exit(1)
+            } catch {
+                print("Error: Could not read preset file - \(error.localizedDescription)")
+                exit(1)
+            }
         }
         
         let inputURL = URL(fileURLWithPath: input)
@@ -63,7 +92,6 @@ struct SanitizeCommand {
         let options = PDFDocumentSanitizer.Options.from(profile: profile)
         
         // Perform Sanitize
-        // We use the synchronous core method from Kit
         let sanitized = try PDFDocumentSanitizer.sanitize(document: doc,
                                                           sourceURL: inputURL,
                                                           options: options)
@@ -77,8 +105,6 @@ struct SanitizeCommand {
         let pageCount = sanitized.pageCount
         
         // Check searchability roughly
-        // If rasterized (privacyClean), text should be empty.
-        // If lightClean, text should be present.
         let searchable = (sanitized.string?.trimmingCharacters(in: .whitespacesAndNewlines).count ?? 0) > 0
         
         let result = Result(profile: profile.rawValue,
@@ -96,3 +122,4 @@ struct SanitizeCommand {
         }
     }
 }
+

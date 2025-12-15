@@ -1092,11 +1092,11 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         panel.nameFieldStringValue = (currentURL?.deletingPathExtension().lastPathComponent ?? "Document") + "-sanitized.pdf"
         
         // Accessory View for Profile Selection
-        let accessoryView = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 60))
+        let accessoryView = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 85))
         let label = NSTextField(labelWithString: "Sanitization Profile:")
-        label.frame = NSRect(x: 0, y: 35, width: 300, height: 20)
+        label.frame = NSRect(x: 0, y: 60, width: 300, height: 20)
         
-        let profileSelector = NSPopUpButton(frame: NSRect(x: 0, y: 5, width: 300, height: 25), pullsDown: false)
+        let profileSelector = NSPopUpButton(frame: NSRect(x: 0, y: 30, width: 300, height: 25), pullsDown: false)
         profileSelector.addItems(withTitles: [
             "Privacy Clean (Rasterize, No Metadata)",
             "Light Clean (Searchable, No Metadata)",
@@ -1106,8 +1106,19 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         // Map index to profile
         let profiles: [SanitizeProfile] = [.privacyClean, .lightClean, .keepEditable]
         
+        // Preselect based on user's default profile
+        let defaultProfile = SanitizeDefaults.shared.defaultProfile
+        let initialIndex = profiles.firstIndex(of: defaultProfile) ?? 0
+        profileSelector.selectItem(at: initialIndex)
+        
+        // "Set as default" checkbox
+        let checkbox = NSButton(checkboxWithTitle: "Set as default", target: nil, action: nil)
+        checkbox.frame = NSRect(x: 0, y: 5, width: 300, height: 20)
+        checkbox.state = .on
+        
         accessoryView.addSubview(label)
         accessoryView.addSubview(profileSelector)
+        accessoryView.addSubview(checkbox)
         panel.accessoryView = accessoryView
         
         if panel.runModal() == .OK, let destination = panel.url {
@@ -1116,19 +1127,13 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
             let profile = profiles[selectedIndex]
             let options = PDFDocumentSanitizer.Options.from(profile: profile)
             
+            // Persist default if checkbox is on
+            if checkbox.state == .on {
+                SanitizeDefaults.shared.defaultProfile = profile
+            }
+            
             isDocumentLoading = true
             loadingStatus = "Sanitizing..."
-            
-            // Run async job
-            PDFDocumentSanitizer.loadDocumentAsync(at: destination, // Wait, we need to pass the *doc*, not load from destination?
-                                                   // Actually, wrapper expects URL. But we have a document in memory.
-                                                   // The wrapper logic is "Load -> Sanitize".
-                                                   // We should use the raw sanitize(document:...) method on a background queue.
-                                                   options: options,
-                                                   progress: nil) { _ in }
-            // Correction: loadDocumentAsync is designed to OPEN and sanitize.
-            // Here we want to SANITIZE current document and SAVE.
-            // We'll mimic the async pattern manually.
             
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 defer {
