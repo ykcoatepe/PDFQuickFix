@@ -46,6 +46,9 @@ struct CLI {
             case "sanitize":
                 try SanitizeCommand.run(args: Array(args.dropFirst(2)))
                 
+            case "sanitize-batch":
+                try SanitizeBatchCommand.run(args: Array(args.dropFirst(2)))
+                
             default:
                 print("Unknown command: \(command)")
                 printUsage()
@@ -66,6 +69,10 @@ struct CLI {
         repair <input.pdf> <output.pdf> [--no-size-limit]
         sanitize <input.pdf> <output.pdf> [--profile <privacy-clean|light-clean|keep-editable>]
                                           [--preset <path>]
+        sanitize-batch <inputDir> <outputDir> [--profile <name>] [--preset <path>]
+                                              [--recursive] [--dry-run] [--overwrite]
+        
+        Use 'pdfquickfix-cli <command> --help' for more information on a command.
         """)
     }
     

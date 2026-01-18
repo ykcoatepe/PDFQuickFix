@@ -4,7 +4,7 @@ import AppKit
 @preconcurrency import PDFKit
 import UniformTypeIdentifiers
 import os.log
-import PDFQuickFixKit
+@preconcurrency import PDFQuickFixKit
 
 struct PageSnapshot: Identifiable, Hashable {
     let id: Int
@@ -316,9 +316,40 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         present(error)
     }
 
+    /// Closes the current document and resets all state.
+    func closeDocument() {
+        validationRunner.cancelValidation()
+        validationRunner.cancelOpen()
+        isDocumentLoading = false
+        loadingStatus = nil
+        snapshotOperation?.cancel()
+        snapshotOperation = nil
+        document = nil
+        pdfView?.document = nil
+        currentURL = nil
+        sourceURL = nil
+        activeSecurityScope = nil
+        isLargeDocument = false
+        isMassiveDocument = false
+        deferOutlineLoad = false
+        deferAnnotationScan = false
+        resetThumbnailState()
+        validationStatus = nil
+        validationMode = .idle
+        isFullValidationRunning = false
+        pageSnapshots = []
+        outlineRows = []
+        annotationRows = []
+        selectedPageIDs = []
+        selectedAnnotation = nil
+        logMessages = []
+        isRepaired = false
+        streamingLoader.close()
+    }
 
 
     // MARK: - Selection & Editing
+
     
     private enum DragMode {
         case none
@@ -1136,6 +1167,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
             guard selectedIndex >= 0 && selectedIndex < profiles.count else { return }
             let profile = profiles[selectedIndex]
             let options = PDFDocumentSanitizer.Options.from(profile: profile)
+            let sendableSnapshot = SendablePDFDocument(document: snapshotDoc)
             
             // Persist default if checkbox is on
             if checkbox.state == .on {
@@ -1145,6 +1177,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
             isDocumentLoading = true
             loadingStatus = "Sanitizing..."
             
+            let sourceURL = currentURL
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 defer {
                     DispatchQueue.main.async {
@@ -1155,8 +1188,8 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
                 
                 do {
                     // Use the snapshotDoc we prepared
-                    let processed = try PDFDocumentSanitizer.sanitize(document: snapshotDoc,
-                                                                      sourceURL: self?.currentURL,
+                    let processed = try PDFDocumentSanitizer.sanitize(document: sendableSnapshot.document,
+                                                                      sourceURL: sourceURL,
                                                                       options: options) { processed, total in
                         DispatchQueue.main.async {
                             self?.loadingStatus = "Sanitizing \(processed)/\(total)"
@@ -1462,16 +1495,15 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         
         // For massive documents, use the streaming loader for faster thumbnail rendering
         if isMassiveDocument && streamingLoader.isOpen {
-            thumbnailQueue.async { [weak self] in
-                guard let self else { return }
-                let image = self.streamingLoader.renderThumbnail(at: index, size: thumbSize)
+            let loader = streamingLoader
+            thumbnailQueue.async { [weak self, loader] in
+                let image = loader.renderThumbnail(at: index, size: thumbSize)
                 
-                self.inflightLock.lock()
-                self.inflightThumbnails.remove(index)
-                self.inflightLock.unlock()
-                
-                DispatchQueue.main.async { [weak self] in
-                    guard let self, let image else { return }
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.inflightThumbnails.remove(index)
+                    
+                    guard let image else { return }
                     self.thumbnailCache.setObject(image, forKey: key)
                     self.updateSnapshot(at: index, thumbnail: image)
                 }
@@ -1783,3 +1815,4 @@ private extension Int {
 }
 
 extension StudioController: FileExportable {}
+extension StudioController: DocumentClosable {}

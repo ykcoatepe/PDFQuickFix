@@ -2,6 +2,9 @@ import SwiftUI
 
 @main
 struct PDFQuickFixApp: App {
+    @StateObject private var aiSettings = LocalAISettings()
+    @StateObject private var aiInteractions = AIInteractionStore()
+
     init() {
         PDFKitWorkarounds.install()
     }
@@ -10,9 +13,23 @@ struct PDFQuickFixApp: App {
         WindowGroup {
             ContentView()
                 .frame(minWidth: 960, minHeight: 640)
+                .environmentObject(aiSettings)
+                .environmentObject(aiInteractions)
         }
         .commands {
             AppCommands()
+        }
+
+        Settings {
+            AISettingsView()
+                .environmentObject(aiSettings)
+                .environmentObject(aiInteractions)
+        }
+
+        Window("AI Activity", id: "ai-activity") {
+            AIActivityView()
+                .environmentObject(aiSettings)
+                .environmentObject(aiInteractions)
         }
     }
 }
@@ -47,6 +64,11 @@ extension FocusedValues {
         get { self[StudioToolSwitchableKey.self] }
         set { self[StudioToolSwitchableKey.self] = newValue }
     }
+    
+    var documentClosable: DocumentClosable? {
+        get { self[DocumentClosableKey.self] }
+        set { self[DocumentClosableKey.self] = newValue }
+    }
 }
 
 // MARK: - New Protocols
@@ -72,14 +94,33 @@ struct StudioToolSwitchableKey: FocusedValueKey {
     typealias Value = StudioToolSwitchable
 }
 
+@MainActor
+protocol DocumentClosable: AnyObject {
+    func closeDocument()
+}
+
+struct DocumentClosableKey: FocusedValueKey {
+    typealias Value = DocumentClosable
+}
+
 // MARK: - Commands
 
 struct AppCommands: Commands {
     @FocusedValue(\.fileExportable) var fileExportable
     @FocusedValue(\.pdfActionable) var pdfActionable
     @FocusedValue(\.studioToolSwitchable) var studioToolSwitchable
+    @FocusedValue(\.documentClosable) var documentClosable
+    @Environment(\.openWindow) private var openWindow
     
     var body: some Commands {
+        CommandGroup(after: .newItem) {
+            Button("Close Document") {
+                documentClosable?.closeDocument()
+            }
+            .keyboardShortcut("w", modifiers: .command)
+            .disabled(documentClosable == nil)
+        }
+        
         CommandGroup(after: .saveItem) {
             Button("Save As…") {
                 fileExportable?.saveAs()
@@ -111,6 +152,13 @@ struct AppCommands: Commands {
                 }
             }
             .disabled(fileExportable == nil)
+            
+            // Batch operations - always available
+            Divider()
+            
+            Button("Sanitize Folder…") {
+                BatchSanitizeCoordinator.shared.showBatchSanitizePanel()
+            }
         }
         
         CommandMenu("View") {
@@ -149,6 +197,12 @@ struct AppCommands: Commands {
                 .disabled(studioToolSwitchable == nil)
                 // Note: Menu bar items don't support "checked" state easily with SwiftUI Commands yet without custom binding logic,
                 // but this will allow switching tools.
+            }
+        }
+
+        CommandMenu("AI") {
+            Button("AI Activity…") {
+                openWindow(id: "ai-activity")
             }
         }
     }

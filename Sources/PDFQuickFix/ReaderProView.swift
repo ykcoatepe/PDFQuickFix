@@ -2,7 +2,7 @@ import SwiftUI
 @preconcurrency import PDFKit
 import AppKit
 import UniformTypeIdentifiers
-import PDFQuickFixKit
+@preconcurrency import PDFQuickFixKit
 
 // Controller coordinating PDF viewing, search, and page operations.
 @MainActor
@@ -207,6 +207,30 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         guard let url = currentURL, !isFullValidationRunning else { return }
         scheduleValidation(for: url, pageLimit: nil, mode: .full)
     }
+
+    /// Closes the current document and resets all state.
+    func closeDocument() {
+        validationRunner.cancelOpen()
+        validationRunner.cancelValidation()
+        isLoadingDocument = false
+        loadingStatus = nil
+        document = nil
+        pdfView?.document = nil
+        currentURL = nil
+        sourceURL = nil
+        activeSecurityScope = nil
+        isLargeDocument = false
+        isMassiveDocument = false
+        isPartialLoad = false
+        isRepaired = false
+        searchMatches.removeAll()
+        currentMatchIndex = nil
+        validationStatus = nil
+        isFullValidationRunning = false
+        validationMode = .idle
+        log = ""
+    }
+
     
     func saveAs() {
         guard let doc = document else { return }
@@ -673,6 +697,9 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         NSLog("PDFPerfTelemetry: massiveDocEnabled pageCount=%d file=%@", pageCount, url?.lastPathComponent ?? "unknown")
     }
 }
+
+extension ReaderControllerPro: DocumentClosable {}
+
 extension ReaderControllerPro: FileExportable {
      func exportSanitized() {
         guard let doc = document else { return }
@@ -680,6 +707,7 @@ extension ReaderControllerPro: FileExportable {
             log = "Export failed: couldn't read current document state"
             return
         }
+        let sendableSnapshot = SendablePDFDocument(document: snapshotDoc)
 
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.pdf]
@@ -739,6 +767,7 @@ extension ReaderControllerPro: FileExportable {
             isProcessing = true
             loadingStatus = "Sanitizing..."
             
+            let sourceURL = currentURL
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 defer {
                     Task { @MainActor [weak self] in
@@ -748,8 +777,8 @@ extension ReaderControllerPro: FileExportable {
                 }
                 
                 do {
-                    let processed = try PDFDocumentSanitizer.sanitize(document: snapshotDoc,
-                                                                      sourceURL: self?.currentURL,
+                    let processed = try PDFDocumentSanitizer.sanitize(document: sendableSnapshot.document,
+                                                                      sourceURL: sourceURL,
                                                                       options: options) { processed, total in
                         Task { @MainActor [weak self] in
                             self?.loadingStatus = "Sanitizing \(processed)/\(total)"
@@ -835,6 +864,7 @@ struct ReaderProView: View, Equatable {
             }
             .focusedSceneValue(\.fileExportable, controller)
         .focusedSceneValue(\.pdfActionable, controller)
+        .focusedSceneValue(\.documentClosable, controller)
         .onDrop(of: [.fileURL, .url, .pdf], delegate: PDFURLDropDelegate { url in
             droppedURL = url
         })

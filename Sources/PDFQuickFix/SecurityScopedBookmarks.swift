@@ -39,7 +39,7 @@ struct SystemBookmarking: Bookmarking {
 
 /// A wrapper class that manages the lifecycle of a security-scoped resource.
 /// Calls `startAccessingSecurityScopedResource()` on init and `stopAccessingSecurityScopedResource()` on deinit.
-final class SecurityScopedAccess {
+final class SecurityScopedAccess: @unchecked Sendable {
     let url: URL
     private var isAccessing: Bool = false
     

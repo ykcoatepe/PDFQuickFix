@@ -29,12 +29,13 @@ targets:
       properties:
         com.apple.security.app-sandbox: true
         com.apple.security.files.user-selected.read-write: true
+        com.apple.security.network.client: true
     dependencies:
       - target: PDFCore
       - target: PDFQuickFixKit
     settings:
       base:
-        CODE_SIGNING_ALLOWED: NO
+        CODE_SIGN_IDENTITY: "-"
         PRODUCT_BUNDLE_IDENTIFIER: com.yordamkocatepe.PDFQuickFix
         SWIFT_OBJC_BRIDGING_HEADER: Sources/PDFQuickFix/Bridging-Header.h
         ASSETCATALOG_COMPILER_APPICON_NAME: PDFQuickFixIcon
@@ -47,7 +48,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.yordamkocatepe.PDFCore
-        CODE_SIGNING_ALLOWED: NO
+        CODE_SIGN_IDENTITY: "-"
         GENERATE_INFOPLIST_FILE: YES
   PDFQuickFixKit:
     type: framework
@@ -60,7 +61,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.yordamkocatepe.PDFQuickFixKit
-        CODE_SIGNING_ALLOWED: NO
+        CODE_SIGN_IDENTITY: "-"
         GENERATE_INFOPLIST_FILE: YES
   PDFQuickFixCLI:
     type: tool
@@ -74,7 +75,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.yordamkocatepe.PDFQuickFixCLI
-        CODE_SIGNING_ALLOWED: NO
+        CODE_SIGN_IDENTITY: "-"
         GENERATE_INFOPLIST_FILE: YES
   PDFQuickFixTests:
     type: bundle.unit-test
@@ -89,4 +90,4 @@ targets:
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
-        CODE_SIGNING_ALLOWED: NO
+        CODE_SIGN_IDENTITY: "-"

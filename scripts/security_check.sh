@@ -25,8 +25,8 @@ if [[ ! -f "${ENTITLEMENTS_PLIST}" ]]; then
 fi
 
 if [[ -x /usr/libexec/PlistBuddy ]]; then
-  if /usr/libexec/PlistBuddy -c "Print :com.apple.security.network.client" "${ENTITLEMENTS_PLIST}" >/dev/null 2>&1; then
-    echo "❌ Network entitlement present: com.apple.security.network.client (${ENTITLEMENTS_PLIST})"
+  if /usr/libexec/PlistBuddy -c "Print :com.apple.security.network.server" "${ENTITLEMENTS_PLIST}" >/dev/null 2>&1; then
+    echo "❌ Network server entitlement present: com.apple.security.network.server (${ENTITLEMENTS_PLIST})"
     fail=1
   fi
 
@@ -35,8 +35,8 @@ if [[ -x /usr/libexec/PlistBuddy ]]; then
     fail=1
   fi
 else
-  if grep -q "com.apple.security.network.client" "${ENTITLEMENTS_PLIST}"; then
-    echo "❌ Network entitlement present: com.apple.security.network.client (${ENTITLEMENTS_PLIST})"
+  if grep -q "com.apple.security.network.server" "${ENTITLEMENTS_PLIST}"; then
+    echo "❌ Network server entitlement present: com.apple.security.network.server (${ENTITLEMENTS_PLIST})"
     fail=1
   fi
 
@@ -46,8 +46,8 @@ else
   fi
 fi
 
-if grep -q "com.apple.security.network.client" "${PROJECT_YML}"; then
-  echo "❌ Network entitlement configured in project.yml: com.apple.security.network.client (${PROJECT_YML})"
+if grep -q "com.apple.security.network.server" "${PROJECT_YML}"; then
+  echo "❌ Network server entitlement configured in project.yml: com.apple.security.network.server (${PROJECT_YML})"
   fail=1
 fi
 

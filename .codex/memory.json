@@ -1,9 +1,140 @@
 {
   "preferences": {},
   "workflows": [],
-  "tasks": [],
-  "questions": [],
-  "decisions": [],
+  "tasks": [
+    {
+      "date": "2026-01-18",
+      "task": "Integrate Ollama DeepSeek OCR as optional provider with fallback to Vision (see implementation plan).",
+      "status": "planned"
+    }
+  ],
+  "questions": [
+    {
+      "date": "2026-01-18",
+      "question": "Does deepseek-ocr:3b provide word/line bounding boxes needed for redaction and Find\u2192Replace positioning (local spike showed only a single block box)?",
+      "priority": "high"
+    }
+  ],
+  "decisions": [
+    {
+      "date": "2026-01-18",
+      "decision": "Use direct local Ollama HTTP with network entitlement and auto-prefer DeepSeek OCR when available; fallback to Vision on failure.",
+      "status": "approved"
+    },
+    {
+      "date": "2026-01-18",
+      "decision": "Default local AI model for text tasks is deepseek-r1:8b (best speed/latency in current local list); other local models remain optional via Settings.",
+      "status": "approved"
+    },
+    {
+      "date": "2026-01-18",
+      "decision": "DeepSeek OCR boxes are used for OCR overlay only; Vision remains the source of truth for redaction/Find\u2192Replace boxes.",
+      "status": "approved"
+    },
+    {
+      "date": "2026-01-18",
+      "decision": "Do not accept line/block boxes for redaction; use Vision for redaction/Find\u2192Replace even when DeepSeek is available.",
+      "status": "approved"
+    },
+    {
+      "date": "2026-01-18",
+      "decision": "AI interaction logs are in-memory per run by default, with an opt-in setting to persist between launches.",
+      "status": "approved"
+    }
+  ],
   "changelog": [],
-  "worklog": []
+  "worklog": [
+    {
+      "date": "2026-01-18",
+      "note": "Updated plan decisions: allow local Ollama access via network entitlement; auto-prefer DeepSeek OCR with fallback to Vision."
+    },
+    {
+      "date": "2026-01-18",
+      "note": "Ran local Ollama spike with documented <image> + <|grounding|> prompts; line-level boxes appeared with '<|grounding|>Extract the text in the image.' on simple layouts, but word-level boxes were not observed."
+    },
+    {
+      "date": "2026-01-18",
+      "note": "Decision: hybrid OCR path (DeepSeek overlay only when no redaction/Find\u2192Replace is active; Vision handles redaction/replace boxes)."
+    },
+    {
+      "date": "2026-01-18",
+      "note": "Implemented local AI tools UI, settings, model selection, and AI interaction activity log using local Ollama only."
+    },
+    {
+      "date": "2026-01-18",
+      "note": "Added DeepSeek provider injection protocol + OCR provider selection/fallback tests; sanity-fast passed."
+    },
+    {
+      "date": "2026-01-18",
+      "note": "Added DeepSeek overlay timeout guard (per-page) and updated plan status to in-progress for cancellation hardening."
+    },
+    {
+      "date": "2026-01-18",
+      "note": "Added QuickFix cancellation checks in engine/options model and threaded Task.isCancelled through QuickFix runs."
+    },
+    {
+      "date": "2026-01-18",
+      "note": "Updated README with Ollama setup/troubleshooting, added LocalAITaskRunner and AIInteractionStore tests, and introduced prompt/response truncation in logs."
+    },
+    {
+      "date": "2026-01-18",
+      "note": "Added rollout notes to CHANGELOG and a feedback checklist in README; marked P4.1 done."
+    },
+    {
+      "date": "2026-01-18",
+      "note": "Renamed AI Tools tab copy, split QuickFix/AI panes for resizing, and improved AI timeout handling with longer requests and clearer messaging."
+    },
+    {
+      "date": "2026-01-18",
+      "note": "Added user-configurable AI request timeout in Settings and page selection for summary in AI Tools."
+    },
+    {
+      "date": "2026-01-18",
+      "note": "Added per-task model picker in AI Tools and recorded progress in the implementation plan."
+    },
+    {
+      "date": "2026-01-18",
+      "note": "Added plan item to support PNG/JPEG inputs for OCR flows."
+    },
+    {
+      "date": "2026-01-18",
+      "note": "Recorded plan assumption that DeepSeek OCR can accept PNG/JPEG inputs via Ollama."
+    },
+    {
+      "date": "2026-01-18",
+      "note": "Cancelled in-flight Reader open on close and reset loading flags to prevent reopen after user close."
+    },
+    {
+      "date": "2026-01-18",
+      "note": "Reset Studio loading state on close to prevent a stuck loading overlay after canceling open."
+    },
+    {
+      "date": "2026-01-18",
+      "note": "Implemented PNG/JPEG inputs in AI Tools: image selection/drop, conversion to PDF for OCR, and AI tasks OCRing images when needed."
+    },
+    {
+      "date": "2026-01-18",
+      "note": "Added optional AI auto-crop/deskew preprocessing for image inputs before OCR."
+    },
+    {
+      "date": "2026-01-18",
+      "note": "Added VisionOCRProvider wrapper and updated plan statuses (P2.1/P2.12 done)."
+    },
+    {
+      "date": "2026-01-18",
+      "note": "Expanded P5.1 into sub-items: image OCR quality pass, DeepSeek prompt/parser hardening, performance/caching, and OCR quality metrics."
+    },
+    {
+      "date": "2026-01-18",
+      "note": "Started P5.1a: added image enhancement pipeline (contrast/shadow/sharpen) and DPI normalization for image\u2192PDF conversion."
+    },
+    {
+      "date": "2026-01-18",
+      "note": "Completed P5.1 sub-items: DeepSeek prompt retries/box parsing, OCR caching/throttling, and OCR report metrics."
+    },
+    {
+      "date": "2026-01-18",
+      "note": "Completed availability checks (<1s), UI status in Options, and progress updates during QuickFix runs."
+    }
+  ]
 }

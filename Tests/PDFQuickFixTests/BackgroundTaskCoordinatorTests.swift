@@ -47,13 +47,8 @@ final class BackgroundTaskCoordinatorTests: XCTestCase {
     // MARK: - Cancel Tests
     
     func testCancelAll() async {
-        var cancelled = false
-        
         await coordinator.schedule(name: "task", priority: .low) {
             try? await Task.sleep(for: .seconds(5))
-            if !Task.isCancelled {
-                cancelled = false
-            }
         }
         
         await coordinator.cancelAll()
