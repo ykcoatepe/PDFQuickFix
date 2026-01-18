@@ -70,4 +70,40 @@ final class AIInteractionStoreTests: XCTestCase {
         let reloaded = AIInteractionStore(persistToDisk: true)
         XCTAssertTrue(reloaded.entries.isEmpty)
     }
+
+    func testEnablingPersistenceMergesExistingEntries() {
+        let persistedStore = AIInteractionStore(persistToDisk: true)
+        persistedStore.clear()
+        let persistedEntry = AIInteractionEntry(
+            id: UUID(),
+            timestamp: Date().addingTimeInterval(-60),
+            task: .summarize,
+            model: "persisted",
+            prompt: "p",
+            response: "r",
+            sourceName: nil,
+            inputCharacterCount: 1,
+            inputWasTrimmed: false
+        )
+        persistedStore.record(persistedEntry)
+
+        let sessionStore = AIInteractionStore(persistToDisk: false)
+        let sessionEntry = AIInteractionEntry(
+            id: UUID(),
+            timestamp: Date(),
+            task: .translate,
+            model: "session",
+            prompt: "p2",
+            response: "r2",
+            sourceName: nil,
+            inputCharacterCount: 2,
+            inputWasTrimmed: false
+        )
+        sessionStore.record(sessionEntry)
+        sessionStore.setPersistence(enabled: true)
+
+        XCTAssertEqual(sessionStore.entries.count, 2)
+        XCTAssertTrue(sessionStore.entries.contains(persistedEntry))
+        XCTAssertTrue(sessionStore.entries.contains(sessionEntry))
+    }
 }

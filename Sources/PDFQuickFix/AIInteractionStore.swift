@@ -34,7 +34,11 @@ final class AIInteractionStore: ObservableObject {
         guard enabled != persistToDisk else { return }
         persistToDisk = enabled
         if enabled {
-            load()
+            let persisted = loadPersistedEntries()
+            if !persisted.isEmpty {
+                mergePersistedEntries(persisted)
+            }
+            save()
         } else {
             deletePersisted()
         }
@@ -75,6 +79,28 @@ final class AIInteractionStore: ObservableObject {
             return
         }
         entries = decoded
+    }
+
+    private func loadPersistedEntries() -> [AIInteractionEntry] {
+        guard let data = try? Data(contentsOf: fileURL),
+              let decoded = try? JSONDecoder().decode([AIInteractionEntry].self, from: data) else {
+            return []
+        }
+        return decoded
+    }
+
+    private func mergePersistedEntries(_ persisted: [AIInteractionEntry]) {
+        let combined = entries + persisted
+        let sorted = combined.sorted { $0.timestamp > $1.timestamp }
+        var seen = Set<UUID>()
+        var merged: [AIInteractionEntry] = []
+        for entry in sorted where seen.insert(entry.id).inserted {
+            merged.append(entry)
+            if merged.count >= maxEntries {
+                break
+            }
+        }
+        entries = merged
     }
 
     private func deletePersisted() {
