@@ -26,6 +26,8 @@
 | 2026-01-18 | Image OCR quality pass: contrast/shadow/DPI normalization | feature/ollama-ai-tools | Yordam | In Progress |
 | 2026-01-18 | DeepSeek prompt/parser hardening + OCR metrics + caching | feature/ollama-ai-tools | Yordam | In Progress |
 | 2026-01-18 | DeepSeek availability status + progress updates | feature/ollama-ai-tools | Yordam | In Progress |
+| 2026-01-18 | Docs update: OCR reports + image preprocessing + status | feature/ollama-ai-tools | Yordam | In Progress |
+| 2026-01-18 | Plan marked implemented/done | feature/ollama-ai-tools | Yordam | Complete |
 | 2026-01-18 | Vision OCR provider wrapper | feature/ollama-ai-tools | Yordam | In Progress |
 | 2026-01-18 | Plan: P5.1 quality/perf/metrics sub-items | feature/ollama-ai-tools | Yordam | In Progress |
 | 2026-01-18 | Cancel Reader open on close | feature/ollama-ai-tools | Yordam | Complete |

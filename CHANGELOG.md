@@ -12,9 +12,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - QuickFix OCR provider selector (auto DeepSeek vs Vision only)
 - Local AI tools (summary, translation, PII scan, field extraction)
 - AI Activity log with optional persistence and prompt/response truncation
+- DeepSeek availability status in QuickFix Options
+- OCR report (provider usage, fallbacks, empty OCR pages)
+- Progress updates during QuickFix runs
+- PNG/JPEG input support (image → searchable PDF)
+- AI image preprocessing (auto-crop, deskew, enhancement) for photo OCR
+- Per-task model picker in AI Tools
+- AI request timeout setting and summary page selection
 
 ### Changed
 - Security checks now allow local-only Ollama access (127.0.0.1) while still blocking non-local network use
+- DeepSeek OCR now retries prompts and caches results for stability/performance
 
 ## [1.0.0] - 2025-12-11
 

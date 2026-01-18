@@ -135,6 +135,14 @@
     {
       "date": "2026-01-18",
       "note": "Completed availability checks (<1s), UI status in Options, and progress updates during QuickFix runs."
+    },
+    {
+      "date": "2026-01-18",
+      "note": "Updated README/CHANGELOG with DeepSeek status, OCR report, image preprocessing, and progress updates."
+    },
+    {
+      "date": "2026-01-18",
+      "note": "Marked implementation plan as implemented/done."
     }
   ]
 }

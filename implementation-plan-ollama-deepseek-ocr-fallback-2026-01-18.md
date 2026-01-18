@@ -1,5 +1,6 @@
 # Implementation Plan: Ollama DeepSeek OCR Integration (Fallback to Vision)
 Last updated: 2026-01-18
+Status: Implemented (Done)
 
 ## 1) Executive Summary
 - **Goal:** Add an OCR backend using `deepseek-ocr:3b` via Ollama, auto-prefer it when available, and automatically fall back to the current Vision OCR when Ollama/model is unavailable or fails. Also add a multi-model local AI layer for summary/translation/PII detection/extraction with a user-visible AI interaction log.
@@ -188,8 +189,8 @@ Provide a phased plan with epics and tasks. Include dependencies and acceptance 
 ### 6.4 Completion Checklist (Plan Hygiene)
 - [x] Status column updated for tasks touched this go
 - [x] "Last updated" line refreshed
-- [ ] Sub-plans summary updated and links valid (if sub-plans exist)
-- [ ] Completed sub-plans summarized and deleted (if applicable)
+- [x] Sub-plans summary updated and links valid (if sub-plans exist)
+- [x] Completed sub-plans summarized and deleted (if applicable)
 
 ## 7) Testing & Quality Strategy
 - **Test pyramid plan:** unit (selection/fallback + parsing) / integration (engine uses provider interface) / manual e2e (small sample PDFs with Ollama installed).

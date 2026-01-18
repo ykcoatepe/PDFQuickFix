@@ -53,10 +53,12 @@ A local, on‑device macOS app that **reads & annotates PDFs**, **redacts sensit
 - AI Activity prompts/responses are truncated to keep logs lightweight.
 - AI request timeout is configurable in **Settings → Local AI**.
 - AI task models can be overridden per task in **AI Tools** or from **Settings → Task Overrides**.
+- DeepSeek availability status is shown in **Options** with a Refresh button.
 
 ## Troubleshooting (Ollama)
 - **No models listed:** make sure Ollama is running and `ollama list` shows your models.
 - **DeepSeek OCR not used:** confirm `deepseek-ocr:3b` is installed and OCR provider is set to Auto.
+- **DeepSeek status says Unavailable:** ensure Ollama is running, then click **Refresh** in Options.
 - **AI tasks say “No local model available”:** open Settings, refresh, and select a default model.
 - **Want to force Vision OCR:** set OCR engine to “Vision only” in AI Tools → Options.
 
@@ -80,6 +82,7 @@ Use this checklist to validate the new OCR/AI features end-to-end.
 ### OCR (DeepSeek + fallback)
 1. Open a scanned PDF with **no redaction/Find→Replace/manual redactions**.
 2. In AI Tools → Options, set **OCR engine** to **Auto (DeepSeek if available)**.
+   - Expected: DeepSeek status shows **Available** (after Refresh if needed).
 3. Run QuickFix.
    - Expected: Output PDF is searchable; OCR layer added.
 4. Add any redaction rule (e.g., default patterns), run QuickFix again.
