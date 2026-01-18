@@ -79,8 +79,6 @@ final class LocalAISettings: ObservableObject {
             availableModels = models
             normalizeModels()
         } catch {
-            availableModels = []
-            normalizeModels()
             lastRefreshError = "Ollama not reachable on 127.0.0.1:11434."
         }
     }
