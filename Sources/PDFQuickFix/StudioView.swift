@@ -193,6 +193,7 @@ struct StudioView: View, Equatable {
         .focusedSceneValue(\.fileExportable, controller)
         .focusedSceneValue(\.pdfActionable, controller)
         .focusedSceneValue(\.studioToolSwitchable, controller)
+        .focusedSceneValue(\.documentClosable, controller)
     }
 
     private var modeBar: some View {

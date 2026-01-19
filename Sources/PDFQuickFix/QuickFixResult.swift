@@ -11,9 +11,20 @@ struct RedactionReport: Hashable {
     let suppressedOCRRunCount: Int
 }
 
+/// Summary OCR metrics for a QuickFix run.
+struct OCRReport: Hashable {
+    let totalPages: Int
+    let deepSeekOverlayPages: Int
+    let visionOCRPages: Int
+    let ocrDisabledPages: Int
+    let emptyOCRPages: Int
+    let deepSeekFallbackCount: Int
+}
+
 struct QuickFixResult: Hashable {
     let outputURL: URL
     let redactionReport: RedactionReport
+    let ocrReport: OCRReport
 }
 
 @MainActor
@@ -34,4 +45,3 @@ final class QuickFixResultStore: ObservableObject {
         result(for: url)?.redactionReport
     }
 }
-

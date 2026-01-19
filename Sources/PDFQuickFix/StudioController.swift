@@ -4,7 +4,7 @@ import AppKit
 @preconcurrency import PDFKit
 import UniformTypeIdentifiers
 import os.log
-import PDFQuickFixKit
+@preconcurrency import PDFQuickFixKit
 
 struct PageSnapshot: Identifiable, Hashable {
     let id: Int
@@ -316,9 +316,40 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         present(error)
     }
 
+    /// Closes the current document and resets all state.
+    func closeDocument() {
+        validationRunner.cancelValidation()
+        validationRunner.cancelOpen()
+        isDocumentLoading = false
+        loadingStatus = nil
+        snapshotOperation?.cancel()
+        snapshotOperation = nil
+        document = nil
+        pdfView?.document = nil
+        currentURL = nil
+        sourceURL = nil
+        activeSecurityScope = nil
+        isLargeDocument = false
+        isMassiveDocument = false
+        deferOutlineLoad = false
+        deferAnnotationScan = false
+        resetThumbnailState()
+        validationStatus = nil
+        validationMode = .idle
+        isFullValidationRunning = false
+        pageSnapshots = []
+        outlineRows = []
+        annotationRows = []
+        selectedPageIDs = []
+        selectedAnnotation = nil
+        logMessages = []
+        isRepaired = false
+        streamingLoader.close()
+    }
 
 
     // MARK: - Selection & Editing
+
     
     private enum DragMode {
         case none
@@ -1091,12 +1122,11 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         panel.allowedContentTypes = [.pdf]
         panel.nameFieldStringValue = (currentURL?.deletingPathExtension().lastPathComponent ?? "Document") + "-sanitized.pdf"
         
-        // Accessory View for Profile Selection
-        let accessoryView = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 60))
+        // Build accessory view with NSStackView for robust layout
         let label = NSTextField(labelWithString: "Sanitization Profile:")
-        label.frame = NSRect(x: 0, y: 35, width: 300, height: 20)
+        label.setContentHuggingPriority(.required, for: .vertical)
         
-        let profileSelector = NSPopUpButton(frame: NSRect(x: 0, y: 5, width: 300, height: 25), pullsDown: false)
+        let profileSelector = NSPopUpButton(frame: .zero, pullsDown: false)
         profileSelector.addItems(withTitles: [
             "Privacy Clean (Rasterize, No Metadata)",
             "Light Clean (Searchable, No Metadata)",
@@ -1106,8 +1136,30 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         // Map index to profile
         let profiles: [SanitizeProfile] = [.privacyClean, .lightClean, .keepEditable]
         
-        accessoryView.addSubview(label)
-        accessoryView.addSubview(profileSelector)
+        // Preselect based on user's default profile
+        let defaultProfile = SanitizeDefaults.shared.defaultProfile
+        let initialIndex = profiles.firstIndex(of: defaultProfile) ?? 0
+        profileSelector.selectItem(at: initialIndex)
+        
+        // "Set as default" checkbox
+        let checkbox = NSButton(checkboxWithTitle: "Set as default", target: nil, action: nil)
+        checkbox.state = .on
+        
+        let stackView = NSStackView(views: [label, profileSelector, checkbox])
+        stackView.orientation = .vertical
+        stackView.alignment = .leading
+        stackView.spacing = 8
+        stackView.translatesAutoresizingMaskIntoConstraints = false
+        
+        // Wrap in container for proper sizing
+        let accessoryView = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 90))
+        accessoryView.addSubview(stackView)
+        NSLayoutConstraint.activate([
+            stackView.leadingAnchor.constraint(equalTo: accessoryView.leadingAnchor),
+            stackView.trailingAnchor.constraint(equalTo: accessoryView.trailingAnchor),
+            stackView.topAnchor.constraint(equalTo: accessoryView.topAnchor),
+            stackView.bottomAnchor.constraint(lessThanOrEqualTo: accessoryView.bottomAnchor)
+        ])
         panel.accessoryView = accessoryView
         
         if panel.runModal() == .OK, let destination = panel.url {
@@ -1115,21 +1167,17 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
             guard selectedIndex >= 0 && selectedIndex < profiles.count else { return }
             let profile = profiles[selectedIndex]
             let options = PDFDocumentSanitizer.Options.from(profile: profile)
+            let sendableSnapshot = SendablePDFDocument(document: snapshotDoc)
+            
+            // Persist default if checkbox is on
+            if checkbox.state == .on {
+                SanitizeDefaults.shared.defaultProfile = profile
+            }
             
             isDocumentLoading = true
             loadingStatus = "Sanitizing..."
             
-            // Run async job
-            PDFDocumentSanitizer.loadDocumentAsync(at: destination, // Wait, we need to pass the *doc*, not load from destination?
-                                                   // Actually, wrapper expects URL. But we have a document in memory.
-                                                   // The wrapper logic is "Load -> Sanitize".
-                                                   // We should use the raw sanitize(document:...) method on a background queue.
-                                                   options: options,
-                                                   progress: nil) { _ in }
-            // Correction: loadDocumentAsync is designed to OPEN and sanitize.
-            // Here we want to SANITIZE current document and SAVE.
-            // We'll mimic the async pattern manually.
-            
+            let sourceURL = currentURL
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 defer {
                     DispatchQueue.main.async {
@@ -1140,8 +1188,8 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
                 
                 do {
                     // Use the snapshotDoc we prepared
-                    let processed = try PDFDocumentSanitizer.sanitize(document: snapshotDoc,
-                                                                      sourceURL: self?.currentURL,
+                    let processed = try PDFDocumentSanitizer.sanitize(document: sendableSnapshot.document,
+                                                                      sourceURL: sourceURL,
                                                                       options: options) { processed, total in
                         DispatchQueue.main.async {
                             self?.loadingStatus = "Sanitizing \(processed)/\(total)"
@@ -1447,16 +1495,15 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         
         // For massive documents, use the streaming loader for faster thumbnail rendering
         if isMassiveDocument && streamingLoader.isOpen {
-            thumbnailQueue.async { [weak self] in
-                guard let self else { return }
-                let image = self.streamingLoader.renderThumbnail(at: index, size: thumbSize)
+            let loader = streamingLoader
+            thumbnailQueue.async { [weak self, loader] in
+                let image = loader.renderThumbnail(at: index, size: thumbSize)
                 
-                self.inflightLock.lock()
-                self.inflightThumbnails.remove(index)
-                self.inflightLock.unlock()
-                
-                DispatchQueue.main.async { [weak self] in
-                    guard let self, let image else { return }
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.inflightThumbnails.remove(index)
+                    
+                    guard let image else { return }
                     self.thumbnailCache.setObject(image, forKey: key)
                     self.updateSnapshot(at: index, thumbnail: image)
                 }
@@ -1768,3 +1815,4 @@ private extension Int {
 }
 
 extension StudioController: FileExportable {}
+extension StudioController: DocumentClosable {}

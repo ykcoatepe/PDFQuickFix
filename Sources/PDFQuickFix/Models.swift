@@ -17,10 +17,18 @@ struct RedactionPattern: Identifiable, Hashable {
     }
 }
 
+enum OCRProviderPreference: String, CaseIterable, Identifiable {
+    case autoDeepSeek
+    case visionOnly
+
+    var id: String { rawValue }
+}
+
 struct QuickFixOptions {
     var doOCR: Bool = true
     var dpi: CGFloat = 300
     var redactionPadding: CGFloat = 2.0
+    var ocrProvider: OCRProviderPreference = .autoDeepSeek
 }
 
 struct DocumentProfile {

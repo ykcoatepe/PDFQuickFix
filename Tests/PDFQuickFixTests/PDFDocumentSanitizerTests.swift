@@ -134,7 +134,6 @@ final class PDFDocumentSanitizerTests: XCTestCase {
         let dataString = String(data: outputData, encoding: .isoLatin1) ?? ""
         let hasXPacket = dataString.contains("<?xpacket")
         let hasXMPMeta = dataString.contains("<x:xmpmeta")
-        let hasRDFAbout = dataString.contains("rdf:about")
         
         // If XMP is found, log a warning. This test documents the behavior.
         // If XMP persists, we may need to switch lightClean to PDF context redraw.

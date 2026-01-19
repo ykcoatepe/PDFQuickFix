@@ -2,7 +2,7 @@ import SwiftUI
 @preconcurrency import PDFKit
 import AppKit
 import UniformTypeIdentifiers
-import PDFQuickFixKit
+@preconcurrency import PDFQuickFixKit
 
 // Controller coordinating PDF viewing, search, and page operations.
 @MainActor
@@ -207,6 +207,30 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         guard let url = currentURL, !isFullValidationRunning else { return }
         scheduleValidation(for: url, pageLimit: nil, mode: .full)
     }
+
+    /// Closes the current document and resets all state.
+    func closeDocument() {
+        validationRunner.cancelOpen()
+        validationRunner.cancelValidation()
+        isLoadingDocument = false
+        loadingStatus = nil
+        document = nil
+        pdfView?.document = nil
+        currentURL = nil
+        sourceURL = nil
+        activeSecurityScope = nil
+        isLargeDocument = false
+        isMassiveDocument = false
+        isPartialLoad = false
+        isRepaired = false
+        searchMatches.removeAll()
+        currentMatchIndex = nil
+        validationStatus = nil
+        isFullValidationRunning = false
+        validationMode = .idle
+        log = ""
+    }
+
     
     func saveAs() {
         guard let doc = document else { return }
@@ -673,6 +697,9 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         NSLog("PDFPerfTelemetry: massiveDocEnabled pageCount=%d file=%@", pageCount, url?.lastPathComponent ?? "unknown")
     }
 }
+
+extension ReaderControllerPro: DocumentClosable {}
+
 extension ReaderControllerPro: FileExportable {
      func exportSanitized() {
         guard let doc = document else { return }
@@ -680,16 +707,17 @@ extension ReaderControllerPro: FileExportable {
             log = "Export failed: couldn't read current document state"
             return
         }
+        let sendableSnapshot = SendablePDFDocument(document: snapshotDoc)
 
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.pdf]
         panel.nameFieldStringValue = (doc.documentURL?.deletingPathExtension().lastPathComponent ?? "Document") + "-sanitized.pdf"
         
-        let accessoryView = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 60))
+        // Build accessory view with NSStackView for robust layout
         let label = NSTextField(labelWithString: "Sanitization Profile:")
-        label.frame = NSRect(x: 0, y: 35, width: 300, height: 20)
+        label.setContentHuggingPriority(.required, for: .vertical)
         
-        let profileSelector = NSPopUpButton(frame: NSRect(x: 0, y: 5, width: 300, height: 25), pullsDown: false)
+        let profileSelector = NSPopUpButton(frame: .zero, pullsDown: false)
         profileSelector.addItems(withTitles: [
             "Privacy Clean (Rasterize, No Metadata)",
             "Light Clean (Searchable, No Metadata)",
@@ -699,8 +727,30 @@ extension ReaderControllerPro: FileExportable {
         // Map index to profile
         let profiles: [SanitizeProfile] = [.privacyClean, .lightClean, .keepEditable]
         
-        accessoryView.addSubview(label)
-        accessoryView.addSubview(profileSelector)
+        // Preselect based on user's default profile
+        let defaultProfile = SanitizeDefaults.shared.defaultProfile
+        let initialIndex = profiles.firstIndex(of: defaultProfile) ?? 0
+        profileSelector.selectItem(at: initialIndex)
+        
+        // "Set as default" checkbox
+        let checkbox = NSButton(checkboxWithTitle: "Set as default", target: nil, action: nil)
+        checkbox.state = .on
+        
+        let stackView = NSStackView(views: [label, profileSelector, checkbox])
+        stackView.orientation = .vertical
+        stackView.alignment = .leading
+        stackView.spacing = 8
+        stackView.translatesAutoresizingMaskIntoConstraints = false
+        
+        // Wrap in container for proper sizing
+        let accessoryView = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 90))
+        accessoryView.addSubview(stackView)
+        NSLayoutConstraint.activate([
+            stackView.leadingAnchor.constraint(equalTo: accessoryView.leadingAnchor),
+            stackView.trailingAnchor.constraint(equalTo: accessoryView.trailingAnchor),
+            stackView.topAnchor.constraint(equalTo: accessoryView.topAnchor),
+            stackView.bottomAnchor.constraint(lessThanOrEqualTo: accessoryView.bottomAnchor)
+        ])
         panel.accessoryView = accessoryView
         
         if panel.runModal() == .OK, let destination = panel.url {
@@ -709,9 +759,15 @@ extension ReaderControllerPro: FileExportable {
             let profile = profiles[selectedIndex]
             let options = PDFDocumentSanitizer.Options.from(profile: profile)
             
+            // Persist default if checkbox is on
+            if checkbox.state == .on {
+                SanitizeDefaults.shared.defaultProfile = profile
+            }
+            
             isProcessing = true
             loadingStatus = "Sanitizing..."
             
+            let sourceURL = currentURL
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 defer {
                     Task { @MainActor [weak self] in
@@ -721,8 +777,8 @@ extension ReaderControllerPro: FileExportable {
                 }
                 
                 do {
-                    let processed = try PDFDocumentSanitizer.sanitize(document: snapshotDoc,
-                                                                      sourceURL: self?.currentURL,
+                    let processed = try PDFDocumentSanitizer.sanitize(document: sendableSnapshot.document,
+                                                                      sourceURL: sourceURL,
                                                                       options: options) { processed, total in
                         Task { @MainActor [weak self] in
                             self?.loadingStatus = "Sanitizing \(processed)/\(total)"
@@ -808,6 +864,7 @@ struct ReaderProView: View, Equatable {
             }
             .focusedSceneValue(\.fileExportable, controller)
         .focusedSceneValue(\.pdfActionable, controller)
+        .focusedSceneValue(\.documentClosable, controller)
         .onDrop(of: [.fileURL, .url, .pdf], delegate: PDFURLDropDelegate { url in
             droppedURL = url
         })

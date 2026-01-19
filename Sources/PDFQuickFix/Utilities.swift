@@ -40,12 +40,22 @@ struct RecognizedRun {
     var rectInPixels: CGRect
 }
 
+enum OCRSource: String, Hashable {
+    case deepSeekOverlay
+    case vision
+    case none
+}
+
 struct PageProcessResult {
     var pageSizePoints: CGSize
     var cgImage: CGImage
     var textRunsInPoints: [RecognizedRun] // rects converted to points; only keep/replace
     var redactionRectCount: Int
     var suppressedOCRRunCount: Int
+    var ocrSource: OCRSource
+    var ocrRunCount: Int
+    var deepSeekEligible: Bool
+    var deepSeekSucceeded: Bool
 }
 
 // MARK: - Design System
@@ -196,6 +206,224 @@ func handlePDFDrop(_ providers: [NSItemProvider], onResolvedURL: @escaping (URL)
     }
     
     return false
+}
+
+enum DocumentInputKind {
+    case pdf
+    case image
+}
+
+func documentInputKind(for url: URL) -> DocumentInputKind? {
+    guard url.isFileURL else { return nil }
+    guard let type = UTType(filenameExtension: url.pathExtension) else { return nil }
+    if type.conforms(to: .pdf) {
+        return .pdf
+    }
+    if type.conforms(to: .png) || type.conforms(to: .jpeg) {
+        return .image
+    }
+    return nil
+}
+
+func handleDocumentDrop(_ providers: [NSItemProvider],
+                        allowedTypes: [UTType],
+                        onResolvedURL: @escaping (URL) -> Void) -> Bool {
+    func isAllowedURL(_ url: URL) -> Bool {
+        guard url.isFileURL else { return false }
+        guard let type = UTType(filenameExtension: url.pathExtension) else { return false }
+        return allowedTypes.contains { type.conforms(to: $0) }
+    }
+
+    func providerHasAllowedType(_ provider: NSItemProvider) -> Bool {
+        for allowed in allowedTypes {
+            if provider.hasItemConformingToTypeIdentifier(allowed.identifier) {
+                return true
+            }
+        }
+        return provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
+            || provider.hasItemConformingToTypeIdentifier(UTType.url.identifier)
+    }
+
+    guard let provider = providers.first(where: { providerHasAllowedType($0) }) else { return false }
+
+    if provider.canLoadObject(ofClass: URL.self) {
+        _ = provider.loadObject(ofClass: URL.self) { url, error in
+            if let url = url, isAllowedURL(url) {
+                DispatchQueue.main.async {
+                    onResolvedURL(url)
+                }
+            } else if let error = error {
+                print("Drop loadObject failed: \(error)")
+            }
+        }
+        return true
+    }
+
+    if let allowed = allowedTypes.first(where: { provider.hasItemConformingToTypeIdentifier($0.identifier) }) {
+        provider.loadFileRepresentation(forTypeIdentifier: allowed.identifier) { url, error in
+            guard let url = url else { return }
+            guard isAllowedURL(url) else { return }
+
+            let tempDir = FileManager.default.temporaryDirectory
+            let dst = tempDir.appendingPathComponent(url.lastPathComponent)
+            do {
+                if FileManager.default.fileExists(atPath: dst.path) {
+                    try FileManager.default.removeItem(at: dst)
+                }
+                try FileManager.default.copyItem(at: url, to: dst)
+
+                DispatchQueue.main.async {
+                    onResolvedURL(dst)
+                }
+            } catch {
+                print("Failed to copy dropped file: \(error)")
+            }
+        }
+        return true
+    }
+
+    return false
+}
+
+enum ImagePDFConverterError: LocalizedError {
+    case invalidURL
+    case unsupportedType
+    case imageLoadFailed
+    case pageCreationFailed
+    case writeFailed
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidURL:
+            return "Invalid image URL."
+        case .unsupportedType:
+            return "Only PNG or JPEG images are supported."
+        case .imageLoadFailed:
+            return "Failed to load the image."
+        case .pageCreationFailed:
+            return "Failed to create a PDF page from the image."
+        case .writeFailed:
+            return "Failed to write the PDF."
+        }
+    }
+}
+
+enum ImagePDFConverter {
+    static func convertImageToPDF(at url: URL,
+                                  outputURL: URL? = nil,
+                                  preprocess: Bool = false,
+                                  targetDPI: CGFloat? = nil) throws -> (url: URL, didPreprocess: Bool) {
+        guard url.isFileURL else { throw ImagePDFConverterError.invalidURL }
+        guard documentInputKind(for: url) == .image else {
+            throw ImagePDFConverterError.unsupportedType
+        }
+        guard let image = NSImage(contentsOf: url) else {
+            throw ImagePDFConverterError.imageLoadFailed
+        }
+        let preprocessResult = preprocess ? ImagePreprocessor.preprocess(image: image) : nil
+        let processed = preprocessResult?.image ?? image
+        let didPreprocess = preprocessResult?.didApply ?? false
+        let sizedImage = resizedImageForTargetDPI(image: processed, targetDPI: targetDPI) ?? processed
+        guard let page = PDFPage(image: sizedImage) else {
+            throw ImagePDFConverterError.pageCreationFailed
+        }
+
+        let document = PDFDocument()
+        document.insert(page, at: 0)
+
+        let destination = outputURL ?? FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("pdf")
+
+        guard document.write(to: destination) else {
+            throw ImagePDFConverterError.writeFailed
+        }
+        return (destination, didPreprocess)
+    }
+
+    private static func resizedImageForTargetDPI(image: NSImage, targetDPI: CGFloat?) -> NSImage? {
+        guard let targetDPI else { return nil }
+        guard let cgImage = image.cgImage else { return nil }
+        let widthPx = CGFloat(cgImage.width)
+        let heightPx = CGFloat(cgImage.height)
+        let sizePoints = CGSize(width: widthPx * 72.0 / targetDPI,
+                                height: heightPx * 72.0 / targetDPI)
+        return NSImage(cgImage: cgImage, size: sizePoints)
+    }
+}
+
+enum ImagePreprocessor {
+    private static let context = CIContext(options: nil)
+
+    static func preprocess(image: NSImage) -> (image: NSImage, didApply: Bool)? {
+        guard let cgImage = image.cgImage else { return nil }
+        var didApply = false
+        let baseCI = CIImage(cgImage: cgImage)
+        let correctedCI: CIImage
+        if let quad = detectDocumentQuad(in: cgImage),
+           let corrected = applyPerspective(to: baseCI, quad: quad) {
+            correctedCI = corrected
+            didApply = true
+        } else {
+            correctedCI = baseCI
+        }
+
+        let enhanced = applyEnhancements(to: correctedCI)
+        didApply = true
+
+        guard let finalCG = context.createCGImage(enhanced, from: enhanced.extent) else {
+            return (image, didApply)
+        }
+        let output = NSImage(cgImage: finalCG, size: NSSize(width: finalCG.width, height: finalCG.height))
+        return (output, didApply)
+    }
+
+    private static func detectDocumentQuad(in cgImage: CGImage) -> VNRectangleObservation? {
+        let request = VNDetectRectanglesRequest()
+        request.maximumObservations = 1
+        request.minimumConfidence = 0.6
+        request.minimumSize = 0.2
+
+        let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+        try? handler.perform([request])
+        return request.results?.first
+    }
+
+    private static func applyPerspective(to image: CIImage,
+                                         quad: VNRectangleObservation) -> CIImage? {
+        let width = image.extent.width
+        let height = image.extent.height
+
+        func point(_ normalized: CGPoint) -> CGPoint {
+            CGPoint(x: normalized.x * width, y: normalized.y * height)
+        }
+
+        return image.applyingFilter("CIPerspectiveCorrection", parameters: [
+            "inputTopLeft": CIVector(cgPoint: point(quad.topLeft)),
+            "inputTopRight": CIVector(cgPoint: point(quad.topRight)),
+            "inputBottomLeft": CIVector(cgPoint: point(quad.bottomLeft)),
+            "inputBottomRight": CIVector(cgPoint: point(quad.bottomRight))
+        ])
+    }
+
+    private static func applyEnhancements(to image: CIImage) -> CIImage {
+        let grayscale = image.applyingFilter("CIColorControls", parameters: [
+            "inputSaturation": 0.0,
+            "inputContrast": 1.2,
+            "inputBrightness": 0.0
+        ])
+        let shadow = grayscale.applyingFilter("CIHighlightShadowAdjust", parameters: [
+            "inputShadowAmount": 0.6,
+            "inputHighlightAmount": 0.0
+        ])
+        let exposure = shadow.applyingFilter("CIExposureAdjust", parameters: [
+            "inputEV": 0.2
+        ])
+        return exposure.applyingFilter("CIUnsharpMask", parameters: [
+            "inputIntensity": 0.6,
+            "inputRadius": 1.0
+        ])
+    }
 }
 
 struct FullscreenPDFDropView: View {

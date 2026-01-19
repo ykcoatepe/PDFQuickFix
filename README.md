@@ -14,24 +14,105 @@ A local, on‑device macOS app that **reads & annotates PDFs**, **redacts sensit
 - **Manual redaction boxes**: place black boxes, then *Apply Permanent Redactions* (burned into the page bitmap)
 - **OCR Repair**: one-click to add an invisible searchable text layer
 
-**QuickFix tab**
+**AI Tools tab**
 - **Secure redaction** by patterns (IBAN, TCKN, PNR, TC- tail) + your own regex
 - **Find → Replace** visual edits (white patch + new text)
-- **OCR repair** (Vision) adds invisible text layer
+- **OCR repair** (Vision by default, DeepSeek when available) adds invisible text layer
+- **Local AI tools** (summary, translation, PII scan, field extraction)
+- **Accepts PDF, PNG, and JPEG inputs** (images are converted to searchable PDFs during OCR)
+- **Optional AI auto-crop, deskew, and enhancement** for image inputs (toggle in Options)
+- **OCR report** with provider usage, fallback counts, and empty OCR pages
+- **Progress updates** during QuickFix runs (pages processed)
+- **Visible in the top mode switcher** (Reader | AI Tools | Studio | Split)
 
-> ✅ All processing is **local** (no network). App Sandbox with **user-selected read/write** only.
+> ✅ All processing is **local** (no remote network). When enabled, the app talks only to `127.0.0.1:11434` for Ollama. App Sandbox with **user-selected read/write** only.
 
 ## Build (XcodeGen)
 1. Install Xcode 15+ and Command Line Tools.
 2. `brew install xcodegen`
    - Optional: `brew install xcpretty` (nicer `xcodebuild` logs; Makefile falls back if missing)
-   - `make build` runs `./scripts/security_check.sh` and fails if network entitlement or ATS arbitrary loads are enabled
+   - `make build` runs `./scripts/security_check.sh` and fails if non-local network entitlements or ATS arbitrary loads are enabled
 3. ```bash
    cd PDFQuickFix
    xcodegen generate
    open PDFQuickFix.xcodeproj
    ```
 4. Run (**⌘R**) the **PDFQuickFix** scheme.
+
+## Local AI (Ollama) setup
+1. Install Ollama and start it.
+2. Pull models:
+   - OCR: `ollama pull deepseek-ocr:3b`
+   - Text tasks (default): `ollama pull deepseek-r1:8b` (or any local model you prefer)
+3. In **Settings → Local AI**, click **Refresh Models** and pick a default model.
+
+### Notes
+- DeepSeek OCR is used **only** for the OCR overlay when no redaction/Find→Replace/manual redactions are active.
+- Redaction and Find→Replace always use Vision for correct boxes.
+- AI Activity logs are in-memory per run by default; persistence is opt-in in Settings.
+- AI Activity prompts/responses are truncated to keep logs lightweight.
+- AI request timeout is configurable in **Settings → Local AI**.
+- AI task models can be overridden per task in **AI Tools** or from **Settings → Task Overrides**.
+- DeepSeek availability status is shown in **Options** with a Refresh button.
+
+## Troubleshooting (Ollama)
+- **No models listed:** make sure Ollama is running and `ollama list` shows your models.
+- **DeepSeek OCR not used:** confirm `deepseek-ocr:3b` is installed and OCR provider is set to Auto.
+- **DeepSeek status says Unavailable:** ensure Ollama is running, then click **Refresh** in Options.
+- **AI tasks say “No local model available”:** open Settings, refresh, and select a default model.
+- **Want to force Vision OCR:** set OCR engine to “Vision only” in AI Tools → Options.
+
+## Feedback (OCR quality)
+If you want to report OCR quality or performance, please include:
+- Which OCR provider was used (Auto/DeepSeek/Vision only)
+- Model name and Ollama version
+- Page count, DPI, and whether redaction/Find→Replace were enabled
+- Any timeouts or fallbacks observed
+- A short, non-sensitive sample screenshot or description of errors (avoid sharing sensitive content)
+
+## User Test Plan (New Features)
+Use this checklist to validate the new OCR/AI features end-to-end.
+
+### Prerequisites
+- Ollama running locally (`ollama serve`)
+- Models installed:
+  - `ollama pull deepseek-ocr:3b`
+  - `ollama pull deepseek-r1:8b` (or your preferred text model)
+
+### OCR (DeepSeek + fallback)
+1. Open a scanned PDF with **no redaction/Find→Replace/manual redactions**.
+2. In AI Tools → Options, set **OCR engine** to **Auto (DeepSeek if available)**.
+   - Expected: DeepSeek status shows **Available** (after Refresh if needed).
+3. Run QuickFix.
+   - Expected: Output PDF is searchable; OCR layer added.
+4. Add any redaction rule (e.g., default patterns), run QuickFix again.
+   - Expected: Vision OCR used for boxes; output remains searchable.
+5. Stop Ollama (or remove the OCR model) and run QuickFix again.
+   - Expected: Automatic fallback to Vision; no crash.
+
+### OCR from Images (PNG/JPEG)
+1. In AI Tools, click **Choose PDF or Image…** and select a PNG or JPEG.
+2. Run QuickFix.
+   - Expected: Output PDF is created next to the image and is searchable.
+3. Run an AI task (Summary/Translate/etc.).
+   - Expected: OCR text is used to produce the AI result.
+4. Optional: enable **Auto-crop & deskew images (AI)** in Options for better OCR on photos.
+
+### AI Tools (Summary / Translate / PII / Extraction)
+1. In Settings → Local AI, click **Refresh Models** and select a default model.
+2. In the AI Tools tab, under **Local AI Tools**, run **Summary** on a text‑heavy PDF.
+   - Expected: Summary output appears and is logged.
+   - Optional: enter a page range (e.g. `1-2, 5`) to summarize selected pages only.
+3. Run **Translation** with a target language.
+   - Expected: Translated output appears.
+4. Run **PII Scan** and **Field Extraction**.
+   - Expected: JSON output (pretty‑printed when valid).
+
+### AI Activity Log
+1. Open **AI Activity** from the menu or the AI Tools tab.
+2. Verify each AI run appears with task, model, and prompt/response.
+3. Toggle persistence in Settings, restart the app, and confirm logs persist.
+4. Turn persistence off and confirm logs clear.
 
 ## Notes & limitations
 - Supports standard **AcroForm** fields; **dynamic XFA** forms are not supported by PDFKit.

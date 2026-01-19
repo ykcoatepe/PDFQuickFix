@@ -1,151 +1,340 @@
 import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
+import PDFKit
 
 struct QuickFixTab: View {
+    @EnvironmentObject private var aiSettings: LocalAISettings
+    @EnvironmentObject private var aiInteractions: AIInteractionStore
+    @Environment(\.openWindow) private var openWindow
+
+    private let autoTag = "__default__"
+
     @State private var inputURL: URL?
     @State private var quickFixResult: QuickFixResult?
     @StateObject private var optionsModel = QuickFixOptionsModel()
     @State private var isProcessing: Bool = false
     @State private var log: String = ""
-    
+    @State private var aiTask: LocalAITask = .summarize
+    @State private var aiOutput: String = ""
+    @State private var aiStatus: String = ""
+    @State private var aiError: String?
+    @State private var isAIRunning: Bool = false
+    @State private var aiTargetLanguage: String = "English"
+    @State private var aiFieldList: String = ""
+    @State private var aiPageSelection: String = ""
+    @State private var aiImageOCRURL: URL?
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("PDF QuickFix")
-                    .appFont(.largeTitle, weight: .bold)
-                Text("Inline edit, secure redaction, and OCR repair. All on your Mac.")
-                    .appFont(.body)
-                    .foregroundStyle(.secondary)
+        VSplitView {
+            quickFixPane
+                .frame(minHeight: 320)
+            aiToolsPane
+                .frame(minHeight: 240)
+        }
+        .background(AppColors.background)
+        .onChange(of: inputURL) { _ in
+            if let cached = aiImageOCRURL {
+                try? FileManager.default.removeItem(at: cached)
             }
-            
-            VStack(spacing: 16) {
-                HStack(spacing: 12) {
-                    Button(action: pickInput) {
-                        Label("Choose PDF…", systemImage: "doc.text.magnifyingglass")
-                    }
-                    .buttonStyle(SecondaryButtonStyle())
-                    
-                    if let inputURL {
-                        HStack {
-                            Image(systemName: "doc.fill")
-                                .foregroundStyle(AppColors.primary)
-                            Text(inputURL.lastPathComponent)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
+            quickFixResult = nil
+            aiOutput = ""
+            aiStatus = ""
+            aiError = nil
+            aiImageOCRURL = nil
+        }
+        .task {
+            await aiSettings.refreshModelsIfNeeded()
+        }
+    }
+
+    private var quickFixPane: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("AI Tools")
+                        .appFont(.largeTitle, weight: .bold)
+                    Text("Redaction, Find→Replace, OCR repair, and local AI — all on your Mac.")
+                        .appFont(.body)
+                        .foregroundStyle(.secondary)
+                }
+
+                VStack(spacing: 16) {
+                    HStack(spacing: 12) {
+                        Button(action: pickInput) {
+                            Label("Choose PDF or Image…", systemImage: "doc.text.magnifyingglass")
                         }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(AppColors.surface)
-                        .cornerRadius(8)
-                    } else {
-                        Text("No file selected")
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 8)
-                    }
-                    
-                    Spacer()
-                    
-                    Button(action: runProcess) {
-                        if isProcessing {
-                            ProgressView().controlSize(.small)
+                        .buttonStyle(SecondaryButtonStyle())
+
+                        if let inputURL {
+                            HStack {
+                                Image(systemName: "doc.fill")
+                                    .foregroundStyle(AppColors.primary)
+                                Text(inputURL.lastPathComponent)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(AppColors.surface)
+                            .cornerRadius(8)
                         } else {
-                            Label("Process", systemImage: "gearshape.2.fill")
+                            Text("No file selected")
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 8)
+                        }
+
+                        Spacer()
+
+                        Button(action: runProcess) {
+                            if isProcessing {
+                                ProgressView().controlSize(.small)
+                            } else {
+                                Label("Process", systemImage: "gearshape.2.fill")
+                            }
+                        }
+                        .buttonStyle(PrimaryButtonStyle(isDisabled: inputURL == nil || isProcessing))
+                        .disabled(inputURL == nil || isProcessing)
+                    }
+
+                    DropAreaView(inputURL: $inputURL)
+                        .frame(maxWidth: .infinity, minHeight: 140)
+                }
+                .cardStyle()
+
+                GroupBox {
+                    QuickFixOptionsForm(model: optionsModel)
+                        .padding(8)
+                } label: {
+                    Label("Options", systemImage: "slider.horizontal.3")
+                        .appFont(.headline)
+                }
+
+                if !log.isEmpty {
+                    ScrollView {
+                        Text(log)
+                            .font(.caption.monospaced())
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding()
+                    }
+                    .frame(height: 120)
+                    .background(AppColors.surface)
+                    .cornerRadius(AppLayout.smallCornerRadius)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: AppLayout.smallCornerRadius)
+                            .stroke(AppColors.border, lineWidth: 0.5)
+                    )
+                }
+
+                if let quickFixResult {
+                    let outputURL = quickFixResult.outputURL
+                    HStack {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(AppColors.success)
+                            .font(.title2)
+
+                        VStack(alignment: .leading) {
+                            Text("Processing Complete")
+                                .appFont(.headline)
+                            Text(outputURL.lastPathComponent)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Spacer()
+
+                        Button("Reveal in Finder") {
+                            NSWorkspace.shared.activateFileViewerSelecting([outputURL])
+                        }
+                        .buttonStyle(SecondaryButtonStyle())
+                    }
+                    .padding()
+                    .background(AppColors.success.opacity(0.1))
+                    .cornerRadius(AppLayout.cornerRadius)
+                }
+
+                if let report = quickFixResult?.redactionReport {
+                    RedactionReportView(report: report)
+                }
+
+                if let report = quickFixResult?.ocrReport {
+                    OCRReportView(report: report)
+                }
+            }
+            .padding(24)
+        }
+    }
+
+    private var aiToolsPane: some View {
+        ScrollView {
+            GroupBox {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Label("Local AI Tools", systemImage: "bolt.circle")
+                            .appFont(.headline)
+                        Spacer()
+                        Button("AI Activity") {
+                            openWindow(id: "ai-activity")
+                        }
+                        .buttonStyle(GhostButtonStyle())
+                    }
+
+                    Picker("Task", selection: $aiTask) {
+                        ForEach(LocalAITask.allCases) { task in
+                            Text(task.displayName).tag(task)
                         }
                     }
-                    .buttonStyle(PrimaryButtonStyle(isDisabled: inputURL == nil || isProcessing))
-                    .disabled(inputURL == nil || isProcessing)
-                }
-                
-                DropAreaView(inputURL: $inputURL)
-                    .frame(maxWidth: .infinity, minHeight: 140)
-            }
-            .cardStyle()
-            
-            GroupBox {
-                QuickFixOptionsForm(model: optionsModel)
-                    .padding(8)
-            } label: {
-                Label("Options", systemImage: "slider.horizontal.3")
-                    .appFont(.headline)
-            }
-            
-            if !log.isEmpty {
-                ScrollView {
-                    Text(log)
-                        .font(.caption.monospaced())
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding()
-                }
-                .frame(height: 120)
-                .background(AppColors.surface)
-                .cornerRadius(AppLayout.smallCornerRadius)
-                .overlay(
-                    RoundedRectangle(cornerRadius: AppLayout.smallCornerRadius)
-                        .stroke(AppColors.border, lineWidth: 0.5)
-                )
-            }
-            
-            if let quickFixResult {
-                let outputURL = quickFixResult.outputURL
-                HStack {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(AppColors.success)
-                        .font(.title2)
-                    
-                    VStack(alignment: .leading) {
-                        Text("Processing Complete")
-                            .appFont(.headline)
-                        Text(outputURL.lastPathComponent)
+                    .pickerStyle(.segmented)
+
+                    if aiSettings.availableModels.isEmpty {
+                        Text("No local model available. Refresh in Settings.")
+                            .foregroundStyle(.secondary)
+                            .font(.caption)
+                    } else {
+                        Picker("Model", selection: overrideBinding(for: aiTask)) {
+                            Text(defaultModelLabel).tag(autoTag)
+                            ForEach(aiSettings.availableModels) { model in
+                                Text(aiSettings.displayName(for: model.name)).tag(model.name)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .frame(maxWidth: 320, alignment: .leading)
+                    }
+
+                    if aiTask.requiresTargetLanguage {
+                        HStack {
+                            Text("Target language")
+                            TextField("English", text: $aiTargetLanguage)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(maxWidth: 220)
+                        }
+                    }
+
+                    if aiTask == .summarize {
+                        HStack {
+                            Text("Pages")
+                            TextField("All (e.g. 1-3, 6)", text: $aiPageSelection)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(maxWidth: 220)
+                        }
+                    }
+
+                    if aiTask.requiresFieldList {
+                        HStack {
+                            Text("Fields (comma-separated)")
+                            TextField("invoice_number,total,invoice_date", text: $aiFieldList)
+                                .textFieldStyle(.roundedBorder)
+                        }
+                    }
+
+                    HStack(spacing: 12) {
+                        Button(isAIRunning ? "Running…" : "Run \(aiTask.displayName)") {
+                            runAITask()
+                        }
+                        .buttonStyle(PrimaryButtonStyle(isDisabled: !canRunAITask))
+                        .disabled(!canRunAITask)
+
+                        if let modelName = aiSettings.modelFor(task: aiTask) {
+                            Text("Model: \(aiSettings.displayName(for: modelName))")
+                                .foregroundStyle(.secondary)
+                                .font(.caption)
+                        } else {
+                            Text("No local model available. Refresh in Settings.")
+                                .foregroundStyle(.secondary)
+                                .font(.caption)
+                        }
+                    }
+
+                    if !aiStatus.isEmpty {
+                        Text(aiStatus)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
-                    
-                    Spacer()
-                    
-                    Button("Reveal in Finder") {
-                        NSWorkspace.shared.activateFileViewerSelecting([outputURL])
-                    }
-                    .buttonStyle(SecondaryButtonStyle())
-                }
-                .padding()
-                .background(AppColors.success.opacity(0.1))
-                .cornerRadius(AppLayout.cornerRadius)
-            }
 
-            if let report = quickFixResult?.redactionReport {
-                RedactionReportView(report: report)
+                    if let aiError {
+                        Text(aiError)
+                            .font(.caption)
+                            .foregroundStyle(AppColors.error)
+                    }
+
+                    if !aiOutput.isEmpty {
+                        ScrollView {
+                            Text(aiOutput)
+                                .font(.caption.monospaced())
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .textSelection(.enabled)
+                                .padding(8)
+                        }
+                        .frame(minHeight: 160, maxHeight: 280)
+                        .background(AppColors.surface)
+                        .cornerRadius(AppLayout.smallCornerRadius)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: AppLayout.smallCornerRadius)
+                                .stroke(AppColors.border, lineWidth: 0.5)
+                        )
+                    }
+                }
+                .padding(8)
+            } label: {
+                Label("AI Tools", systemImage: "sparkles")
+                    .appFont(.headline)
             }
-            
-            Spacer()
-        }
-        .padding(24)
-        .background(AppColors.background)
-        .onChange(of: inputURL) { _ in
-            quickFixResult = nil
+            .padding(24)
         }
     }
-    
+
     private func pickInput() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
-        panel.allowedContentTypes = [.pdf]
+        panel.allowedContentTypes = [.pdf, .png, .jpeg]
         if panel.runModal() == .OK {
             inputURL = panel.url
             quickFixResult = nil
         }
     }
-    
+
     private func runProcess() {
         guard !isProcessing, let inputURL else { return }
         isProcessing = true
         log = "Processing \(inputURL.lastPathComponent)…\n"
-        
+
         let model = optionsModel
+        let preprocessImages = optionsModel.preprocessImages
+        let targetDPI = CGFloat(optionsModel.dpi)
         Task.detached(priority: .userInitiated) {
             do {
-                let result = try model.runQuickFixResult(inputURL: inputURL)
+                let prepared = try Self.prepareQuickFixInput(
+                    for: inputURL,
+                    preprocessImages: preprocessImages,
+                    targetDPI: targetDPI
+                )
+                if prepared.wasConverted {
+                    await MainActor.run {
+                        if prepared.didPreprocess {
+                            self.log += "✨ Auto-cropped & deskewed image.\n"
+                        }
+                        self.log += "📄 Converted image to PDF for OCR…\n"
+                    }
+                }
+                if let document = PDFDocument(url: prepared.sourceURL) {
+                    await MainActor.run {
+                        self.log += "📄 Pages: \(document.pageCount)\n"
+                    }
+                }
+                let result = try model.runQuickFixResult(
+                    inputURL: prepared.sourceURL,
+                    outputURL: prepared.outputURL,
+                    shouldCancel: { Task.isCancelled },
+                    progress: { current, total in
+                        DispatchQueue.main.async {
+                            self.log += "Progress: \(current)/\(total)\n"
+                        }
+                    }
+                )
+                if let cleanupURL = prepared.cleanupURL {
+                    try? FileManager.default.removeItem(at: cleanupURL)
+                }
                 await MainActor.run {
                     self.quickFixResult = result
                     QuickFixResultStore.shared.set(result)
@@ -160,35 +349,293 @@ struct QuickFixTab: View {
             }
         }
     }
+
+    private var canRunAITask: Bool {
+        guard !isAIRunning else { return false }
+        guard aiSettings.modelFor(task: aiTask) != nil else { return false }
+        return inputURL != nil || quickFixResult != nil
+    }
+
+    private var defaultModelLabel: String {
+        if aiSettings.defaultModel.isEmpty {
+            return "Use Default"
+        }
+        return "Use Default (\(aiSettings.displayName(for: aiSettings.defaultModel)))"
+    }
+
+    private func runAITask() {
+        guard canRunAITask else { return }
+        aiError = nil
+        aiOutput = ""
+        aiStatus = "Preparing document text…"
+        isAIRunning = true
+
+        let sourceName = inputURL?.lastPathComponent
+        let task = aiTask
+        let modelName = aiSettings.modelFor(task: task)
+        let parameters = LocalAITaskParameters(
+            targetLanguage: aiTargetLanguage,
+            extractionFields: aiFieldList.split(separator: ",").map { String($0) }
+        )
+        Task {
+            do {
+                let sourceURL = try await resolveAITaskSourceURL()
+                let selection = task == .summarize ? aiPageSelection : ""
+                let text = try await Task.detached(priority: .userInitiated) {
+                    try PDFTextExtractor.extractText(from: sourceURL, pageSelection: selection)
+                }.value
+                if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    updateAIState(error: "No text found. Run OCR first, then try again.")
+                    return
+                }
+                aiStatus = "Running \(task.displayName)…"
+                let runner = LocalAITaskRunner(
+                    interactionStore: aiInteractions,
+                    client: OllamaClient(requestTimeout: TimeInterval(aiSettings.requestTimeoutSeconds))
+                )
+                let result = try await runner.run(
+                    task: task,
+                    text: text,
+                    parameters: parameters,
+                    sourceName: sourceName,
+                    modelName: modelName
+                )
+                aiOutput = result.output
+                if result.inputWasTrimmed {
+                    aiStatus = "Used \(result.inputCharacterCount) chars (trimmed). Model: \(result.model)."
+                } else {
+                    aiStatus = "Model: \(result.model)."
+                }
+                isAIRunning = false
+            } catch {
+                updateAIState(error: aiErrorMessage(from: error))
+            }
+        }
+    }
+
+    @MainActor
+    private func updateAIState(error: String) {
+        aiError = error
+        aiStatus = ""
+        isAIRunning = false
+    }
+
+    private func aiErrorMessage(from error: Error) -> String {
+        if let extractorError = error as? PDFTextExtractorError {
+            return extractorError.localizedDescription
+        }
+        if let urlError = error as? URLError, urlError.code == .timedOut {
+            return "Request timed out. Try a smaller document or a faster model, then retry."
+        }
+        return error.localizedDescription
+    }
+
+    private func overrideBinding(for task: LocalAITask) -> Binding<String> {
+        Binding<String>(
+            get: {
+                aiSettings.override(for: task) ?? autoTag
+            },
+            set: { newValue in
+                let value = newValue == autoTag ? nil : newValue
+                aiSettings.setOverride(task: task, model: value)
+            }
+        )
+    }
+
+    private nonisolated static func prepareQuickFixInput(for url: URL,
+                                                        preprocessImages: Bool,
+                                                        targetDPI: CGFloat) throws -> (sourceURL: URL, outputURL: URL?, cleanupURL: URL?, wasConverted: Bool, didPreprocess: Bool) {
+        guard let kind = documentInputKind(for: url) else {
+            return (url, nil, nil, false, false)
+        }
+        switch kind {
+        case .pdf:
+            return (url, nil, nil, false, false)
+        case .image:
+            let conversion = try ImagePDFConverter.convertImageToPDF(
+                at: url,
+                preprocess: preprocessImages,
+                targetDPI: targetDPI
+            )
+            let pdfURL = conversion.url
+            let outputURL = url.deletingPathExtension().appendingPathExtension("fixed.pdf")
+            return (pdfURL, outputURL, pdfURL, true, conversion.didPreprocess)
+        }
+    }
+
+    private func resolveAITaskSourceURL() async throws -> URL {
+        if let quickFixResult {
+            return quickFixResult.outputURL
+        }
+        guard let inputURL else {
+            throw PDFTextExtractorError.missingInput
+        }
+        if documentInputKind(for: inputURL) == .image {
+            if let cached = aiImageOCRURL {
+                return cached
+            }
+            await MainActor.run {
+                aiStatus = "Running OCR for image…"
+            }
+            let generated = try await generateImageOCRTextSource(from: inputURL)
+            await MainActor.run {
+                aiImageOCRURL = generated
+            }
+            return generated
+        }
+        return inputURL
+    }
+
+    private func generateImageOCRTextSource(from imageURL: URL) async throws -> URL {
+        let (parameters, preprocessImages, targetDPI) = await MainActor.run {
+            (optionsModel.makeParameters(), optionsModel.preprocessImages, CGFloat(optionsModel.dpi))
+        }
+        return try await Task.detached(priority: .userInitiated) {
+            let conversion = try ImagePDFConverter.convertImageToPDF(
+                at: imageURL,
+                preprocess: preprocessImages,
+                targetDPI: targetDPI
+            )
+            let tempInput = conversion.url
+            let outputURL = Self.temporaryFileURL(prefix: "ai-ocr-", extension: "pdf")
+            var options = parameters.options
+            options.doOCR = true
+            let engine = PDFQuickFixEngine(options: options, languages: parameters.languages)
+            _ = try engine.processResult(
+                inputURL: tempInput,
+                outputURL: outputURL,
+                redactionPatterns: [],
+                customRegexes: [],
+                findReplace: [],
+                manualRedactions: [:],
+                shouldCancel: { Task.isCancelled }
+            )
+            try? FileManager.default.removeItem(at: tempInput)
+            return outputURL
+        }.value
+    }
+
+    private nonisolated static func temporaryFileURL(prefix: String, extension ext: String) -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(prefix)\(UUID().uuidString)")
+            .appendingPathExtension(ext)
+    }
+
+}
+
+enum PDFTextExtractor {
+    static func extractText(from url: URL, pageSelection: String? = nil) throws -> String {
+        let data = try Data(contentsOf: url)
+        guard let document = PDFDocument(data: data) else {
+            return ""
+        }
+        let pageCount = document.pageCount
+        guard pageCount > 0 else { return "" }
+        let pages = try parsePageSelection(pageSelection, pageCount: pageCount)
+        var combined = ""
+        for index in pages {
+            guard let page = document.page(at: index), let text = page.string else { continue }
+            combined.append("--- Page \(index + 1) ---\n")
+            combined.append(text)
+            combined.append("\n\n")
+        }
+        return combined
+    }
+
+    private static func parsePageSelection(_ selection: String?, pageCount: Int) throws -> [Int] {
+        guard let selection = selection?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !selection.isEmpty else {
+            return Array(0..<pageCount)
+        }
+        var selected = Set<Int>()
+        for token in selection.split(separator: ",") {
+            let trimmed = String(token).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            let parts = trimmed.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false)
+            if parts.count == 1 {
+                let value = String(parts[0]).trimmingCharacters(in: .whitespacesAndNewlines)
+                guard let page = Int(value) else {
+                    throw PDFTextExtractorError.invalidPageSelection(String(trimmed))
+                }
+                try validatePage(page, pageCount: pageCount)
+                selected.insert(page - 1)
+            } else if parts.count == 2 {
+                let startString = String(parts[0]).trimmingCharacters(in: .whitespacesAndNewlines)
+                let endString = String(parts[1]).trimmingCharacters(in: .whitespacesAndNewlines)
+                guard let start = Int(startString), let end = Int(endString), start <= end else {
+                    throw PDFTextExtractorError.invalidPageSelection(String(trimmed))
+                }
+                try validatePage(start, pageCount: pageCount)
+                try validatePage(end, pageCount: pageCount)
+                for page in start...end {
+                    selected.insert(page - 1)
+                }
+            } else {
+                throw PDFTextExtractorError.invalidPageSelection(String(trimmed))
+            }
+        }
+
+        let sorted = selected.sorted()
+        if sorted.isEmpty {
+            throw PDFTextExtractorError.emptyPageSelection
+        }
+        return sorted
+    }
+
+    private static func validatePage(_ page: Int, pageCount: Int) throws {
+        guard page >= 1 && page <= pageCount else {
+            throw PDFTextExtractorError.pageOutOfRange(page, pageCount)
+        }
+    }
+}
+
+enum PDFTextExtractorError: LocalizedError {
+    case invalidPageSelection(String)
+    case pageOutOfRange(Int, Int)
+    case emptyPageSelection
+    case missingInput
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidPageSelection(let token):
+            return "Invalid page selection: \"\(token)\". Use formats like 1-3, 6."
+        case .pageOutOfRange(let page, let total):
+            return "Page \(page) is out of range. This PDF has \(total) pages."
+        case .emptyPageSelection:
+            return "No pages selected. Enter a page range like 1-3."
+        case .missingInput:
+            return "Select a PDF or image first."
+        }
+    }
 }
 
 struct DropAreaView: View {
     @Binding var inputURL: URL?
     @State private var isDragging = false
-    
+
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 12)
                 .stroke(style: StrokeStyle(lineWidth: 2, dash: [6]))
                 .foregroundStyle(isDragging ? AppColors.primary : AppColors.border)
                 .background(isDragging ? AppColors.primary.opacity(0.05) : Color.clear)
-            
+
             VStack(spacing: 12) {
                 Image(systemName: "arrow.down.doc")
                     .font(.system(size: 32))
                     .foregroundStyle(isDragging ? AppColors.primary : .secondary)
-                
+
                 VStack(spacing: 4) {
-                    Text("Drop a PDF here")
+                    Text("Drop a PDF or image here")
                         .appFont(.headline)
-                    Text("or click “Choose PDF…” above")
+                    Text("or click “Choose PDF or Image…” above")
                         .appFont(.subheadline)
                         .foregroundStyle(.secondary)
                 }
             }
         }
-        .onDrop(of: [.fileURL, .pdf], isTargeted: $isDragging) { providers in
-            handlePDFDrop(providers) { url in
+        .onDrop(of: [.fileURL, .pdf, .png, .jpeg], isTargeted: $isDragging) { providers in
+            handleDocumentDrop(providers, allowedTypes: [.pdf, .png, .jpeg]) { url in
                 inputURL = url
             }
         }

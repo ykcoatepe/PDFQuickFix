@@ -166,7 +166,7 @@ actor BackgroundTaskCoordinator {
         // Cleanup handler
         Task {
             _ = await task.result
-            await self.taskFinished(id: id)
+            self.taskFinished(id: id)
         }
     }
     

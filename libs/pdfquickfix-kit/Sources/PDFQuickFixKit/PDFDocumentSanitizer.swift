@@ -19,7 +19,7 @@ public enum PDFDocumentSanitizerError: LocalizedError {
     }
 }
 
-public enum SanitizeProfile: String, CaseIterable {
+public enum SanitizeProfile: String, CaseIterable, Codable, Sendable {
     case privacyClean
     case lightClean
     case keepEditable

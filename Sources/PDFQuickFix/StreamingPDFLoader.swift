@@ -11,7 +11,7 @@ import PDFKit
 /// - Renders thumbnails directly from CGPDFPage without PDFKit overhead
 /// - Lazy page resolution - only resolves PDFPage instances when needed for editing
 /// - Keeps file open for streaming access rather than loading into memory
-final class StreamingPDFLoader {
+final class StreamingPDFLoader: @unchecked Sendable {
     
     // MARK: - Properties
     

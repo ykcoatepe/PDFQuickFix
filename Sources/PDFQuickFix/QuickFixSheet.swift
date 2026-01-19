@@ -56,6 +56,10 @@ struct QuickFixSheet: View {
             if let report = quickFixResult?.redactionReport {
                 RedactionReportView(report: report)
             }
+
+            if let report = quickFixResult?.ocrReport {
+                OCRReportView(report: report)
+            }
             
             HStack {
                 Spacer()
@@ -89,7 +93,13 @@ struct QuickFixSheet: View {
             do {
                 let result = try model.runQuickFixResult(
                     inputURL: inputURL,
-                    manualRedactions: manualRects
+                    manualRedactions: manualRects,
+                    shouldCancel: { Task.isCancelled },
+                    progress: { current, total in
+                        DispatchQueue.main.async {
+                            self.log += "Progress: \(current)/\(total)\n"
+                        }
+                    }
                 )
                 await MainActor.run {
                     self.quickFixResult = result

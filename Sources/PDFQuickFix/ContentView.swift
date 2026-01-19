@@ -60,12 +60,16 @@ struct ContentView: View {
         }
         .frame(minWidth: 960, minHeight: 640)
         .environmentObject(documentHub)
+        .onOpenURL { url in
+            // When launched via "Open With" or file double-click
+            readerController.open(url: url)
+        }
     }
 }
 
 enum AppMode: String, CaseIterable, Identifiable {
     case reader = "Reader"
-    case quickFix = "Quick Fix"
+    case quickFix = "AI Tools"
     case studio = "Studio"
     case split = "Split"
     
@@ -89,7 +93,7 @@ struct AppModeSwitcher: View {
 
 extension AppMode {
     /// Modes shown in the top segmented control (Quick Fix handled elsewhere).
-    static let switcherModes: [AppMode] = [.reader, .studio, .split]
+    static let switcherModes: [AppMode] = [.reader, .quickFix, .studio, .split]
 }
 
 // Shared document coordinator so Reader can hand off the current file to Studio.
@@ -215,6 +219,13 @@ struct UnifiedToolbar: View {
                 .menuStyle(.borderlessButton)
                 .frame(width: 20, height: 28)
                 .disabled(readerController.document == nil)
+                
+                Button(action: { readerController.closeDocument() }) {
+                    Image(systemName: "xmark.circle")
+                }
+                .buttonStyle(.plain)
+                .help("Close Document")
+                .disabled(readerController.document == nil)
             }
             
             Divider().frame(height: 16)
@@ -308,6 +319,13 @@ struct UnifiedToolbar: View {
                 }
                 .menuStyle(.borderlessButton)
                 .frame(height: 28)
+                .disabled(studioController.document == nil)
+                
+                Button(action: { studioController.closeDocument() }) {
+                    Label("Close", systemImage: "xmark.circle")
+                }
+                .buttonStyle(GhostButtonStyle())
+                .help("Close Document")
                 .disabled(studioController.document == nil)
             }
         }
