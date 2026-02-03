@@ -143,6 +143,11 @@ struct QuickFixTab: View {
 
                         Spacer()
 
+                        Button("Open Result") {
+                            NSWorkspace.shared.open(outputURL)
+                        }
+                        .buttonStyle(SecondaryButtonStyle())
+
                         Button("Reveal in Finder") {
                             NSWorkspace.shared.activateFileViewerSelecting([outputURL])
                         }
@@ -309,6 +314,13 @@ struct QuickFixTab: View {
                     preprocessImages: preprocessImages,
                     targetDPI: targetDPI
                 )
+                let defaultOutput = prepared.outputURL ?? inputURL.deletingPathExtension().appendingPathExtension("fixed.pdf")
+                let outputSelection = try await MainActor.run {
+                    try resolveQuickFixOutputSelection(
+                        defaultOutputURL: defaultOutput,
+                        preferredOutputURL: prepared.outputURL
+                    )
+                }
                 if prepared.wasConverted {
                     await MainActor.run {
                         if prepared.didPreprocess {
@@ -322,16 +334,18 @@ struct QuickFixTab: View {
                         self.log += "📄 Pages: \(document.pageCount)\n"
                     }
                 }
-                let result = try model.runQuickFixResult(
-                    inputURL: prepared.sourceURL,
-                    outputURL: prepared.outputURL,
-                    shouldCancel: { Task.isCancelled },
-                    progress: { current, total in
-                        DispatchQueue.main.async {
-                            self.log += "Progress: \(current)/\(total)\n"
+                let result = try withExtendedLifetime(outputSelection.access) {
+                    try model.runQuickFixResult(
+                        inputURL: prepared.sourceURL,
+                        outputURL: outputSelection.url,
+                        shouldCancel: { Task.isCancelled },
+                        progress: { current, total in
+                            DispatchQueue.main.async {
+                                self.log += "Progress: \(current)/\(total)\n"
+                            }
                         }
-                    }
-                )
+                    )
+                }
                 if let cleanupURL = prepared.cleanupURL {
                     try? FileManager.default.removeItem(at: cleanupURL)
                 }
@@ -339,6 +353,11 @@ struct QuickFixTab: View {
                     self.quickFixResult = result
                     QuickFixResultStore.shared.set(result)
                     self.log += "✅ Done → \(result.outputURL.path)\n"
+                    self.isProcessing = false
+                }
+            } catch QuickFixOutputSelectionError.cancelled {
+                await MainActor.run {
+                    self.log += "⚠️ Cancelled: output location not selected.\n"
                     self.isProcessing = false
                 }
             } catch {

@@ -91,22 +91,34 @@ struct QuickFixSheet: View {
         let manualRects = manualRedactions
         Task.detached(priority: .userInitiated) {
             do {
-                let result = try model.runQuickFixResult(
-                    inputURL: inputURL,
-                    manualRedactions: manualRects,
-                    shouldCancel: { Task.isCancelled },
-                    progress: { current, total in
-                        DispatchQueue.main.async {
-                            self.log += "Progress: \(current)/\(total)\n"
+                let defaultOutput = inputURL.deletingPathExtension().appendingPathExtension("fixed.pdf")
+                let outputSelection = try await MainActor.run {
+                    try resolveQuickFixOutputSelection(defaultOutputURL: defaultOutput)
+                }
+                let result = try withExtendedLifetime(outputSelection.access) {
+                    try model.runQuickFixResult(
+                        inputURL: inputURL,
+                        outputURL: outputSelection.url,
+                        manualRedactions: manualRects,
+                        shouldCancel: { Task.isCancelled },
+                        progress: { current, total in
+                            DispatchQueue.main.async {
+                                self.log += "Progress: \(current)/\(total)\n"
+                            }
                         }
-                    }
-                )
+                    )
+                }
                 await MainActor.run {
                     self.quickFixResult = result
                     QuickFixResultStore.shared.set(result)
                     self.log += "✅ Done → \(result.outputURL.path)\n"
                     self.isProcessing = false
                     self.onDone(result.outputURL)
+                }
+            } catch QuickFixOutputSelectionError.cancelled {
+                await MainActor.run {
+                    self.log += "⚠️ Cancelled: output location not selected.\n"
+                    self.isProcessing = false
                 }
             } catch {
                 await MainActor.run {

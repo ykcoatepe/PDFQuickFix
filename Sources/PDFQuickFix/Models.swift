@@ -18,7 +18,7 @@ struct RedactionPattern: Identifiable, Hashable {
 }
 
 enum OCRProviderPreference: String, CaseIterable, Identifiable {
-    case autoDeepSeek
+    case autoLocalOCR
     case visionOnly
 
     var id: String { rawValue }
@@ -28,7 +28,10 @@ struct QuickFixOptions {
     var doOCR: Bool = true
     var dpi: CGFloat = 300
     var redactionPadding: CGFloat = 2.0
-    var ocrProvider: OCRProviderPreference = .autoDeepSeek
+    var ocrProvider: OCRProviderPreference = .autoLocalOCR
+    var localOCRModel: String = "qwen2.5vl:7b"
+    var cloudOcrEnabled: Bool = false
+    var cloudOcrApiKey: String = ""
 }
 
 struct DocumentProfile {

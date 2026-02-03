@@ -8,11 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Local Ollama DeepSeek OCR overlay with automatic Vision fallback for redaction-safe flows
-- QuickFix OCR provider selector (auto DeepSeek vs Vision only)
+- Local Ollama OCR overlay with automatic Vision fallback for redaction-safe flows
+- QuickFix OCR provider selector (auto Local OCR vs Vision only)
+- Local OCR model selection (qwen2.5vl/minicpm-v) with optional DeepSeek fallback
+- Optional Google Vision OCR fallback (opt-in, API key required)
 - Local AI tools (summary, translation, PII scan, field extraction)
 - AI Activity log with optional persistence and prompt/response truncation
-- DeepSeek availability status in QuickFix Options
+- Local OCR availability status in QuickFix Options
 - OCR report (provider usage, fallbacks, empty OCR pages)
 - Progress updates during QuickFix runs
 - PNG/JPEG input support (image → searchable PDF)
@@ -22,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Security checks now allow local-only Ollama access (127.0.0.1) while still blocking non-local network use
-- DeepSeek OCR now retries prompts and caches results for stability/performance
+- Local OCR now retries prompts and caches results for stability/performance
 
 ## [1.0.0] - 2025-12-11
 

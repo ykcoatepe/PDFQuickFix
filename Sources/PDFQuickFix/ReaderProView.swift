@@ -877,8 +877,9 @@ struct ReaderProView: View, Equatable {
             .sheet(isPresented: $quickFixPresented) {
                 QuickFixSheet(inputURL: $lastOpenedURL) { output in
                     if let output {
+                        let access = OutputDirectoryAccessStore.shared.access(for: output.deletingLastPathComponent())
                         lastOpenedURL = output
-                        controller.open(url: output)
+                        controller.open(url: output, access: access)
                     }
                 }
                 .frame(minWidth: 720, minHeight: 520)
@@ -913,6 +914,11 @@ struct ReaderProView: View, Equatable {
                 }
             }
             .onChange(of: controller.currentURL) { url in
+                if let url {
+                    lastOpenedURL = url
+                } else {
+                    lastOpenedURL = nil
+                }
                 guard let url, url != documentHub.currentURL else { return }
                 if documentHub.syncEnabled {
                     documentHub.update(url: url, from: .reader)
@@ -1140,6 +1146,37 @@ struct ReaderShellView: View {
     var body: some View {
         VStack(spacing: 0) {
             // 1. Unified Toolbar
+            HStack(spacing: 12) {
+                Text("Reader")
+                    .font(.system(.headline, design: .rounded))
+                    .foregroundColor(AppTheme.Colors.primaryText)
+
+                Spacer()
+
+                Button {
+                    standaloneQuickFixPresented = true
+                } label: {
+                    Label("AI Tools", systemImage: "sparkles")
+                }
+                .buttonStyle(ReaderToolbarButtonStyle())
+
+                Button {
+                    quickFixPresented = true
+                } label: {
+                    Label("QuickFix", systemImage: "wand.and.stars")
+                }
+                .buttonStyle(ReaderToolbarButtonStyle())
+                .disabled(controller.currentURL == nil)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(AppTheme.Colors.cardBackground)
+            .overlay(
+                Rectangle()
+                    .fill(AppTheme.Colors.cardBorder)
+                    .frame(height: 1),
+                alignment: .bottom
+            )
             
             // 2. Main Content Area
             HStack(spacing: 0) {
@@ -1232,6 +1269,25 @@ struct ReaderShellView: View {
         let minWidth: CGFloat = 180
         let maxWidth: CGFloat = 420
         return min(max(value, minWidth), maxWidth)
+    }
+}
+
+private struct ReaderToolbarButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(.subheadline, design: .rounded).weight(.semibold))
+            .foregroundColor(AppTheme.Colors.primaryText)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(configuration.isPressed ? AppTheme.Colors.cardBorder : AppTheme.Colors.sidebarBackground)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(AppTheme.Colors.cardBorder, lineWidth: 1)
+            )
+            .opacity(configuration.isPressed ? 0.9 : 1.0)
     }
 }
 

@@ -119,7 +119,8 @@ struct StudioView: View, Equatable {
                 set: { quickFixURL = $0 }
             )) { url in
                 if let url {
-                    controller.open(url: url)
+                    let access = OutputDirectoryAccessStore.shared.access(for: url.deletingLastPathComponent())
+                    controller.open(url: url, access: access)
                 }
             }
             .frame(minWidth: 720, minHeight: 520)

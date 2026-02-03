@@ -24,15 +24,19 @@ final class PDFQuickFixEngine {
     let options: QuickFixOptions
     let languages: [String]
     let queue = DispatchQueue(label: "pdfquickfix.engine", qos: .userInitiated)
-    private let deepSeekProviderOverride: DeepSeekOCRProviding?
-    private let deepSeekOverlayTimeout: TimeInterval = 12
+    private let localOCRProviderOverride: LocalOCRProviding?
+    private let cloudOCRProviderOverride: CloudOCRProviding?
+    private let localOCRTimeout: TimeInterval = 12
+    private let cloudOCRTimeout: TimeInterval = 20
     
     init(options: QuickFixOptions = .init(),
          languages: [String] = ["tr-TR", "en-US"],
-         deepSeekProvider: DeepSeekOCRProviding? = nil) {
+         localOCRProvider: LocalOCRProviding? = nil,
+         cloudOCRProvider: CloudOCRProviding? = nil) {
         self.options = options
         self.languages = languages
-        self.deepSeekProviderOverride = deepSeekProvider
+        self.localOCRProviderOverride = localOCRProvider
+        self.cloudOCRProviderOverride = cloudOCRProvider
     }
 
     func processResult(inputURL: URL,
@@ -67,15 +71,19 @@ final class PDFQuickFixEngine {
         var pagesWithRedactions: [Int] = []
         var totalRedactionRectCount = 0
         var suppressedOCRRunCount = 0
-        var deepSeekOverlayPages = 0
+        var localOCRPages = 0
+        var cloudOCRPages = 0
         var visionOCRPages = 0
         var ocrDisabledPages = 0
         var emptyOCRPages = 0
-        var deepSeekFallbackCount = 0
-        let deepSeekProvider = options.ocrProvider == .autoDeepSeek
-            ? (deepSeekProviderOverride ?? OllamaDeepSeekOCRProvider())
+        var localOCRFallbackCount = 0
+        let localOCRProvider = options.ocrProvider == .autoLocalOCR
+            ? (localOCRProviderOverride ?? selectLocalOCRProvider(preferredModel: options.localOCRModel))
             : nil
-        let deepSeekAvailable = options.doOCR && (deepSeekProvider?.isAvailable() ?? false)
+        let trimmedCloudKey = options.cloudOcrApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cloudOCRProvider = (options.cloudOcrEnabled && !trimmedCloudKey.isEmpty)
+            ? (cloudOCRProviderOverride ?? GoogleVisionOCRProvider(apiKey: trimmedCloudKey, languages: languages))
+            : nil
 
         for i in 0..<pageCount {
             try checkCancellation(shouldCancel)
@@ -86,8 +94,8 @@ final class PDFQuickFixEngine {
                                          redactionPatterns: redactionPatterns,
                                          customRegexes: customRegexes,
                                          findReplace: findReplace,
-                                         deepSeekProvider: deepSeekProvider,
-                                         deepSeekAvailable: deepSeekAvailable,
+                                         localOCRProvider: localOCRProvider,
+                                         cloudOCRProvider: cloudOCRProvider,
                                          visionProvider: visionProvider)
             try checkCancellation(shouldCancel)
 
@@ -97,8 +105,10 @@ final class PDFQuickFixEngine {
             totalRedactionRectCount += result.redactionRectCount
             suppressedOCRRunCount += result.suppressedOCRRunCount
             switch result.ocrSource {
-            case .deepSeekOverlay:
-                deepSeekOverlayPages += 1
+            case .localOCR:
+                localOCRPages += 1
+            case .cloudOCR:
+                cloudOCRPages += 1
             case .vision:
                 visionOCRPages += 1
             case .none:
@@ -107,8 +117,8 @@ final class PDFQuickFixEngine {
             if options.doOCR, result.ocrRunCount == 0 {
                 emptyOCRPages += 1
             }
-            if result.deepSeekEligible && !result.deepSeekSucceeded {
-                deepSeekFallbackCount += 1
+            if result.localOCREligible && !result.localOCRSucceeded {
+                localOCRFallbackCount += 1
             }
 
             processedPages.append(result)
@@ -122,11 +132,12 @@ final class PDFQuickFixEngine {
                                      suppressedOCRRunCount: suppressedOCRRunCount)
         let ocrReport = OCRReport(
             totalPages: pageCount,
-            deepSeekOverlayPages: deepSeekOverlayPages,
+            localOCRPages: localOCRPages,
+            cloudOCRPages: cloudOCRPages,
             visionOCRPages: visionOCRPages,
             ocrDisabledPages: ocrDisabledPages,
             emptyOCRPages: emptyOCRPages,
-            deepSeekFallbackCount: deepSeekFallbackCount
+            localOCRFallbackCount: localOCRFallbackCount
         )
         return QuickFixResult(outputURL: outURL, redactionReport: report, ocrReport: ocrReport)
     }
@@ -155,8 +166,8 @@ final class PDFQuickFixEngine {
                              redactionPatterns: [RedactionPattern],
                              customRegexes: [NSRegularExpression],
                              findReplace: [FindReplaceRule],
-                             deepSeekProvider: DeepSeekOCRProviding?,
-                             deepSeekAvailable: Bool,
+                             localOCRProvider: LocalOCRProviding?,
+                             cloudOCRProvider: CloudOCRProviding?,
                              visionProvider: VisionOCRProvider) throws -> PageProcessResult {
         guard let cgPage = page.pageRef else {
             throw NSError(domain: "PDFQuickFix", code: -2, userInfo: [NSLocalizedDescriptionKey: "Missing CGPDFPage"])
@@ -188,15 +199,14 @@ final class PDFQuickFixEngine {
         
         let needsVisionForRedaction = !redactionPatterns.isEmpty || !customRegexes.isEmpty || !findReplace.isEmpty
         let hasManualRedactions = !manualRedactions.isEmpty
-        let allowDeepSeekOverlay = options.doOCR
-            && options.ocrProvider == .autoDeepSeek
-            && deepSeekAvailable
+        let allowLocalOverlay = options.doOCR
+            && options.ocrProvider == .autoLocalOCR
             && !needsVisionForRedaction
             && !hasManualRedactions
 
-        // OCR with Vision if needed for redaction/find-replace or when DeepSeek is not used
+        // OCR with Vision if needed for redaction/find-replace or when local OCR is not used
         var textObservations: [VNRecognizedTextObservation] = []
-        if needsVisionForRedaction || (options.doOCR && !allowDeepSeekOverlay) {
+        if needsVisionForRedaction || (options.doOCR && !allowLocalOverlay) {
             if let obs = try? visionProvider.recognizeText(cgImage: baseImage) {
                 textObservations = obs
             }
@@ -360,28 +370,34 @@ final class PDFQuickFixEngine {
         }
         
         // Prepare OCR text runs in POINTS (for invisible overlay)
-        let deepSeekEligible = options.doOCR && allowDeepSeekOverlay && deepSeekAvailable
-        var deepSeekSucceeded = false
+        let localEligible = options.doOCR && allowLocalOverlay && localOCRProvider != nil
+        var localSucceeded = false
         var overlayRuns: [RecognizedRun] = []
         var ocrSource: OCRSource = .none
 
         if options.doOCR {
-            if deepSeekEligible, let provider = deepSeekProvider,
-               let deepSeekRuns = runDeepSeekOverlay(provider: provider, image: baseImage) {
-                overlayRuns = deepSeekRuns
-                deepSeekSucceeded = true
-                ocrSource = .deepSeekOverlay
+            if localEligible, let provider = localOCRProvider,
+               let localRuns = runLocalOCROverlay(provider: provider, image: baseImage) {
+                overlayRuns = localRuns
+                localSucceeded = true
+                ocrSource = .localOCR
             } else {
-                if visionTextRuns.isEmpty {
-                    if textObservations.isEmpty, let obs = try? visionProvider.recognizeText(cgImage: baseImage) {
-                        textObservations = obs
+                if allowLocalOverlay, let cloudProvider = cloudOCRProvider,
+                   let cloudRuns = runCloudOCROverlay(provider: cloudProvider, image: baseImage) {
+                    overlayRuns = cloudRuns
+                    ocrSource = .cloudOCR
+                } else {
+                    if visionTextRuns.isEmpty {
+                        if textObservations.isEmpty, let obs = try? visionProvider.recognizeText(cgImage: baseImage) {
+                            textObservations = obs
+                        }
+                        if !textObservations.isEmpty {
+                            applyVisionObservations(textObservations)
+                        }
                     }
-                    if !textObservations.isEmpty {
-                        applyVisionObservations(textObservations)
-                    }
+                    overlayRuns = visionTextRuns
+                    ocrSource = .vision
                 }
-                overlayRuns = visionTextRuns
-                ocrSource = .vision
             }
         }
 
@@ -411,8 +427,8 @@ final class PDFQuickFixEngine {
                                  suppressedOCRRunCount: options.doOCR ? suppressedOCRRunsByRedactionMatches : 0,
                                  ocrSource: ocrSource,
                                  ocrRunCount: overlayRuns.count,
-                                 deepSeekEligible: deepSeekEligible,
-                                 deepSeekSucceeded: deepSeekSucceeded)
+                                 localOCREligible: localEligible,
+                                 localOCRSucceeded: localSucceeded)
     }
     
     private func ruleReplacement(text: String, repl: String) -> String {
@@ -430,17 +446,57 @@ final class PDFQuickFixEngine {
         }
     }
 
-    private func runDeepSeekOverlay(provider: DeepSeekOCRProviding, image: CGImage) -> [RecognizedRun]? {
+    private func runLocalOCROverlay(provider: LocalOCRProviding, image: CGImage) -> [RecognizedRun]? {
         let semaphore = DispatchSemaphore(value: 0)
         var result: Result<[RecognizedRun], Error>?
         DispatchQueue.global(qos: .userInitiated).async {
             result = Result { try provider.recognizeTextLines(cgImage: image) }
             semaphore.signal()
         }
-        if semaphore.wait(timeout: .now() + deepSeekOverlayTimeout) == .timedOut {
+        if semaphore.wait(timeout: .now() + localOCRTimeout) == .timedOut {
             return nil
         }
         return try? result?.get()
+    }
+
+    private func runCloudOCROverlay(provider: CloudOCRProviding, image: CGImage) -> [RecognizedRun]? {
+        let semaphore = DispatchSemaphore(value: 0)
+        var result: Result<[RecognizedRun], Error>?
+        DispatchQueue.global(qos: .userInitiated).async {
+            result = Result { try provider.recognizeTextLines(cgImage: image) }
+            semaphore.signal()
+        }
+        if semaphore.wait(timeout: .now() + cloudOCRTimeout) == .timedOut {
+            return nil
+        }
+        return try? result?.get()
+    }
+
+    private func selectLocalOCRProvider(preferredModel: String) -> LocalOCRProviding? {
+        let trimmedPreferred = preferredModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        let defaultCandidates = ["qwen2.5vl:7b", "minicpm-v:8b", "deepseek-ocr:3b"]
+        var candidates: [String] = []
+        if !trimmedPreferred.isEmpty {
+            candidates.append(trimmedPreferred)
+        }
+        for candidate in defaultCandidates where !candidates.contains(where: { $0.caseInsensitiveCompare(candidate) == .orderedSame }) {
+            candidates.append(candidate)
+        }
+
+        for name in candidates {
+            let provider = makeLocalOCRProvider(modelName: name)
+            if provider.isAvailable() {
+                return provider
+            }
+        }
+        return nil
+    }
+
+    private func makeLocalOCRProvider(modelName: String) -> LocalOCRProviding {
+        if modelName.lowercased().contains("deepseek-ocr") {
+            return OllamaDeepSeekOCRProvider(modelName: modelName)
+        }
+        return OllamaVisionOCRProvider(modelName: modelName)
     }
     
     private func writePDF(pages: [PageProcessResult], to url: URL) throws {

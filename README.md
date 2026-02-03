@@ -17,7 +17,7 @@ A local, on‑device macOS app that **reads & annotates PDFs**, **redacts sensit
 **AI Tools tab**
 - **Secure redaction** by patterns (IBAN, TCKN, PNR, TC- tail) + your own regex
 - **Find → Replace** visual edits (white patch + new text)
-- **OCR repair** (Vision by default, DeepSeek when available) adds invisible text layer
+- **OCR repair** (Local OCR by default, Vision fallback) adds invisible text layer
 - **Local AI tools** (summary, translation, PII scan, field extraction)
 - **Accepts PDF, PNG, and JPEG inputs** (images are converted to searchable PDFs during OCR)
 - **Optional AI auto-crop, deskew, and enhancement** for image inputs (toggle in Options)
@@ -25,7 +25,7 @@ A local, on‑device macOS app that **reads & annotates PDFs**, **redacts sensit
 - **Progress updates** during QuickFix runs (pages processed)
 - **Visible in the top mode switcher** (Reader | AI Tools | Studio | Split)
 
-> ✅ All processing is **local** (no remote network). When enabled, the app talks only to `127.0.0.1:11434` for Ollama. App Sandbox with **user-selected read/write** only.
+> ✅ All processing is **local** by default. When enabled, the app talks only to `127.0.0.1:11434` for Ollama. Optional **cloud OCR fallback** can be enabled in Options.
 
 ## Build (XcodeGen)
 1. Install Xcode 15+ and Command Line Tools.
@@ -42,29 +42,31 @@ A local, on‑device macOS app that **reads & annotates PDFs**, **redacts sensit
 ## Local AI (Ollama) setup
 1. Install Ollama and start it.
 2. Pull models:
-   - OCR: `ollama pull deepseek-ocr:3b`
+   - OCR: `ollama pull qwen2.5vl:7b` (recommended) or `ollama pull minicpm-v:8b`
+   - Optional OCR fallback: `ollama pull deepseek-ocr:3b`
    - Text tasks (default): `ollama pull deepseek-r1:8b` (or any local model you prefer)
 3. In **Settings → Local AI**, click **Refresh Models** and pick a default model.
 
 ### Notes
-- DeepSeek OCR is used **only** for the OCR overlay when no redaction/Find→Replace/manual redactions are active.
+- Local OCR is used **only** for the OCR overlay when no redaction/Find→Replace/manual redactions are active.
 - Redaction and Find→Replace always use Vision for correct boxes.
 - AI Activity logs are in-memory per run by default; persistence is opt-in in Settings.
 - AI Activity prompts/responses are truncated to keep logs lightweight.
 - AI request timeout is configurable in **Settings → Local AI**.
 - AI task models can be overridden per task in **AI Tools** or from **Settings → Task Overrides**.
-- DeepSeek availability status is shown in **Options** with a Refresh button.
+- Local OCR availability status is shown in **Options** with a Refresh button.
+- Cloud OCR fallback (Google Vision) is opt-in and requires an API key in Options.
 
 ## Troubleshooting (Ollama)
 - **No models listed:** make sure Ollama is running and `ollama list` shows your models.
-- **DeepSeek OCR not used:** confirm `deepseek-ocr:3b` is installed and OCR provider is set to Auto.
-- **DeepSeek status says Unavailable:** ensure Ollama is running, then click **Refresh** in Options.
+- **Local OCR not used:** confirm `qwen2.5vl:7b` or `minicpm-v:8b` is installed and OCR provider is set to Auto.
+- **Local OCR status says Unavailable:** ensure Ollama is running, then click **Refresh** in Options.
 - **AI tasks say “No local model available”:** open Settings, refresh, and select a default model.
 - **Want to force Vision OCR:** set OCR engine to “Vision only” in AI Tools → Options.
 
 ## Feedback (OCR quality)
 If you want to report OCR quality or performance, please include:
-- Which OCR provider was used (Auto/DeepSeek/Vision only)
+- Which OCR provider was used (Auto/Local/Cloud/Vision only)
 - Model name and Ollama version
 - Page count, DPI, and whether redaction/Find→Replace were enabled
 - Any timeouts or fallbacks observed
@@ -76,19 +78,22 @@ Use this checklist to validate the new OCR/AI features end-to-end.
 ### Prerequisites
 - Ollama running locally (`ollama serve`)
 - Models installed:
-  - `ollama pull deepseek-ocr:3b`
+  - `ollama pull qwen2.5vl:7b` (or `minicpm-v:8b`)
+  - Optional: `ollama pull deepseek-ocr:3b`
   - `ollama pull deepseek-r1:8b` (or your preferred text model)
 
-### OCR (DeepSeek + fallback)
+### OCR (Local + fallback)
 1. Open a scanned PDF with **no redaction/Find→Replace/manual redactions**.
-2. In AI Tools → Options, set **OCR engine** to **Auto (DeepSeek if available)**.
-   - Expected: DeepSeek status shows **Available** (after Refresh if needed).
+2. In AI Tools → Options, set **OCR engine** to **Auto (Local OCR if available)**.
+   - Expected: Local OCR status shows **Available** (after Refresh if needed).
 3. Run QuickFix.
    - Expected: Output PDF is searchable; OCR layer added.
 4. Add any redaction rule (e.g., default patterns), run QuickFix again.
    - Expected: Vision OCR used for boxes; output remains searchable.
 5. Stop Ollama (or remove the OCR model) and run QuickFix again.
    - Expected: Automatic fallback to Vision; no crash.
+6. Enable **Cloud OCR fallback** and provide a valid Google Vision API key.
+   - Expected: If local OCR fails, cloud OCR runs and output remains searchable.
 
 ### OCR from Images (PNG/JPEG)
 1. In AI Tools, click **Choose PDF or Image…** and select a PNG or JPEG.

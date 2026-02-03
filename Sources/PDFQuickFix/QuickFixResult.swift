@@ -14,11 +14,12 @@ struct RedactionReport: Hashable {
 /// Summary OCR metrics for a QuickFix run.
 struct OCRReport: Hashable {
     let totalPages: Int
-    let deepSeekOverlayPages: Int
+    let localOCRPages: Int
+    let cloudOCRPages: Int
     let visionOCRPages: Int
     let ocrDisabledPages: Int
     let emptyOCRPages: Int
-    let deepSeekFallbackCount: Int
+    let localOCRFallbackCount: Int
 }
 
 struct QuickFixResult: Hashable {

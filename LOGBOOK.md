@@ -32,3 +32,11 @@
 | 2026-01-18 | Plan: P5.1 quality/perf/metrics sub-items | feature/ollama-ai-tools | Yordam | In Progress |
 | 2026-01-18 | Cancel Reader open on close | feature/ollama-ai-tools | Yordam | Complete |
 | 2026-01-18 | Reset Studio loading state on close | feature/ollama-ai-tools | Yordam | Complete |
+| 2026-02-03 | Local OCR model selection + Google Vision fallback | codex/local-ocr-upgrade | Yordam | In Progress |
+| 2026-02-03 | Pin default local OCR model to qwen2.5vl:7b | codex/local-ocr-upgrade | Yordam | Complete |
+| 2026-02-03 | Add Quick Verify for local OCR | codex/local-ocr-upgrade | Yordam | Complete |
+| 2026-02-03 | Add Reader + AI Tools shortcuts to view QuickFix output | codex/local-ocr-upgrade | Yordam | Complete |
+| 2026-02-03 | Prompt for output location when default folder is not writable | codex/local-ocr-upgrade | Yordam | Complete |
+| 2026-02-03 | Allow disabling code signing for local test runs | codex/local-ocr-upgrade | Yordam | Complete |
+| 2026-02-03 | Persist output-folder security bookmark for QuickFix writes | codex/local-ocr-upgrade | Yordam | Complete |
+| 2026-02-03 | Settings: clear saved QuickFix output folders | codex/local-ocr-upgrade | Yordam | Complete |
