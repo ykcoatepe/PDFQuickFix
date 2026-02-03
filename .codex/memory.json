@@ -6,6 +6,11 @@
       "date": "2026-01-18",
       "task": "Integrate Ollama DeepSeek OCR as optional provider with fallback to Vision (see implementation plan).",
       "status": "planned"
+    },
+    {
+      "date": "2026-02-03",
+      "task": "Upgrade local OCR to configurable Ollama vision models with Google Vision fallback.",
+      "status": "in-progress"
     }
   ],
   "questions": [
@@ -39,6 +44,11 @@
     {
       "date": "2026-01-18",
       "decision": "AI interaction logs are in-memory per run by default, with an opt-in setting to persist between launches.",
+      "status": "approved"
+    },
+    {
+      "date": "2026-02-03",
+      "decision": "Default local OCR model is qwen2.5vl:7b with minicpm-v:8b and deepseek-ocr:3b as fallbacks; cloud OCR is optional and auto-fallback when enabled.",
       "status": "approved"
     }
   ],
@@ -143,6 +153,38 @@
     {
       "date": "2026-01-18",
       "note": "Marked implementation plan as implemented/done."
+    },
+    {
+      "date": "2026-02-03",
+      "note": "Added local OCR model selection, cloud OCR fallback path, and updated OCR reporting to include local/cloud usage."
+    },
+    {
+      "date": "2026-02-03",
+      "note": "Pinned QuickFix local OCR default model to qwen2.5vl:7b."
+    },
+    {
+      "date": "2026-02-03",
+      "note": "Added a Quick Verify action in QuickFix options to validate local OCR models."
+    },
+    {
+      "date": "2026-02-03",
+      "note": "Added Reader toolbar entry points for QuickFix/AI Tools and an Open Result button in AI Tools."
+    },
+    {
+      "date": "2026-02-03",
+      "note": "Prompt for a writable output location when QuickFix cannot save next to the input file."
+    },
+    {
+      "date": "2026-02-03",
+      "note": "Added CI_CODE_SIGNING=0 switch in scripts/ci_run.sh to disable code signing for local tests."
+    },
+    {
+      "date": "2026-02-03",
+      "note": "Persisted output-directory security-scoped bookmarks for QuickFix saves when the source folder is not writable."
+    },
+    {
+      "date": "2026-02-03",
+      "note": "Added a Settings action to clear saved QuickFix output folder bookmarks."
     }
   ]
 }

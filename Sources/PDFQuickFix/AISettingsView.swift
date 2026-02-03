@@ -3,6 +3,8 @@ import SwiftUI
 struct AISettingsView: View {
     @EnvironmentObject private var aiSettings: LocalAISettings
     @EnvironmentObject private var aiInteractions: AIInteractionStore
+    @State private var outputBookmarkCount: Int = OutputDirectoryAccessStore.shared.count
+    @State private var outputBookmarkStatus: String?
 
     private let autoTag = "__default__"
 
@@ -76,6 +78,24 @@ struct AISettingsView: View {
                     }
                 }
             }
+
+            Section("QuickFix Output") {
+                Text("Saved output folders: \(outputBookmarkCount)")
+                    .foregroundStyle(.secondary)
+
+                HStack(spacing: 12) {
+                    Button("Clear Saved Output Folders") {
+                        OutputDirectoryAccessStore.shared.clear()
+                        outputBookmarkCount = OutputDirectoryAccessStore.shared.count
+                        outputBookmarkStatus = "Cleared."
+                    }
+
+                    if let outputBookmarkStatus {
+                        Text(outputBookmarkStatus)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
         }
         .padding(20)
         .frame(width: 520)
@@ -84,6 +104,7 @@ struct AISettingsView: View {
         }
         .onAppear {
             aiInteractions.setPersistence(enabled: aiSettings.persistAIInteractions)
+            outputBookmarkCount = OutputDirectoryAccessStore.shared.count
         }
     }
 

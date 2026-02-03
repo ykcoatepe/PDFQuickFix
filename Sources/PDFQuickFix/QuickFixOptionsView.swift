@@ -2,8 +2,14 @@ import SwiftUI
 import AppKit
 
 final class QuickFixOptionsModel: ObservableObject {
+    private static let localOCRModelKey = "LocalOCR.defaultModel"
+    private static let cloudOcrEnabledKey = "CloudOCR.enabled"
+    private static let cloudOcrApiKeyAccount = "CloudOCR.googleVisionApiKey"
+    private static let keychainService = "com.yordamkocatepe.PDFQuickFix"
+    private let defaults: UserDefaults
+
     @Published var doOCR: Bool = true
-    @Published var ocrProvider: OCRProviderPreference = .autoDeepSeek
+    @Published var ocrProvider: OCRProviderPreference = .autoLocalOCR
     @Published var useDefaults: Bool = true
     @Published var customRegexText: String = ""
     @Published var findText: String = ""
@@ -13,6 +19,32 @@ final class QuickFixOptionsModel: ObservableObject {
     @Published var langTR: Bool = true
     @Published var langEN: Bool = true
     @Published var preprocessImages: Bool = true
+    @Published var localOCRModel: String = "qwen2.5vl:7b" {
+        didSet {
+            defaults.set(localOCRModel, forKey: Self.localOCRModelKey)
+        }
+    }
+    @Published var cloudOcrEnabled: Bool = false {
+        didSet {
+            defaults.set(cloudOcrEnabled, forKey: Self.cloudOcrEnabledKey)
+        }
+    }
+    @Published var cloudOcrApiKey: String = "" {
+        didSet {
+            KeychainStore.set(service: Self.keychainService,
+                              account: Self.cloudOcrApiKeyAccount,
+                              value: cloudOcrApiKey)
+        }
+    }
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        let storedModel = defaults.string(forKey: Self.localOCRModelKey) ?? ""
+        self.localOCRModel = storedModel.isEmpty ? "qwen2.5vl:7b" : storedModel
+        self.cloudOcrEnabled = defaults.bool(forKey: Self.cloudOcrEnabledKey)
+        self.cloudOcrApiKey = KeychainStore.get(service: Self.keychainService,
+                                                account: Self.cloudOcrApiKeyAccount) ?? ""
+    }
 
     func makeParameters(manualRedactions: [Int: [CGRect]] = [:]) -> QuickFixExecutionParameters {
         var patterns: [RedactionPattern] = []
@@ -36,7 +68,10 @@ final class QuickFixOptionsModel: ObservableObject {
             doOCR: doOCR,
             dpi: CGFloat(dpi),
             redactionPadding: CGFloat(padding),
-            ocrProvider: ocrProvider
+            ocrProvider: ocrProvider,
+            localOCRModel: localOCRModel,
+            cloudOcrEnabled: cloudOcrEnabled,
+            cloudOcrApiKey: cloudOcrApiKey
         )
 
         return QuickFixExecutionParameters(
@@ -102,36 +137,84 @@ struct QuickFixExecutionParameters {
 
 struct QuickFixOptionsForm: View {
     @ObservedObject var model: QuickFixOptionsModel
-    @State private var deepSeekAvailable: Bool?
-    @State private var isCheckingDeepSeek: Bool = false
+    @StateObject private var localOCRRegistry = LocalOCRModelRegistry()
+    @State private var localOCRAvailable: Bool?
+    @State private var isCheckingLocalOCR: Bool = false
+    @State private var isQuickVerifying: Bool = false
+    @State private var quickVerifyMessage: String?
+    @State private var quickVerifySucceeded: Bool?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Toggle("Repair OCR / add searchable text layer", isOn: $model.doOCR)
             Picker("OCR engine", selection: $model.ocrProvider) {
-                Text("Auto (DeepSeek if available)").tag(OCRProviderPreference.autoDeepSeek)
+                Text("Auto (Local OCR if available)").tag(OCRProviderPreference.autoLocalOCR)
                 Text("Vision only").tag(OCRProviderPreference.visionOnly)
             }
             .pickerStyle(.segmented)
             .disabled(!model.doOCR)
             if model.doOCR {
-                Text("DeepSeek is used for OCR-only runs; redaction/replace uses Vision.")
+                Text("Local OCR is used for OCR-only runs; redaction/replace uses Vision.")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
-            if model.doOCR, model.ocrProvider == .autoDeepSeek {
+            if model.doOCR, model.ocrProvider == .autoLocalOCR {
                 HStack {
-                    Text("DeepSeek status")
+                    Text("Local OCR status")
                     Spacer()
-                    Text(deepSeekStatusText)
-                        .foregroundStyle(deepSeekStatusColor)
-                    Button(isCheckingDeepSeek ? "Checking…" : "Refresh") {
-                        refreshDeepSeekStatus()
+                    Text(localOCRStatusText)
+                        .foregroundStyle(localOCRStatusColor)
+                    Button(isCheckingLocalOCR ? "Checking…" : "Refresh") {
+                        refreshLocalOCRStatus()
                     }
                     .buttonStyle(.plain)
-                    .disabled(isCheckingDeepSeek)
+                    .disabled(isCheckingLocalOCR)
                 }
                 .font(.caption)
+                if let error = localOCRRegistry.lastRefreshError {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                if localOCRRegistry.availableModels.isEmpty {
+                    Text("No local OCR models detected. Install models with Ollama and refresh.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                } else {
+                    Picker("OCR model", selection: $model.localOCRModel) {
+                        Text("Use Recommended").tag("")
+                        ForEach(localOCRRegistry.availableModels) { model in
+                            Text(model.name).tag(model.name)
+                        }
+                    }
+                    if let recommended = localOCRRegistry.recommendedModelName {
+                        Text("Recommended: \(recommended)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    HStack {
+                        Button(isQuickVerifying ? "Verifying…" : "Quick Verify") {
+                            runQuickVerify()
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isQuickVerifying)
+                        if let quickVerifyMessage {
+                            Text(quickVerifyMessage)
+                                .font(.caption)
+                                .foregroundColor(quickVerifyStatusColor)
+                        }
+                    }
+                }
+                Toggle("Cloud OCR fallback (Google Vision)", isOn: $model.cloudOcrEnabled)
+                if model.cloudOcrEnabled {
+                    SecureField("Google Vision API key", text: $model.cloudOcrApiKey)
+                        .textFieldStyle(.roundedBorder)
+                    if model.cloudOcrApiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Text("Cloud fallback is enabled but no API key is set.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
             }
             Toggle("Auto-crop & deskew images (AI)", isOn: $model.preprocessImages)
                 .help("Applies to PNG/JPEG inputs only.")
@@ -167,41 +250,162 @@ struct QuickFixOptionsForm: View {
             }
         }
         .onAppear {
-            refreshDeepSeekStatus()
+            refreshLocalOCRStatus()
         }
         .onChange(of: model.ocrProvider) { _ in
-            refreshDeepSeekStatus()
+            refreshLocalOCRStatus()
         }
         .onChange(of: model.doOCR) { _ in
-            refreshDeepSeekStatus()
+            refreshLocalOCRStatus()
         }
     }
 
-    private var deepSeekStatusText: String {
-        if isCheckingDeepSeek {
+    private var localOCRStatusText: String {
+        if isCheckingLocalOCR {
             return "Checking…"
         }
-        guard let deepSeekAvailable else { return "Unknown" }
-        return deepSeekAvailable ? "Available" : "Unavailable"
+        guard let localOCRAvailable else { return "Unknown" }
+        return localOCRAvailable ? "Available" : "Unavailable"
     }
 
-    private var deepSeekStatusColor: Color {
-        guard let deepSeekAvailable else { return .secondary }
-        return deepSeekAvailable ? AppColors.success : AppColors.warning
+    private var localOCRStatusColor: Color {
+        guard let localOCRAvailable else { return .secondary }
+        return localOCRAvailable ? AppColors.success : AppColors.warning
     }
 
-    private func refreshDeepSeekStatus() {
-        guard model.doOCR, model.ocrProvider == .autoDeepSeek else {
-            deepSeekAvailable = nil
+    private var quickVerifyStatusColor: Color {
+        guard let quickVerifySucceeded else { return .secondary }
+        return quickVerifySucceeded ? AppColors.success : AppColors.error
+    }
+
+    private func refreshLocalOCRStatus() {
+        guard model.doOCR, model.ocrProvider == .autoLocalOCR else {
+            localOCRAvailable = nil
             return
         }
-        isCheckingDeepSeek = true
+        isCheckingLocalOCR = true
         Task.detached(priority: .utility) {
-            let available = OllamaDeepSeekOCRProvider().isAvailable()
+            await localOCRRegistry.refreshModels()
             await MainActor.run {
-                deepSeekAvailable = available
-                isCheckingDeepSeek = false
+                localOCRAvailable = !localOCRRegistry.availableModels.isEmpty
+                if model.localOCRModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                   let recommended = localOCRRegistry.recommendedModelName {
+                    model.localOCRModel = recommended
+                }
+                isCheckingLocalOCR = false
             }
         }
+    }
+
+    private func runQuickVerify() {
+        guard model.doOCR, model.ocrProvider == .autoLocalOCR else {
+            quickVerifySucceeded = false
+            quickVerifyMessage = "Enable Auto (Local OCR) to verify."
+            return
+        }
+        guard !isQuickVerifying else { return }
+        isQuickVerifying = true
+        quickVerifyMessage = nil
+        quickVerifySucceeded = nil
+
+        let selectedModel = resolvedLocalOCRModelName()
+        Task.detached(priority: .userInitiated) {
+            defer {
+                Task { @MainActor in
+                    isQuickVerifying = false
+                }
+            }
+            guard !selectedModel.isEmpty else {
+                await MainActor.run {
+                    quickVerifySucceeded = false
+                    quickVerifyMessage = "No local OCR model selected."
+                }
+                return
+            }
+            let image = await MainActor.run {
+                Self.makeQuickVerifyImage()
+            }
+            guard let image else {
+                await MainActor.run {
+                    quickVerifySucceeded = false
+                    quickVerifyMessage = "Failed to build verification image."
+                }
+                return
+            }
+
+            let provider: LocalOCRProviding
+            if selectedModel.lowercased().contains("deepseek-ocr") {
+                provider = OllamaDeepSeekOCRProvider(modelName: selectedModel)
+            } else {
+                provider = OllamaVisionOCRProvider(modelName: selectedModel)
+            }
+
+            do {
+                let runs = try provider.recognizeTextLines(cgImage: image)
+                let text = Self.extractText(from: runs).lowercased()
+                let hasText = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                let looksCorrect = text.contains("ocr") || text.contains("test")
+                await MainActor.run {
+                    quickVerifySucceeded = hasText
+                    if hasText {
+                        quickVerifyMessage = looksCorrect
+                            ? "OK (\(runs.count) lines)"
+                            : "OK (text detected)"
+                    } else {
+                        quickVerifyMessage = "No text detected."
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    quickVerifySucceeded = false
+                    quickVerifyMessage = "Verify failed: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    private func resolvedLocalOCRModelName() -> String {
+        let trimmed = model.localOCRModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            return trimmed
+        }
+        return localOCRRegistry.recommendedModelName ?? ""
+    }
+
+    private static func makeQuickVerifyImage() -> CGImage? {
+        let size = CGSize(width: 960, height: 260)
+        let image = NSImage(size: size)
+        image.lockFocus()
+        NSColor.white.setFill()
+        NSBezierPath(rect: NSRect(origin: .zero, size: size)).fill()
+
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 64, weight: .bold),
+            .foregroundColor: NSColor.black,
+            .paragraphStyle: paragraph
+        ]
+        let textRect = NSRect(x: 0, y: (size.height - 80) / 2, width: size.width, height: 80)
+        "OCR TEST 1234".draw(in: textRect, withAttributes: attrs)
+
+        image.unlockFocus()
+        guard let data = image.tiffRepresentation,
+              let rep = NSBitmapImageRep(data: data) else {
+            return nil
+        }
+        return rep.cgImage
+    }
+
+    nonisolated private static func extractText(from runs: [RecognizedRun]) -> String {
+        runs.compactMap { run -> String? in
+            switch run.kind {
+            case .keep(let text), .replace(let text):
+                return text
+            case .skip:
+                return nil
+            }
+        }
+        .joined(separator: " ")
     }
 }

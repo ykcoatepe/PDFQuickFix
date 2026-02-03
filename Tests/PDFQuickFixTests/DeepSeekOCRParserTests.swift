@@ -23,4 +23,26 @@ final class DeepSeekOCRParserTests: XCTestCase {
         XCTAssertEqual(runs[0].rectInPixels.size.width, (280.0 - 30.0) / 1000.0 * 1000.0, accuracy: 0.5)
         XCTAssertEqual(runs[0].rectInPixels.size.height, (166.0 - 103.0) / 1000.0 * 800.0, accuracy: 0.5)
     }
+
+    func testLocalOCRJSONParserExtractsRuns() {
+        let response = """
+        [
+          { "text": "Hello", "bbox": [10, 20, 110, 60] },
+          { "text": "World", "bbox": [120, 20, 220, 60] }
+        ]
+        """
+
+        let runs = LocalOCRJSONParser.parseRuns(response: response, imageSize: CGSize(width: 1000, height: 800))
+        XCTAssertEqual(runs.count, 2)
+
+        switch runs[0].kind {
+        case .keep(let text):
+            XCTAssertEqual(text, "Hello")
+        default:
+            XCTFail("Expected keep run")
+        }
+
+        XCTAssertEqual(runs[0].rectInPixels.origin.x, 10, accuracy: 0.5)
+        XCTAssertEqual(runs[0].rectInPixels.origin.y, 20.0 / 1000.0 * 800.0, accuracy: 0.5)
+    }
 }

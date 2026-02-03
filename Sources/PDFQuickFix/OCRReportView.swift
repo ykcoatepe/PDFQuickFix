@@ -7,11 +7,12 @@ struct OCRReportView: View {
         GroupBox {
             VStack(alignment: .leading, spacing: 8) {
                 metricRow(label: "Total pages", value: "\(report.totalPages)")
-                metricRow(label: "DeepSeek overlay pages", value: "\(report.deepSeekOverlayPages)")
+                metricRow(label: "Local OCR pages", value: "\(report.localOCRPages)")
+                metricRow(label: "Cloud OCR pages", value: "\(report.cloudOCRPages)")
                 metricRow(label: "Vision OCR pages", value: "\(report.visionOCRPages)")
                 metricRow(label: "OCR disabled pages", value: "\(report.ocrDisabledPages)")
                 metricRow(label: "Empty OCR pages", value: "\(report.emptyOCRPages)")
-                metricRow(label: "DeepSeek fallbacks", value: "\(report.deepSeekFallbackCount)")
+                metricRow(label: "Local OCR fallbacks", value: "\(report.localOCRFallbackCount)")
             }
             .padding(8)
         } label: {

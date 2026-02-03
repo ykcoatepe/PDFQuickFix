@@ -5,6 +5,140 @@ import CoreGraphics
 import CoreText
 import SwiftUI
 import UniformTypeIdentifiers
+import Security
+
+enum QuickFixOutputSelectionError: Error {
+    case cancelled
+}
+
+struct QuickFixOutputSelection {
+    let url: URL
+    let access: SecurityScopedAccess?
+}
+
+struct OutputDirectoryBookmark: Codable {
+    let path: String
+    var bookmark: Data
+}
+
+final class OutputDirectoryAccessStore {
+    static let shared = OutputDirectoryAccessStore()
+
+    private let storageKey = "QuickFix.OutputDirectoryBookmarks"
+    private let bookmarking: Bookmarking
+    private let defaults: UserDefaults
+    private var cached: [OutputDirectoryBookmark] = []
+
+    init(bookmarking: Bookmarking = SystemBookmarking(), defaults: UserDefaults = .standard) {
+        self.bookmarking = bookmarking
+        self.defaults = defaults
+        load()
+    }
+
+    var count: Int {
+        cached.count
+    }
+
+    func access(for directory: URL) -> SecurityScopedAccess? {
+        let normalizedPath = directory.standardizedFileURL.path
+        guard let index = cached.firstIndex(where: { $0.path == normalizedPath }) else {
+            return nil
+        }
+        do {
+            let result = try bookmarking.resolveBookmarkData(
+                cached[index].bookmark,
+                options: .withSecurityScope,
+                relativeTo: nil
+            )
+            if result.isStale,
+               let updated = try? bookmarking.bookmarkData(for: result.url,
+                                                          includingResourceValuesForKeys: nil,
+                                                          relativeTo: nil) {
+                cached[index].bookmark = updated
+                save()
+            }
+            return SecurityScopedAccess(url: result.url)
+        } catch {
+            return nil
+        }
+    }
+
+    func store(directory: URL) {
+        let normalizedPath = directory.standardizedFileURL.path
+        do {
+            let data = try bookmarking.bookmarkData(for: directory,
+                                                    includingResourceValuesForKeys: nil,
+                                                    relativeTo: nil)
+            if let index = cached.firstIndex(where: { $0.path == normalizedPath }) {
+                cached[index].bookmark = data
+            } else {
+                cached.append(OutputDirectoryBookmark(path: normalizedPath, bookmark: data))
+            }
+            save()
+        } catch {
+            return
+        }
+    }
+
+    private func save() {
+        if let data = try? JSONEncoder().encode(cached) {
+            defaults.set(data, forKey: storageKey)
+        }
+    }
+
+    private func load() {
+        guard let data = defaults.data(forKey: storageKey),
+              let decoded = try? JSONDecoder().decode([OutputDirectoryBookmark].self, from: data) else {
+            cached = []
+            return
+        }
+        cached = decoded
+    }
+
+    func clear() {
+        cached.removeAll()
+        defaults.removeObject(forKey: storageKey)
+    }
+}
+
+@MainActor
+func resolveQuickFixOutputSelection(defaultOutputURL: URL,
+                                    preferredOutputURL: URL? = nil,
+                                    panelTitle: String = "Save QuickFix Output") throws -> QuickFixOutputSelection {
+    let effectiveURL = preferredOutputURL ?? defaultOutputURL
+    let directoryURL = effectiveURL.deletingLastPathComponent()
+    let fileManager = FileManager.default
+    let directoryWritable = fileManager.isWritableFile(atPath: directoryURL.path)
+    let fileExists = fileManager.fileExists(atPath: effectiveURL.path)
+    let fileWritable = fileManager.isWritableFile(atPath: effectiveURL.path)
+
+    if directoryWritable && (!fileExists || fileWritable) {
+        return QuickFixOutputSelection(url: effectiveURL, access: nil)
+    }
+
+    if let access = OutputDirectoryAccessStore.shared.access(for: directoryURL) {
+        let directoryWritableWithAccess = fileManager.isWritableFile(atPath: directoryURL.path)
+        let fileWritableWithAccess = fileManager.isWritableFile(atPath: effectiveURL.path)
+        if directoryWritableWithAccess && (!fileExists || fileWritableWithAccess) {
+            return QuickFixOutputSelection(url: effectiveURL, access: access)
+        }
+    }
+
+    let panel = NSSavePanel()
+    panel.allowedContentTypes = [.pdf]
+    panel.canCreateDirectories = true
+    panel.title = panelTitle
+    panel.nameFieldStringValue = effectiveURL.lastPathComponent
+    panel.directoryURL = directoryURL
+
+    if panel.runModal() == .OK, let url = panel.url {
+        let outputDirectory = url.deletingLastPathComponent()
+        OutputDirectoryAccessStore.shared.store(directory: outputDirectory)
+        let access = OutputDirectoryAccessStore.shared.access(for: outputDirectory)
+        return QuickFixOutputSelection(url: url, access: access)
+    }
+    throw QuickFixOutputSelectionError.cancelled
+}
 
 extension NSImage {
     var cgImage: CGImage? {
@@ -41,7 +175,8 @@ struct RecognizedRun {
 }
 
 enum OCRSource: String, Hashable {
-    case deepSeekOverlay
+    case localOCR
+    case cloudOCR
     case vision
     case none
 }
@@ -54,8 +189,8 @@ struct PageProcessResult {
     var suppressedOCRRunCount: Int
     var ocrSource: OCRSource
     var ocrRunCount: Int
-    var deepSeekEligible: Bool
-    var deepSeekSucceeded: Bool
+    var localOCREligible: Bool
+    var localOCRSucceeded: Bool
 }
 
 // MARK: - Design System
@@ -500,5 +635,55 @@ struct PDFThumbnailViewRepresentable: NSViewRepresentable {
     
     func updateNSView(_ nsView: PDFThumbnailView, context: Context) {
         nsView.pdfView = pdfView
+    }
+}
+
+// MARK: - Keychain Helper
+
+enum KeychainStore {
+    static func get(service: String, account: String) -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        guard status == errSecSuccess, let data = result as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    static func set(service: String, account: String, value: String?) {
+        if value == nil || value?.isEmpty == true {
+            delete(service: service, account: account)
+            return
+        }
+        let data = value?.data(using: .utf8) ?? Data()
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account
+        ]
+        let attributes: [String: Any] = [
+            kSecValueData as String: data
+        ]
+
+        let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+        if status == errSecItemNotFound {
+            var addQuery = query
+            addQuery[kSecValueData as String] = data
+            SecItemAdd(addQuery as CFDictionary, nil)
+        }
+    }
+
+    static func delete(service: String, account: String) {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account
+        ]
+        SecItemDelete(query as CFDictionary)
     }
 }

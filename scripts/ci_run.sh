@@ -24,18 +24,25 @@ fi
 
 # Run tests
 echo "🧪 Running tests..."
+XCODEBUILD_CMD=(
+    xcodebuild -project PDFQuickFix.xcodeproj
+    -scheme PDFQuickFix
+    -destination 'platform=macOS'
+    -configuration Debug
+    test
+)
+
+case "${CI_CODE_SIGNING:-1}" in
+    0|false|FALSE|no|NO)
+        echo "⚠️  Code signing disabled for this run (CI_CODE_SIGNING=${CI_CODE_SIGNING})."
+        XCODEBUILD_CMD+=(CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO)
+        ;;
+esac
+
 if command -v xcpretty &> /dev/null; then
-    xcodebuild -project PDFQuickFix.xcodeproj \
-        -scheme PDFQuickFix \
-        -destination 'platform=macOS' \
-        -configuration Debug \
-        test | xcpretty
+    "${XCODEBUILD_CMD[@]}" | xcpretty
 else
-    xcodebuild -project PDFQuickFix.xcodeproj \
-        -scheme PDFQuickFix \
-        -destination 'platform=macOS' \
-        -configuration Debug \
-        test
+    "${XCODEBUILD_CMD[@]}"
 fi
 
 echo "✅ CI Run Complete."
