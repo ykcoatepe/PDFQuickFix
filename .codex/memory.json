@@ -185,6 +185,22 @@
     {
       "date": "2026-02-03",
       "note": "Added a Settings action to clear saved QuickFix output folder bookmarks."
+    },
+    {
+      "date": "2026-02-25",
+      "note": "Implemented PDF printing in app commands (File > Print, Cmd+P) and Reader/Studio toolbars, with crash-safe tests for nil PDFView."
+    },
+    {
+      "date": "2026-02-25",
+      "note": "Fixed print routing by introducing a dedicated focused printable context and added QuickFix printable PDF support for Cmd+P."
+    },
+    {
+      "date": "2026-02-25",
+      "note": "Replaced NSPrintOperation(view:) paths with a shared PDFDocument-based DocumentPrintService and dispatcher fallback; deployed updated release to /Applications."
+    },
+    {
+      "date": "2026-02-25",
+      "note": "Root-caused persistent print failure to missing App Sandbox printing entitlement; enabled com.apple.security.print and redeployed."
     }
   ]
 }

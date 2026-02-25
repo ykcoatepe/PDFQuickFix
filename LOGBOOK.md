@@ -40,3 +40,7 @@
 | 2026-02-03 | Allow disabling code signing for local test runs | codex/local-ocr-upgrade | Yordam | Complete |
 | 2026-02-03 | Persist output-folder security bookmark for QuickFix writes | codex/local-ocr-upgrade | Yordam | Complete |
 | 2026-02-03 | Settings: clear saved QuickFix output folders | codex/local-ocr-upgrade | Yordam | Complete |
+| 2026-02-25 | Add PDF print support (File > Print, Cmd+P, Reader+Studio toolbar) | codex/local-ocr-upgrade | Yordam | Complete |
+| 2026-02-25 | Fix Cmd+P routing via focused printable context and add QuickFix printable support | codex/local-ocr-upgrade | Yordam | Complete |
+| 2026-02-25 | Replace view-based printing with shared PDFDocument print service + dispatcher fallback | codex/print-routing-fix | Yordam | Complete |
+| 2026-02-25 | Enable sandbox printing entitlement (com.apple.security.print) and redeploy app | codex/print-routing-fix | Yordam | Complete |

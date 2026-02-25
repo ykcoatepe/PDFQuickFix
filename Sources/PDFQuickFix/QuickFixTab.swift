@@ -24,6 +24,7 @@ struct QuickFixTab: View {
     @State private var aiFieldList: String = ""
     @State private var aiPageSelection: String = ""
     @State private var aiImageOCRURL: URL?
+    @StateObject private var printCoordinator = QuickFixPrintCoordinator()
 
     var body: some View {
         VSplitView {
@@ -42,10 +43,20 @@ struct QuickFixTab: View {
             aiStatus = ""
             aiError = nil
             aiImageOCRURL = nil
+            printCoordinator.inputURL = inputURL
+            printCoordinator.outputURL = nil
+        }
+        .onChange(of: quickFixResult?.outputURL) { outputURL in
+            printCoordinator.outputURL = outputURL
+        }
+        .onAppear {
+            printCoordinator.inputURL = inputURL
+            printCoordinator.outputURL = quickFixResult?.outputURL
         }
         .task {
             await aiSettings.refreshModelsIfNeeded()
         }
+        .focusedSceneValue(\.documentPrintable, printCoordinator.hasPrintableDocument ? printCoordinator : nil)
     }
 
     private var quickFixPane: some View {
@@ -540,6 +551,45 @@ struct QuickFixTab: View {
             .appendingPathExtension(ext)
     }
 
+}
+
+@MainActor
+final class QuickFixPrintCoordinator: ObservableObject, DocumentPrintable {
+    var inputURL: URL?
+    var outputURL: URL?
+
+    var hasPrintableDocument: Bool {
+        printableURL != nil
+    }
+
+    func printDocument() {
+        guard let url = printableURL else {
+            DocumentPrintService.presentUnavailableAlert(message: "No printable PDF is available in QuickFix.")
+            return
+        }
+        guard let document = PDFDocument(url: url) else {
+            DocumentPrintService.presentUnavailableAlert(message: "Couldn't prepare this PDF for printing.")
+            return
+        }
+        _ = DocumentPrintService.print(document: document,
+                                       jobTitle: url.lastPathComponent,
+                                       source: "quickfix",
+                                       showUnavailableAlert: true)
+    }
+
+    private var printableURL: URL? {
+        if let outputURL, isPDF(outputURL) {
+            return outputURL
+        }
+        if let inputURL, isPDF(inputURL) {
+            return inputURL
+        }
+        return nil
+    }
+
+    private func isPDF(_ url: URL) -> Bool {
+        url.pathExtension.lowercased() == "pdf"
+    }
 }
 
 enum PDFTextExtractor {

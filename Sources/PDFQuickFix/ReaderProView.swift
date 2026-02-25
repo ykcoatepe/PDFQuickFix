@@ -389,13 +389,10 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         }
     }
     
-    func printDoc() {
-        guard let view = pdfView else { return }
-        let operation = NSPrintOperation(view: view)
-        operation.jobTitle = document?.documentURL?.lastPathComponent ?? "PDFQuickFix"
-        operation.showsPrintPanel = true
-        operation.showsProgressPanel = true
-        operation.run()
+    func printDocument() {
+        _ = DocumentPrintService.print(document: document,
+                                       jobTitle: document?.documentURL?.lastPathComponent ?? "PDFQuickFix",
+                                       source: "reader")
     }
     
     // MARK: - Search
@@ -699,6 +696,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
 }
 
 extension ReaderControllerPro: DocumentClosable {}
+extension ReaderControllerPro: DocumentPrintable {}
 
 extension ReaderControllerPro: FileExportable {
      func exportSanitized() {
@@ -863,11 +861,12 @@ struct ReaderProView: View, Equatable {
                 }
             }
             .focusedSceneValue(\.fileExportable, controller)
-        .focusedSceneValue(\.pdfActionable, controller)
-        .focusedSceneValue(\.documentClosable, controller)
-        .onDrop(of: [.fileURL, .url, .pdf], delegate: PDFURLDropDelegate { url in
-            droppedURL = url
-        })
+            .focusedSceneValue(\.documentPrintable, controller)
+            .focusedSceneValue(\.pdfActionable, controller)
+            .focusedSceneValue(\.documentClosable, controller)
+            .onDrop(of: [.fileURL, .url, .pdf], delegate: PDFURLDropDelegate { url in
+                droppedURL = url
+            })
             .onChange(of: droppedURL) { newValue in
                 guard let url = newValue, url != lastOpenedURL else { return }
                 droppedURL = nil
