@@ -37,8 +37,11 @@ enum DocumentPrintService {
             }
             return false
         }
-        operation.run()
-        return true
+        let didRun = operation.run()
+        if !didRun, showUnavailableAlert {
+            presentUnavailableAlert(message: "Printing failed to start. Please try again.")
+        }
+        return didRun
     }
 
     @MainActor
