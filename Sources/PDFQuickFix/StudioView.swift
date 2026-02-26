@@ -192,6 +192,7 @@ struct StudioView: View, Equatable {
             }
         }
         .focusedSceneValue(\.fileExportable, controller)
+        .focusedSceneValue(\.documentPrintable, controller)
         .focusedSceneValue(\.pdfActionable, controller)
         .focusedSceneValue(\.studioToolSwitchable, controller)
         .focusedSceneValue(\.documentClosable, controller)
