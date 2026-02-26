@@ -69,7 +69,7 @@ struct ContentView: View {
 
 enum AppMode: String, CaseIterable, Identifiable {
     case reader = "Reader"
-    case quickFix = "AI Tools"
+    case quickFix = "QuickFix"
     case studio = "Studio"
     case split = "Split"
     
@@ -205,6 +205,13 @@ struct UnifiedToolbar: View {
                 .buttonStyle(.plain)
                 .help("Save As…")
                 .disabled(readerController.document == nil)
+
+                Button(action: { readerController.printDocument() }) {
+                    Image(systemName: "printer")
+                }
+                .buttonStyle(.plain)
+                .help("Print…")
+                .disabled(readerController.document == nil)
                 
                 Menu {
                     Menu("Images") {
@@ -303,6 +310,12 @@ struct UnifiedToolbar: View {
                 
                 Button(action: { studioController.saveAs() }) {
                     Label("Save As", systemImage: "square.and.arrow.down.on.square")
+                }
+                .buttonStyle(GhostButtonStyle())
+                .disabled(studioController.document == nil)
+
+                Button(action: { studioController.printDocument() }) {
+                    Label("Print", systemImage: "printer")
                 }
                 .buttonStyle(GhostButtonStyle())
                 .disabled(studioController.document == nil)

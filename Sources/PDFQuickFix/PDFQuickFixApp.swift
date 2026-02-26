@@ -40,6 +40,7 @@ struct PDFQuickFixApp: App {
 protocol FileExportable: AnyObject {
     func saveAs()
     func repairAndSaveAs()
+    func printDocument()
     func exportToImages(format: NSBitmapImageRep.FileType)
     func exportToText()
     func exportSanitized()
@@ -49,10 +50,25 @@ struct FileExportableKey: FocusedValueKey {
     typealias Value = FileExportable
 }
 
+@MainActor
+protocol DocumentPrintable: AnyObject {
+    var hasPrintableDocument: Bool { get }
+    func printDocument()
+}
+
+struct DocumentPrintableKey: FocusedValueKey {
+    typealias Value = DocumentPrintable
+}
+
 extension FocusedValues {
     var fileExportable: FileExportable? {
         get { self[FileExportableKey.self] }
         set { self[FileExportableKey.self] = newValue }
+    }
+
+    var documentPrintable: DocumentPrintable? {
+        get { self[DocumentPrintableKey.self] }
+        set { self[DocumentPrintableKey.self] = newValue }
     }
     
     var pdfActionable: PDFActionable? {
@@ -107,6 +123,7 @@ struct DocumentClosableKey: FocusedValueKey {
 
 struct AppCommands: Commands {
     @FocusedValue(\.fileExportable) var fileExportable
+    @FocusedValue(\.documentPrintable) var documentPrintable
     @FocusedValue(\.pdfActionable) var pdfActionable
     @FocusedValue(\.studioToolSwitchable) var studioToolSwitchable
     @FocusedValue(\.documentClosable) var documentClosable
@@ -159,6 +176,17 @@ struct AppCommands: Commands {
             Button("Sanitize Folder…") {
                 BatchSanitizeCoordinator.shared.showBatchSanitizePanel()
             }
+        }
+
+        CommandGroup(replacing: .printItem) {
+            Button("Print…") {
+                if let documentPrintable, documentPrintable.hasPrintableDocument {
+                    documentPrintable.printDocument()
+                } else if !PrintDispatcher.printActivePDFDocument(source: "cmdp-dispatcher") {
+                    DocumentPrintService.presentUnavailableAlert()
+                }
+            }
+            .keyboardShortcut("p", modifiers: .command)
         }
         
         CommandMenu("View") {

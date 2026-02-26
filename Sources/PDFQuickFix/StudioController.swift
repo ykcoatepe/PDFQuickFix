@@ -1058,6 +1058,16 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
             }
         }
     }
+
+    var hasPrintableDocument: Bool {
+        document != nil
+    }
+
+    func printDocument() {
+        _ = DocumentPrintService.print(document: document,
+                                       jobTitle: document?.documentURL?.lastPathComponent ?? "PDFQuickFix",
+                                       source: "studio")
+    }
     
     func exportToText() {
         guard let doc = document, let snapshot = doc.dataRepresentation() else {
@@ -1815,4 +1825,5 @@ private extension Int {
 }
 
 extension StudioController: FileExportable {}
+extension StudioController: DocumentPrintable {}
 extension StudioController: DocumentClosable {}

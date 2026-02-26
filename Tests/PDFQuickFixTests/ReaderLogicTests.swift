@@ -42,6 +42,17 @@ final class ReaderLogicTests: XCTestCase {
         // The controller updates zoomScale in the view delegate or when view updates.
         // So we can't assert zoomScale changed here easily without a mock view.
     }
+
+    func testReaderPrintDocumentWithoutPDFViewDoesNotCrash() {
+        controller.printDocument()
+        XCTAssertNil(controller.pdfView)
+    }
+
+    func testStudioPrintDocumentWithoutPDFViewDoesNotCrash() {
+        let studioController = StudioController()
+        studioController.printDocument()
+        XCTAssertNil(studioController.pdfView)
+    }
 }
 
 final class PerfTests: XCTestCase {
