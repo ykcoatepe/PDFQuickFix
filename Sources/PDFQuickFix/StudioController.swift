@@ -1059,6 +1059,10 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         }
     }
 
+    var hasPrintableDocument: Bool {
+        document != nil
+    }
+
     func printDocument() {
         _ = DocumentPrintService.print(document: document,
                                        jobTitle: document?.documentURL?.lastPathComponent ?? "PDFQuickFix",

@@ -52,6 +52,7 @@ struct FileExportableKey: FocusedValueKey {
 
 @MainActor
 protocol DocumentPrintable: AnyObject {
+    var hasPrintableDocument: Bool { get }
     func printDocument()
 }
 
@@ -179,7 +180,7 @@ struct AppCommands: Commands {
 
         CommandGroup(replacing: .printItem) {
             Button("Print…") {
-                if let documentPrintable {
+                if let documentPrintable, documentPrintable.hasPrintableDocument {
                     documentPrintable.printDocument()
                 } else if !PrintDispatcher.printActivePDFDocument(source: "cmdp-dispatcher") {
                     DocumentPrintService.presentUnavailableAlert()

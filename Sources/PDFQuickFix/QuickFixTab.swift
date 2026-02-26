@@ -555,8 +555,8 @@ struct QuickFixTab: View {
 
 @MainActor
 final class QuickFixPrintCoordinator: ObservableObject, DocumentPrintable {
-    var inputURL: URL?
-    var outputURL: URL?
+    @Published var inputURL: URL?
+    @Published var outputURL: URL?
 
     var hasPrintableDocument: Bool {
         printableURL != nil

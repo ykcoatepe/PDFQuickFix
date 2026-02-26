@@ -389,6 +389,10 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         }
     }
     
+    var hasPrintableDocument: Bool {
+        document != nil
+    }
+
     func printDocument() {
         _ = DocumentPrintService.print(document: document,
                                        jobTitle: document?.documentURL?.lastPathComponent ?? "PDFQuickFix",
