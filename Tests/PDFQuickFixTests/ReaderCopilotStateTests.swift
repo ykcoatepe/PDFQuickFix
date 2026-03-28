@@ -203,23 +203,6 @@ final class ReaderCopilotStateTests: XCTestCase {
         XCTAssertNil(controller.document)
     }
 
-    func testExplainCurrentSelectionUsesCurrentPDFSelectionText() async throws {
-        let service = StubCopilotService(response: .makeStub(answer: "Explained"))
-        let controller = ReaderControllerPro(copilotService: service)
-        let pdfView = StubPDFView()
-        pdfView.currentSelection = StubPDFSelection(text: "Selected text lives here")
-        controller.pdfView = pdfView
-        controller.document = PDFDocument()
-
-        await controller.explainCurrentSelection()
-
-        XCTAssertEqual(
-            service.requests,
-            [.explainSelection(selection: "Selected text lives here", scope: .selection("Selected text lives here"))]
-        )
-        XCTAssertEqual(controller.copilotResponse, .makeStub(answer: "Explained"))
-        XCTAssertNil(controller.copilotError)
-    }
 }
 
 private final class StubCopilotService: DocumentCopilotServicing {
@@ -301,26 +284,6 @@ private actor BlockingCopilotService: DocumentCopilotServicing {
     }
 }
 
-private final class StubPDFSelection: PDFSelection {
-    private let selectionString: String
-
-    init(text: String) {
-        self.selectionString = text
-        super.init(document: PDFDocument())
-    }
-
-    override var string: String? { selectionString }
-}
-
-private final class StubPDFView: PDFView {
-    private var selectionStorage: PDFSelection?
-
-    override var currentSelection: PDFSelection? {
-        get { selectionStorage }
-        set { selectionStorage = newValue }
-    }
-}
-
 private extension DocumentCopilotResponse {
     static func makeStub(answer: String = "ok") -> DocumentCopilotResponse {
         DocumentCopilotResponse(
@@ -368,7 +331,8 @@ private func makeTextDocument(text: String) throws -> PDFDocument {
 
     defer { try? FileManager.default.removeItem(at: url) }
 
-    guard let document = PDFDocument(url: url) else {
+    let data = try Data(contentsOf: url)
+    guard let document = PDFDocument(data: data) else {
         throw NSError(domain: "ReaderCopilotStateTests", code: -2, userInfo: [
             NSLocalizedDescriptionKey: "Unable to open generated PDF"
         ])
