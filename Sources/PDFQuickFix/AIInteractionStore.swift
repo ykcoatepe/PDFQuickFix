@@ -113,6 +113,7 @@ final class AIInteractionStore: ObservableObject {
     private let maxEntries = 200
     private let maxPromptCharacters = 4000
     private let maxResponseCharacters = 8000
+    static let exportSchemaVersion = 2
     private var persistToDisk: Bool
     private let fileURL: URL
 
@@ -169,7 +170,7 @@ final class AIInteractionStore: ObservableObject {
 
     private func load() {
         guard let data = try? Data(contentsOf: fileURL),
-              let decoded = try? JSONDecoder().decode([AIInteractionEntry].self, from: data) else {
+              let decoded = Self.decodePersistedEntries(from: data) else {
             return
         }
         entries = decoded
@@ -177,7 +178,7 @@ final class AIInteractionStore: ObservableObject {
 
     private func loadPersistedEntries() -> [AIInteractionEntry] {
         guard let data = try? Data(contentsOf: fileURL),
-              let decoded = try? JSONDecoder().decode([AIInteractionEntry].self, from: data) else {
+              let decoded = Self.decodePersistedEntries(from: data) else {
             return []
         }
         return decoded
@@ -233,7 +234,7 @@ final class AIInteractionStore: ObservableObject {
             let entries: [AIInteractionEntry]
         }
 
-        let payload = Payload(exportedAt: Date(), formatVersion: 1, entries: entries)
+        let payload = Payload(exportedAt: Date(), formatVersion: exportSchemaVersion, entries: entries)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
@@ -296,6 +297,59 @@ final class AIInteractionStore: ObservableObject {
         guard text.count > limit else { return text }
         let endIndex = text.index(text.startIndex, offsetBy: limit)
         return String(text[..<endIndex]) + "... (truncated)"
+    }
+
+    static func decodePersistedEntries(from data: Data) -> [AIInteractionEntry]? {
+        let decoder = Self.makeDecoder()
+
+        if let decoded = try? decoder.decode([AIInteractionEntry].self, from: data) {
+            return decoded
+        }
+
+        guard let rawArray = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            return nil
+        }
+
+        var decoded: [AIInteractionEntry] = []
+        decoded.reserveCapacity(rawArray.count)
+        for item in rawArray {
+            guard let itemData = try? JSONSerialization.data(withJSONObject: item),
+                   let entry = try? decoder.decode(AIInteractionEntry.self, from: itemData) else {
+                continue
+            }
+            decoded.append(entry)
+        }
+        return decoded
+    }
+
+    private static func makeDecoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        let fractionalISO8601Formatter = ISO8601DateFormatter()
+        fractionalISO8601Formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let plainISO8601Formatter = ISO8601DateFormatter()
+        plainISO8601Formatter.formatOptions = [.withInternetDateTime]
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            if let timestamp = try? container.decode(Double.self) {
+                return Self.decodeNumericDate(timestamp)
+            }
+            if let timestamp = try? container.decode(Int.self) {
+                return Self.decodeNumericDate(TimeInterval(timestamp))
+            }
+            let string = try container.decode(String.self)
+            if let date = fractionalISO8601Formatter.date(from: string) ?? plainISO8601Formatter.date(from: string) {
+                return date
+            }
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unsupported date encoding: \(string)")
+        }
+        return decoder
+    }
+
+    private static func decodeNumericDate(_ timestamp: TimeInterval) -> Date {
+        if timestamp > 1_000_000_000 {
+            return Date(timeIntervalSince1970: timestamp)
+        }
+        return Date(timeIntervalSinceReferenceDate: timestamp)
     }
 
     private static func makeFileURL() -> URL {

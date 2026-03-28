@@ -126,11 +126,13 @@ final class AIInteractionStoreTests: XCTestCase {
 
         let payloadObject = try JSONSerialization.jsonObject(with: document.data)
         let payload = try XCTUnwrap(payloadObject as? [String: Any])
-        XCTAssertEqual(payload["formatVersion"] as? Int, 1)
+        XCTAssertEqual(payload["formatVersion"] as? Int, 2)
         XCTAssertNotNil(payload["exportedAt"])
         let entries = try XCTUnwrap(payload["entries"] as? [[String: Any]])
         XCTAssertEqual(entries.count, 1)
-        XCTAssertEqual(entries[0]["kind"] as? String, AIInteractionKind.quickFix(task: .summarize).exportSlug)
+        let kind = try XCTUnwrap(entries[0]["kind"] as? [String: Any])
+        XCTAssertEqual(kind["family"] as? String, "quickFix")
+        XCTAssertEqual(kind["value"] as? String, LocalAITask.summarize.rawValue)
         XCTAssertEqual(entries[0]["model"] as? String, "stub-model")
     }
 
@@ -175,5 +177,63 @@ final class AIInteractionStoreTests: XCTestCase {
 
         let document = try store.exportDocument(for: [entry], format: .json)
         XCTAssertEqual(document.fileName, "ai-activity-document-question.json")
+    }
+
+    func testDecodesLegacyTaskOnlyEntry() throws {
+        let json = """
+        [
+          {
+            "id": "11111111-1111-1111-1111-111111111111",
+            "timestamp": "2024-01-01T00:00:00Z",
+            "task": "summarize",
+            "model": "legacy-model",
+            "prompt": "prompt",
+            "response": "response",
+            "sourceName": null,
+            "inputCharacterCount": 1,
+            "inputWasTrimmed": false
+          }
+        ]
+        """
+        let data = try XCTUnwrap(json.data(using: .utf8))
+
+        let entries = try XCTUnwrap(AIInteractionStore.decodePersistedEntries(from: data))
+        XCTAssertEqual(entries.count, 1)
+        XCTAssertEqual(entries[0].kind, .quickFix(task: .summarize))
+    }
+
+    func testDecodesUnknownTaggedKindWithoutDroppingEntries() throws {
+        let json = """
+        [
+          {
+            "id": "11111111-1111-1111-1111-111111111111",
+            "timestamp": "2024-01-01T00:00:00Z",
+            "kind": { "family": "quickFix", "value": "summarize" },
+            "model": "known-model",
+            "prompt": "prompt",
+            "response": "response",
+            "sourceName": null,
+            "inputCharacterCount": 1,
+            "inputWasTrimmed": false
+          },
+          {
+            "id": "22222222-2222-2222-2222-222222222222",
+            "timestamp": "2024-01-01T01:00:00Z",
+            "kind": { "family": "futureCopilot", "value": "document-insight" },
+            "model": "future-model",
+            "prompt": "prompt2",
+            "response": "response2",
+            "sourceName": null,
+            "inputCharacterCount": 2,
+            "inputWasTrimmed": true
+          }
+        ]
+        """
+        let data = try XCTUnwrap(json.data(using: .utf8))
+
+        let entries = try XCTUnwrap(AIInteractionStore.decodePersistedEntries(from: data))
+        XCTAssertEqual(entries.count, 2)
+        XCTAssertEqual(entries[0].kind, .quickFix(task: .summarize))
+        XCTAssertEqual(entries[1].kind, .unknown(family: "futureCopilot", value: "document-insight"))
     }
 }
