@@ -421,6 +421,8 @@ Context:
     }
 }
 
+extension DocumentCopilotService: DocumentCopilotServicing {}
+
 private struct PreparedRequest {
     let request: DocumentCopilotRequest
     let instructions: String

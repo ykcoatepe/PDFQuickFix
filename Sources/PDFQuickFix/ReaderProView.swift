@@ -15,7 +15,12 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
     @Published var currentMatchIndex: Int? = nil
     @Published var isSidebarVisible: Bool = true
     @Published var isRightPanelVisible: Bool = false
+    @Published var selectedRightPanelTab: ReaderRightPanelTab = .info
     @Published var isProcessing: Bool = false
+    @Published var copilotQuery: String = ""
+    @Published var copilotResponse: DocumentCopilotResponse?
+    @Published var copilotError: String?
+    @Published var isCopilotRunning: Bool = false
     
     func toggleRightPanel() {
         isRightPanelVisible.toggle()
@@ -39,10 +44,17 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
 
     private var findObserver: NSObjectProtocol?
     private let validationRunner = DocumentValidationRunner()
+    private let copilotService: any DocumentCopilotServicing
     private var searchDebounceWorkItem: DispatchWorkItem?
+    private var activeCopilotRequestID: UInt64 = 0
     private enum ValidationMode { case idle, quick, full }
     private var validationMode: ValidationMode = .idle
     private let largeDocumentPageThreshold = DocumentValidationRunner.largeDocumentPageThreshold
+
+    init(copilotService: (any DocumentCopilotServicing)? = nil) {
+        self.copilotService = copilotService ?? DocumentCopilotService(interactionStore: AIInteractionStore())
+        super.init()
+    }
 
     deinit {
         if let observer = findObserver {
@@ -172,6 +184,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         isFullValidationRunning = false
         isPartialLoad = false
         self.isRepaired = isRepaired
+        clearCopilotOutput()
 
         let shouldSkipAutoValidation = DocumentValidationRunner.shouldSkipQuickValidation(
             estimatedPages: nil,
@@ -203,6 +216,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         isFullValidationRunning = false
         validationMode = .idle
         log = "❌ \(error.localizedDescription)"
+        clearCopilotOutput()
         present(error)
     }
 
@@ -233,6 +247,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         isFullValidationRunning = false
         validationMode = .idle
         log = ""
+        clearCopilotOutput()
     }
 
     
@@ -618,6 +633,61 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         view.zoomOut(nil)
         zoomScale = view.scaleFactor
     }
+
+    func runCopilotQuery() async {
+        let query = copilotQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else {
+            copilotError = "Enter a question first."
+            return
+        }
+        await runCopilotRequest(.ask(question: query, scope: .document))
+    }
+
+    func runCopilotRequest(_ request: DocumentCopilotRequest) async {
+        guard let session = makeCopilotSession() else {
+            copilotError = PDFTextExtractorError.missingInput.localizedDescription
+            return
+        }
+
+        let modelName = currentCopilotModelName()
+        activeCopilotRequestID &+= 1
+        let requestID = activeCopilotRequestID
+        isCopilotRunning = true
+        copilotError = nil
+        copilotResponse = nil
+
+        do {
+            let response = try await copilotService.respond(
+                to: request,
+                using: session,
+                sourceName: currentURL?.lastPathComponent ?? document?.documentURL?.lastPathComponent,
+                modelName: modelName
+            )
+            guard requestID == activeCopilotRequestID else { return }
+            copilotResponse = response
+        } catch {
+            guard requestID == activeCopilotRequestID else { return }
+            copilotError = error.localizedDescription
+        }
+
+        guard requestID == activeCopilotRequestID else { return }
+        isCopilotRunning = false
+    }
+
+    func explainCurrentSelection() async {
+        guard let selectionText = pdfView?.currentSelection?.string?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !selectionText.isEmpty else {
+            copilotError = "Select text first."
+            return
+        }
+        await runCopilotRequest(.explainSelection(selection: selectionText, scope: .selection(selectionText)))
+    }
+
+    func jumpToCitationPage(_ citation: DocumentCopilotCitation) {
+        guard let document, citation.pageIndex >= 0, let page = document.page(at: citation.pageIndex) else { return }
+        pdfView?.go(to: page)
+        currentPageIndex = citation.pageIndex
+    }
     
     // MARK: - Helpers
     
@@ -628,6 +698,25 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
                                     resetScale: true)
         view.delegate = self
         zoomScale = view.scaleFactor
+    }
+
+    private func makeCopilotSession() -> DocumentTextSession? {
+        if let document {
+            return DocumentTextSession(document: document)
+        }
+        guard let url = currentURL else { return nil }
+        return try? DocumentTextSession(documentURL: url)
+    }
+
+    private func currentCopilotModelName() -> String? {
+        let modelName = LocalAISettings().defaultModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        return modelName.isEmpty ? nil : modelName
+    }
+
+    private func clearCopilotOutput() {
+        copilotResponse = nil
+        copilotError = nil
+        isCopilotRunning = false
     }
 
     private func annotationRects(for selection: PDFSelection, on page: PDFPage) -> [CGRect] {
@@ -730,6 +819,14 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
             quickFixResult: quickFixResult
         )
     }
+}
+
+enum ReaderRightPanelTab: String, CaseIterable, Identifiable {
+    case info
+    case comments
+    case copilot
+
+    var id: String { rawValue }
 }
 
 extension ReaderControllerPro: DocumentClosable {}

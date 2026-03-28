@@ -76,3 +76,10 @@ struct DocumentCopilotResponse: Equatable {
     let requestWasTrimmed: Bool
     let contextWasTrimmed: Bool
 }
+
+protocol DocumentCopilotServicing {
+    func respond(to request: DocumentCopilotRequest,
+                 using session: DocumentTextSession,
+                 sourceName: String?,
+                 modelName: String?) async throws -> DocumentCopilotResponse
+}
