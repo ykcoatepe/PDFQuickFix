@@ -68,4 +68,34 @@ final class QuickFixResultTests: XCTestCase {
         XCTAssertEqual(store.result(for: tempURL)?.outputURL, savedURL)
         XCTAssertEqual(store.result(for: sourceURL)?.outputURL, savedURL)
     }
+
+    func testResultStoreFallsBackToSecondaryURL() {
+        let store = QuickFixResultStore()
+        let sourceURL = URL(fileURLWithPath: "/tmp/source.pdf")
+        let repairedURL = URL(fileURLWithPath: "/tmp/source-repaired.pdf")
+        let result = QuickFixResult(
+            outputURL: URL(fileURLWithPath: "/tmp/fixed.pdf"),
+            isTemporaryOutput: false,
+            previewPageIndex: 1,
+            redactionReport: RedactionReport(
+                pagesWithRedactions: [1],
+                totalRedactionRectCount: 1,
+                suppressedOCRRunCount: 0
+            ),
+            ocrReport: OCRReport(
+                totalPages: 2,
+                localOCRPages: 1,
+                cloudOCRPages: 0,
+                visionOCRPages: 1,
+                ocrDisabledPages: 0,
+                emptyOCRPages: 0,
+                emptyOCRPageIndices: [],
+                localOCRFallbackCount: 0
+            )
+        )
+
+        store.set(result, sourceURL: sourceURL)
+
+        XCTAssertEqual(store.result(primaryURL: repairedURL, fallbackURL: sourceURL)?.outputURL, result.outputURL)
+    }
 }

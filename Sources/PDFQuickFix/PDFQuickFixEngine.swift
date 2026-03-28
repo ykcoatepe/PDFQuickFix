@@ -41,6 +41,7 @@ final class PDFQuickFixEngine {
 
     func processResult(inputURL: URL,
                        outputURL: URL? = nil,
+                       isTemporaryOutput: Bool? = nil,
                        redactionPatterns: [RedactionPattern] = DefaultPatterns.defaults(),
                        customRegexes: [NSRegularExpression] = [],
                        findReplace: [FindReplaceRule] = [],
@@ -144,7 +145,7 @@ final class PDFQuickFixEngine {
         )
         return QuickFixResult(
             outputURL: outURL,
-            isTemporaryOutput: outputURL == nil,
+            isTemporaryOutput: isTemporaryOutput ?? (outputURL == nil),
             previewPageIndex: pagesWithRedactions.first ?? emptyOCRPageIndices.first,
             redactionReport: report,
             ocrReport: ocrReport
@@ -153,6 +154,7 @@ final class PDFQuickFixEngine {
 
     func process(inputURL: URL,
                  outputURL: URL? = nil,
+                 isTemporaryOutput: Bool? = nil,
                  redactionPatterns: [RedactionPattern] = DefaultPatterns.defaults(),
                  customRegexes: [NSRegularExpression] = [],
                  findReplace: [FindReplaceRule] = [],
@@ -161,6 +163,7 @@ final class PDFQuickFixEngine {
                  progress: ((Int, Int) -> Void)? = nil) throws -> URL {
         try processResult(inputURL: inputURL,
                           outputURL: outputURL,
+                          isTemporaryOutput: isTemporaryOutput,
                           redactionPatterns: redactionPatterns,
                           customRegexes: customRegexes,
                           findReplace: findReplace,

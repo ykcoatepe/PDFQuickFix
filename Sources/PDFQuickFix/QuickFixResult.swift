@@ -65,6 +65,16 @@ final class QuickFixResultStore: ObservableObject {
         resultsByURL[url.standardizedFileURL]
     }
 
+    func result(primaryURL: URL?, fallbackURL: URL?) -> QuickFixResult? {
+        if let primaryURL, let result = result(for: primaryURL) {
+            return result
+        }
+        if let fallbackURL {
+            return result(for: fallbackURL)
+        }
+        return nil
+    }
+
     func report(for url: URL) -> RedactionReport? {
         result(for: url)?.redactionReport
     }

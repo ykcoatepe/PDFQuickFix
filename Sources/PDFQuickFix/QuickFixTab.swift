@@ -339,6 +339,7 @@ struct QuickFixTab: View {
                 let result = try model.runQuickFixResult(
                     inputURL: prepared.sourceURL,
                     outputURL: temporaryOutputURL,
+                    isTemporaryOutput: true,
                     shouldCancel: { Task.isCancelled },
                     progress: { current, total in
                         DispatchQueue.main.async {

@@ -46,4 +46,26 @@ final class PDFQuickFixEngineTests: XCTestCase {
         XCTAssertGreaterThan(bounds.height, 0, "Output page MediaBox height should be non-zero")
         XCTAssertNotNil(outPage.pageRef, "Output page should have a CGPDFPage backing reference")
     }
+
+    func testExplicitTemporaryOutputRemainsMarkedTemporary() throws {
+        let inputURL = try TestPDFBuilder.makeSimplePDF(text: "Hello", size: CGSize(width: 200, height: 200))
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("pdf")
+        defer { try? FileManager.default.removeItem(at: outputURL) }
+
+        let engine = PDFQuickFixEngine(options: QuickFixOptions(doOCR: false, dpi: 72, redactionPadding: 0), languages: ["en-US"])
+        let result = try engine.processResult(
+            inputURL: inputURL,
+            outputURL: outputURL,
+            isTemporaryOutput: true,
+            redactionPatterns: [],
+            customRegexes: [],
+            findReplace: [],
+            manualRedactions: [:]
+        )
+
+        XCTAssertTrue(result.isTemporaryOutput)
+        XCTAssertEqual(result.outputURL, outputURL)
+    }
 }

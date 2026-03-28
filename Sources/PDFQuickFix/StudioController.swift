@@ -367,7 +367,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     var documentHealthSummary: DocumentHealthSummary? {
         guard let document else { return nil }
         let name = currentURL?.lastPathComponent ?? sourceURL?.lastPathComponent ?? "PDF"
-        let quickFixResult = currentURL.flatMap { QuickFixResultStore.shared.result(for: $0) }
+        let quickFixResult = QuickFixResultStore.shared.result(primaryURL: currentURL, fallbackURL: sourceURL)
         return DocumentHealthSummary.build(
             documentName: name,
             pageCount: document.pageCount,

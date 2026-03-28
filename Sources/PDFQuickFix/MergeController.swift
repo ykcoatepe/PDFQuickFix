@@ -285,7 +285,7 @@ final class MergeController: ObservableObject {
         MergeJobSettings(
             sourceURLStrings: sourceURLs.map { $0.standardizedFileURL.path },
             destinationFolderURLString: outputURL?.deletingLastPathComponent().standardizedFileURL.path ?? destinationFolderURL?.standardizedFileURL.path,
-            outputFileName: outputFileNameTrimmed.isEmpty ? "Merged.pdf" : outputFileNameTrimmed,
+            outputFileName: outputURL?.lastPathComponent ?? (outputFileNameTrimmed.isEmpty ? "Merged.pdf" : outputFileNameTrimmed),
             insertBlankPageBetweenDocuments: insertBlankPageBetweenDocuments,
             skipUnreadableSources: skipUnreadableSources,
             deduplicateSources: deduplicateSources,

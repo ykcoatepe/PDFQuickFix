@@ -107,6 +107,23 @@ final class MergeControllerTests: XCTestCase {
     }
 
     @MainActor
+    func testCurrentSettingsUsesSelectedOutputFileName() {
+        let controller = MergeController(defaults: defaults)
+        controller.addSourceURLs([
+            URL(fileURLWithPath: "/tmp/a.pdf"),
+            URL(fileURLWithPath: "/tmp/b.pdf")
+        ])
+        controller.destinationFolderURL = URL(fileURLWithPath: "/tmp")
+        controller.outputFileName = "Merged.pdf"
+
+        let selectedOutputURL = URL(fileURLWithPath: "/tmp/Chosen Name (2).pdf")
+        let settings = controller.currentSettings(with: selectedOutputURL)
+
+        XCTAssertEqual(settings.outputFileName, "Chosen Name (2).pdf")
+        XCTAssertEqual(settings.destinationFolderURLString, "/tmp")
+    }
+
+    @MainActor
     private func waitForMerge(_ controller: MergeController, timeout: TimeInterval = 5) {
         let deadline = Date().addingTimeInterval(timeout)
         while controller.isWorking && Date() < deadline {

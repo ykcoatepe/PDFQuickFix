@@ -93,11 +93,13 @@ final class QuickFixOptionsModel: ObservableObject {
 
     func runQuickFix(inputURL: URL,
                      outputURL: URL? = nil,
+                     isTemporaryOutput: Bool? = nil,
                      manualRedactions: [Int: [CGRect]] = [:],
                      shouldCancel: QuickFixCancellationChecker? = nil,
                      progress: ((Int, Int) -> Void)? = nil) throws -> URL {
         try runQuickFixResult(inputURL: inputURL,
                               outputURL: outputURL,
+                              isTemporaryOutput: isTemporaryOutput,
                               manualRedactions: manualRedactions,
                               shouldCancel: shouldCancel,
                               progress: progress).outputURL
@@ -105,6 +107,7 @@ final class QuickFixOptionsModel: ObservableObject {
 
     func runQuickFixResult(inputURL: URL,
                            outputURL: URL? = nil,
+                           isTemporaryOutput: Bool? = nil,
                            manualRedactions: [Int: [CGRect]] = [:],
                            shouldCancel: QuickFixCancellationChecker? = nil,
                            progress: ((Int, Int) -> Void)? = nil) throws -> QuickFixResult {
@@ -113,6 +116,7 @@ final class QuickFixOptionsModel: ObservableObject {
         return try engine.processResult(
             inputURL: inputURL,
             outputURL: outputURL,
+            isTemporaryOutput: isTemporaryOutput,
             redactionPatterns: parameters.redactionPatterns,
             customRegexes: parameters.customRegexes,
             findReplace: parameters.findReplace,
