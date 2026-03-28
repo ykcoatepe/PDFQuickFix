@@ -313,3 +313,236 @@ struct SplitHistoryCard: View {
         .frame(maxHeight: 180)
     }
 }
+
+struct MergeSourceListCard: View {
+    let sourceURLs: [URL]
+    let deduplicateSources: Bool
+    let onChooseSources: () -> Void
+    let onDropURL: (URL) -> Void
+    let onRemoveOffsets: (IndexSet) -> Void
+    let onMove: (IndexSet, Int) -> Void
+    let onClear: () -> Void
+
+    @State private var isTargeted: Bool = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Sources")
+                    .font(.headline)
+                    .foregroundColor(AppTheme.Colors.primaryText)
+                Spacer()
+                Button("Add Files…", action: onChooseSources)
+                    .buttonStyle(.bordered)
+                Button("Clear", action: onClear)
+                    .buttonStyle(.bordered)
+                    .disabled(sourceURLs.isEmpty)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                List {
+                    ForEach(Array(sourceURLs.enumerated()), id: \.offset) { index, url in
+                        HStack(spacing: 8) {
+                            Text("\(index + 1).")
+                                .font(.caption)
+                                .foregroundColor(AppTheme.Colors.secondaryText)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(url.lastPathComponent)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                Text(url.deletingLastPathComponent().path)
+                                    .font(.caption2)
+                                    .foregroundColor(AppTheme.Colors.secondaryText)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
+                        }
+                    }
+                    .onDelete(perform: onRemoveOffsets)
+                    .onMove(perform: onMove)
+                }
+                .frame(minHeight: 170, maxHeight: 220)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(isTargeted ? AppTheme.Colors.dropZoneFillHighlighted : AppTheme.Colors.cardBackground.opacity(0.6))
+                )
+                .onDrop(of: [.fileURL], isTargeted: $isTargeted) { providers in
+                    handleDroppedFileProviders(providers) { url in
+                        onDropURL(url)
+                    }
+                }
+
+                Text(deduplicateSources
+                     ? "Duplicate file paths are automatically removed."
+                     : "Order controls merge order. Drag rows to reorder.")
+                    .font(.caption)
+                    .foregroundColor(AppTheme.Colors.secondaryText)
+            }
+        }
+    }
+}
+
+struct MergeOptionsCard: View {
+    @Binding var insertBlankPageBetweenDocuments: Bool
+    @Binding var skipUnreadableSources: Bool
+    @Binding var deduplicateSources: Bool
+    @Binding var outlinePolicy: MergeOutlinePolicy
+    @Binding var metadataPolicy: MergeMetadataPolicy
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Merge options")
+                .font(.headline)
+                .foregroundColor(AppTheme.Colors.primaryText)
+
+            VStack(alignment: .leading, spacing: 10) {
+                Toggle("Insert blank page between documents", isOn: $insertBlankPageBetweenDocuments)
+                Toggle("Skip unreadable PDFs", isOn: $skipUnreadableSources)
+                Toggle("Deduplicate repeated source files", isOn: $deduplicateSources)
+
+                HStack {
+                    Text("Outline")
+                    Spacer()
+                    Picker("", selection: $outlinePolicy) {
+                        Text("Top-level per source").tag(MergeOutlinePolicy.addTopLevelPerSource)
+                    }
+                    .labelsHidden()
+                    .frame(width: 200)
+                }
+
+                HStack {
+                    Text("Metadata")
+                    Spacer()
+                    Picker("", selection: $metadataPolicy) {
+                        Text("Keep first").tag(MergeMetadataPolicy.keepFirst)
+                        Text("Keep last").tag(MergeMetadataPolicy.keepLast)
+                        Text("Clear").tag(MergeMetadataPolicy.clear)
+                    }
+                    .labelsHidden()
+                    .frame(width: 200)
+                }
+            }
+            .padding(12)
+            .background(AppTheme.Colors.cardBackground.opacity(0.6))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(AppTheme.Colors.cardBorder.opacity(0.6), lineWidth: 0.5)
+            )
+            .foregroundColor(AppTheme.Colors.primaryText)
+        }
+    }
+}
+
+struct MergeDestinationCard: View {
+    let destinationFolderURL: URL?
+    @Binding var outputFileName: String
+    let onChooseDestination: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Destination")
+                .font(.headline)
+                .foregroundColor(AppTheme.Colors.primaryText)
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text(destinationLabel)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer()
+                    Button("Choose…", action: onChooseDestination)
+                        .buttonStyle(.bordered)
+                }
+
+                HStack {
+                    Text("Output")
+                    TextField("Merged.pdf", text: $outputFileName)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(minWidth: 260)
+                }
+            }
+            .padding(12)
+            .background(AppTheme.Colors.cardBackground.opacity(0.6))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(AppTheme.Colors.cardBorder.opacity(0.6), lineWidth: 0.5)
+            )
+            .foregroundColor(AppTheme.Colors.primaryText)
+        }
+    }
+
+    private var destinationLabel: String {
+        destinationFolderURL?.path ?? "Choose destination folder"
+    }
+}
+
+struct MergeHistoryCard: View {
+    let history: [MergeJobRecord]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("History")
+                .font(.headline)
+                .foregroundColor(AppTheme.Colors.primaryText)
+            if history.isEmpty {
+                Text("No recent merge jobs.")
+                    .font(.footnote)
+                    .foregroundColor(AppTheme.Colors.secondaryText)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(history) { job in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(job.outputFileName)
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundColor(AppTheme.Colors.primaryText)
+                                Text("\(job.sourceCount) selected → \(job.mergedDocumentCount) merged, \(job.mergedPageCount) pages")
+                                    .font(.caption2)
+                                    .foregroundColor(AppTheme.Colors.secondaryText)
+                                Text("\(job.destinationFolder) · \(job.date.formatted(date: .abbreviated, time: .shortened))")
+                                    .font(.caption2)
+                                    .foregroundColor(AppTheme.Colors.secondaryText)
+                                if let warning = job.warningsSummary, !warning.isEmpty {
+                                    Text("Warnings: \(warning)")
+                                        .font(.caption2)
+                                        .foregroundColor(.orange)
+                                }
+                            }
+                            .padding(8)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .fill(AppTheme.Colors.cardBackground.opacity(0.9))
+                            )
+                        }
+                    }
+                    .padding(8)
+                }
+                .frame(maxHeight: 180)
+                .padding(10)
+                .background(AppTheme.Colors.cardBackground.opacity(0.6))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(AppTheme.Colors.cardBorder.opacity(0.6), lineWidth: 0.5)
+                )
+            }
+        }
+    }
+}
+
+private func handleDroppedFileProviders(_ providers: [NSItemProvider], onResolvedURL: @escaping (URL) -> Void) -> Bool {
+    var accepted = false
+    for provider in providers where provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+        accepted = true
+        provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+            guard let data = item as? Data,
+                  let url = URL(dataRepresentation: data, relativeTo: nil),
+                  url.pathExtension.lowercased() == "pdf" else {
+                return
+            }
+            DispatchQueue.main.async {
+                onResolvedURL(url)
+            }
+        }
+    }
+    return accepted
+}

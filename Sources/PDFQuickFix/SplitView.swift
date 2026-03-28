@@ -1,16 +1,27 @@
 import SwiftUI
 import AppKit
 
+enum SplitWorkspaceMode: String, CaseIterable, Identifiable {
+    case split = "Split"
+    case merge = "Merge"
+
+    var id: String { rawValue }
+}
+
 struct SplitView: View {
     @Binding var selectedTab: AppMode
-    @StateObject private var controller = SplitController()
+    @StateObject private var splitController = SplitController()
+    @StateObject private var mergeController = MergeController()
+    @State private var workspaceMode: SplitWorkspaceMode = .split
 
     var body: some View {
         VStack(spacing: 0) {
-            // Toolbar handled by UnifiedToolbar in ContentView
-
             VStack(spacing: 16) {
                 header
+                    .frame(maxWidth: 900)
+                    .padding(.horizontal, 24)
+
+                modeSelector
                     .frame(maxWidth: 900)
                     .padding(.horizontal, 24)
 
@@ -27,21 +38,42 @@ struct SplitView: View {
             .background(AppTheme.Colors.background)
         }
         .background(AppTheme.Colors.background.ignoresSafeArea())
+        .onAppear {
+            workspaceMode = .split
+        }
+        .onChange(of: selectedTab) { _ in
+            // Keep local segmented mode within Split workspace only.
+        }
     }
 
     private var header: some View {
         HStack(alignment: .center) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Split PDF")
+                Text(workspaceMode == .split ? "Split PDF" : "Merge PDF")
                     .font(.title3.weight(.semibold))
                     .foregroundColor(AppTheme.Colors.primaryText)
-                Text("Split large PDFs into smaller parts, chapters, or batches.")
+                Text(workspaceMode == .split
+                     ? "Split large PDFs into smaller parts, chapters, or batches."
+                     : "Merge multiple PDFs in a custom order with advanced options.")
                     .font(.subheadline)
                     .foregroundColor(AppTheme.Colors.secondaryText)
             }
             Spacer()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var modeSelector: some View {
+        HStack {
+            Picker("", selection: $workspaceMode) {
+                ForEach(SplitWorkspaceMode.allCases) { mode in
+                    Text(mode.rawValue).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .fixedSize()
+            Spacer()
+        }
     }
 
     private var mainPanel: some View {
@@ -53,62 +85,108 @@ struct SplitView: View {
             )
             .overlay(
                 VStack(alignment: .leading, spacing: 16) {
-                    SplitSourceCard(
-                        sourceURL: controller.sourceURL,
-                        onChooseSource: chooseSource,
-                        onDropURL: { url in controller.setSource(url: url) }
-                    )
-                    .frame(minHeight: 170)
-
-                    SplitModeCard(
-                        mode: $controller.mode,
-                        maxPagesPerFile: $controller.maxPagesPerFile,
-                        numberOfParts: $controller.numberOfParts,
-                        approxSizeMB: $controller.approxSizeMB,
-                        explicitBreaksText: $controller.explicitBreaksText
-                    )
-
-                    SplitDestinationCard(
-                        destinationURL: controller.destinationURL,
-                        applyToAllPDFsInFolder: $controller.applyToAllPDFsInFolder,
-                        onChooseDestination: chooseDestination
-                    )
-
-                    SplitHistoryCard(history: Array(controller.history.suffix(6)))
+                    if workspaceMode == .split {
+                        splitPanel
+                    } else {
+                        mergePanel
+                    }
                 }
                 .padding(16)
             )
     }
 
-    private var footer: some View {
-        footerContent
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .background(
-                RoundedRectangle(cornerRadius: AppTheme.Metrics.cardCornerRadius, style: .continuous)
-                    .fill(AppTheme.Colors.cardBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: AppTheme.Metrics.cardCornerRadius, style: .continuous)
-                            .stroke(AppTheme.Colors.cardBorder, lineWidth: AppTheme.Metrics.cardBorderWidth)
-                    )
+    private var splitPanel: some View {
+        Group {
+            SplitSourceCard(
+                sourceURL: splitController.sourceURL,
+                onChooseSource: chooseSplitSource,
+                onDropURL: { url in splitController.setSource(url: url) }
             )
+            .frame(minHeight: 170)
+
+            SplitModeCard(
+                mode: $splitController.mode,
+                maxPagesPerFile: $splitController.maxPagesPerFile,
+                numberOfParts: $splitController.numberOfParts,
+                approxSizeMB: $splitController.approxSizeMB,
+                explicitBreaksText: $splitController.explicitBreaksText
+            )
+
+            SplitDestinationCard(
+                destinationURL: splitController.destinationURL,
+                applyToAllPDFsInFolder: $splitController.applyToAllPDFsInFolder,
+                onChooseDestination: chooseSplitDestination
+            )
+
+            SplitHistoryCard(history: Array(splitController.history.suffix(6)))
+        }
     }
 
-    private var footerContent: some View {
+    private var mergePanel: some View {
+        Group {
+            MergeSourceListCard(
+                sourceURLs: mergeController.sourceURLs,
+                deduplicateSources: mergeController.deduplicateSources,
+                onChooseSources: mergeController.chooseSources,
+                onDropURL: { url in mergeController.addSourceURLs([url]) },
+                onRemoveOffsets: mergeController.removeSource,
+                onMove: mergeController.moveSource,
+                onClear: mergeController.clearSources
+            )
+
+            MergeOptionsCard(
+                insertBlankPageBetweenDocuments: $mergeController.insertBlankPageBetweenDocuments,
+                skipUnreadableSources: $mergeController.skipUnreadableSources,
+                deduplicateSources: $mergeController.deduplicateSources,
+                outlinePolicy: $mergeController.outlinePolicy,
+                metadataPolicy: $mergeController.metadataPolicy
+            )
+
+            MergeDestinationCard(
+                destinationFolderURL: mergeController.destinationFolderURL,
+                outputFileName: $mergeController.outputFileName,
+                onChooseDestination: mergeController.chooseDestination
+            )
+
+            MergeHistoryCard(history: Array(mergeController.history.suffix(6)))
+        }
+    }
+
+    private var footer: some View {
+        Group {
+            if workspaceMode == .split {
+                splitFooter
+            } else {
+                mergeFooter
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: AppTheme.Metrics.cardCornerRadius, style: .continuous)
+                .fill(AppTheme.Colors.cardBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: AppTheme.Metrics.cardCornerRadius, style: .continuous)
+                        .stroke(AppTheme.Colors.cardBorder, lineWidth: AppTheme.Metrics.cardBorderWidth)
+                )
+        )
+    }
+
+    private var splitFooter: some View {
         VStack(alignment: .leading, spacing: 10) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(controller.status)
+                Text(splitController.status)
                     .font(.footnote)
                     .foregroundColor(AppTheme.Colors.primaryText)
 
-                if let progress = controller.progressText {
+                if let progress = splitController.progressText {
                     Text(progress)
                         .font(.caption)
                         .foregroundColor(AppTheme.Colors.secondaryText)
                 }
 
-                if controller.isWorking {
-                    if let value = controller.progressValue {
+                if splitController.isWorking {
+                    if let value = splitController.progressValue {
                         ProgressView(value: value)
                             .progressViewStyle(.linear)
                             .tint(.accentColor)
@@ -121,9 +199,9 @@ struct SplitView: View {
             }
 
             HStack(spacing: 12) {
-                if !controller.lastOutputFiles.isEmpty {
+                if !splitController.lastOutputFiles.isEmpty {
                     Button {
-                        revealInFinder()
+                        revealSplitOutputInFinder()
                     } label: {
                         Label("Show in Finder", systemImage: "folder")
                     }
@@ -132,8 +210,8 @@ struct SplitView: View {
 
                 Spacer()
 
-                Button(action: controller.split) {
-                    if controller.isWorking {
+                Button(action: splitController.split) {
+                    if splitController.isWorking {
                         HStack(spacing: 8) {
                             ProgressView()
                                 .controlSize(.small)
@@ -145,36 +223,86 @@ struct SplitView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.accentColor)
-                .disabled(!controller.canSplit || controller.isWorking)
+                .disabled(!splitController.canSplit || splitController.isWorking)
             }
         }
         .foregroundColor(AppTheme.Colors.primaryText)
     }
 
-    private func chooseSource() {
+    private var mergeFooter: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(mergeController.status)
+                    .font(.footnote)
+                    .foregroundColor(AppTheme.Colors.primaryText)
+
+                if !mergeController.warnings.isEmpty {
+                    ForEach(Array(mergeController.warnings.enumerated()), id: \.offset) { _, warning in
+                        Text(warning)
+                            .font(.caption)
+                            .foregroundColor(.orange)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                }
+            }
+
+            HStack(spacing: 12) {
+                if mergeController.lastOutputURL != nil {
+                    Button {
+                        mergeController.revealOutputInFinder()
+                    } label: {
+                        Label("Show in Finder", systemImage: "folder")
+                    }
+                    .buttonStyle(.bordered)
+                }
+
+                Spacer()
+
+                Button(action: mergeController.merge) {
+                    if mergeController.isWorking {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Merging…")
+                        }
+                    } else {
+                        Label("Merge", systemImage: "link")
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.accentColor)
+                .disabled(!mergeController.canMerge || mergeController.isWorking)
+            }
+        }
+        .foregroundColor(AppTheme.Colors.primaryText)
+    }
+
+    private func chooseSplitSource() {
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
         panel.allowedContentTypes = [.pdf]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         if panel.runModal() == .OK, let url = panel.url {
-            controller.setSource(url: url)
+            splitController.setSource(url: url)
         }
     }
 
-    private func chooseDestination() {
+    private func chooseSplitDestination() {
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
         panel.prompt = "Choose"
         if panel.runModal() == .OK, let url = panel.url {
-            controller.setDestination(url: url)
+            splitController.setDestination(url: url)
         }
     }
 
-    private func revealInFinder() {
-        guard !controller.lastOutputFiles.isEmpty else { return }
-        NSWorkspace.shared.activateFileViewerSelecting(controller.lastOutputFiles)
+    private func revealSplitOutputInFinder() {
+        guard !splitController.lastOutputFiles.isEmpty else { return }
+        NSWorkspace.shared.activateFileViewerSelecting(splitController.lastOutputFiles)
     }
+
 }

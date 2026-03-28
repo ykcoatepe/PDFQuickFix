@@ -24,13 +24,6 @@ targets:
         CFBundleVersion: "1"
         CFBundleShortVersionString: "1.0.0"
         LSApplicationCategoryType: public.app-category.productivity
-    entitlements:
-      path: Sources/PDFQuickFix/PDFQuickFix.entitlements
-      properties:
-        com.apple.security.app-sandbox: true
-        com.apple.security.files.user-selected.read-write: true
-        com.apple.security.network.client: true
-        com.apple.security.print: true
     dependencies:
       - target: PDFCore
       - target: PDFQuickFixKit

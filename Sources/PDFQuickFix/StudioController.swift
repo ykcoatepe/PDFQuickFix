@@ -190,6 +190,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     func open(url: URL, access: SecurityScopedAccess? = nil) {
         validationRunner.cancelValidation()
         validationRunner.cancelOpen()
+        let effectiveAccess = access ?? SecurityScopedAccess(url: url)
         isDocumentLoading = true
         loadingStatus = "Opening \(url.lastPathComponent)…"
         studioOpenSignpost = PerfLog.begin("StudioOpen")
@@ -229,7 +230,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
                                                   self.loadingStatus = nil
                                                   switch result {
                                                   case .success(let doc):
-                                                      self.finishOpen(document: doc, sourceURL: url, workingURL: finalURL, access: access, isRepaired: repaired)
+                                                      self.finishOpen(document: doc, sourceURL: url, workingURL: finalURL, access: effectiveAccess, isRepaired: repaired)
                                                   case .failure(let error):
                                                       self.handleOpenError(error)
                                                   }
