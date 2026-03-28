@@ -1,14 +1,26 @@
 import Foundation
 
 enum AIReaderCopilotAction: String, Codable, CaseIterable, Identifiable, Hashable {
+    case quickSummary = "quick-summary"
     case documentQuestion = "document-question"
+    case selectionExplanation = "selection-explanation"
+    case currentPageDigest = "current-page-digest"
+    case keySections = "key-sections"
 
     var id: String { rawValue }
 
     var displayName: String {
         switch self {
+        case .quickSummary:
+            return "Quick Summary"
         case .documentQuestion:
             return "Document Question"
+        case .selectionExplanation:
+            return "Selection Explanation"
+        case .currentPageDigest:
+            return "Current Page Digest"
+        case .keySections:
+            return "Key Sections"
         }
     }
 }

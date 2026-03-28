@@ -8,69 +8,161 @@ import PDFKit
 final class DocumentCopilotServiceTests: XCTestCase {
     final class StubGenerator: OllamaTextGenerating {
         var response: String
-        private(set) var lastPrompt: String?
+        private(set) var prompts: [String] = []
 
         init(response: String) {
             self.response = response
         }
 
         func generateText(model: String, prompt: String, format: String?) async throws -> String {
-            lastPrompt = prompt
+            prompts.append(prompt)
             return response
         }
     }
 
-    func testAskUsesMatchingPageForCitationAndRecordsQuestionKind() async throws {
-        let url = try makeTextPDF(pages: [
-            "Overview page with general context.",
-            "Installation steps and prerequisites.",
-            "Rocket propulsion guidance covers thruster calibration and nozzle tuning.",
-            "Appendix with glossary entries."
-        ])
+    func testAskUsesRetainedWindowForBottomOfLongPageMatch() async throws {
+        let pageOne = "Overview page."
+        let pageTwoPrefix = String(repeating: "Top filler without useful matches. ", count: 35)
+        let pageTwoSuffix = "The warranty exception appears near the bottom of this page."
+        let url = try makeTextPDF(pages: [pageOne, pageTwoPrefix + pageTwoSuffix, "Appendix"])
         defer { try? FileManager.default.removeItem(at: url) }
 
         let session = try DocumentTextSession(documentURL: url)
-        let generator = StubGenerator(response: "Page 3 explains thruster calibration.")
-        let store = AIInteractionStore(persistToDisk: false)
-        let service = DocumentCopilotService(interactionStore: store, client: generator)
-
-        let result = try await service.respond(
-            to: .ask(question: "What does the document say about thruster calibration?"),
-            using: session,
-            sourceName: "sample.pdf",
-            modelName: "stub-model"
-        )
-
-        XCTAssertEqual(result.citations.map(\.pageIndex), [2])
-        let entry = try XCTUnwrap(store.entries.first)
-        XCTAssertEqual(entry.kind, .readerCopilot(action: .documentQuestion))
-    }
-
-    func testQuickSummaryKeepsPromptBoundedAndIncludesPageMarkers() async throws {
-        let longPage = String(repeating: "Long summary input with repeated content for bounding. ", count: 120)
-        let url = try makeTextPDF(pages: Array(repeating: longPage, count: 6))
-        defer { try? FileManager.default.removeItem(at: url) }
-
-        let session = try DocumentTextSession(documentURL: url)
-        let generator = StubGenerator(response: "Summary output")
+        let generator = StubGenerator(response: "The warranty exception is described near the bottom of page 2.")
         let store = AIInteractionStore(persistToDisk: false)
         let service = DocumentCopilotService(
             interactionStore: store,
             client: generator,
-            maxPromptCharacters: 1_400
+            maxPromptCharacters: 1_500,
+            maxChunkCharacters: 180
         )
 
-        _ = try await service.respond(
-            to: .quickSummary,
+        let result = try await service.respond(
+            to: .ask(
+                question: "Where is the warranty exception discussed?",
+                scope: .document
+            ),
             using: session,
             sourceName: "sample.pdf",
             modelName: "stub-model"
         )
 
-        let prompt = try XCTUnwrap(generator.lastPrompt)
-        XCTAssertLessThanOrEqual(prompt.count, 1_400)
-        XCTAssertTrue(prompt.contains("--- Page 1 ---"))
-        XCTAssertTrue(prompt.contains("--- Page 2 ---"))
+        XCTAssertEqual(result.grounding, .grounded)
+        XCTAssertEqual(result.citations.map(\.pageIndex), [1])
+        XCTAssertTrue(result.citations[0].snippet.localizedCaseInsensitiveContains("warranty exception"))
+        let prompt = try XCTUnwrap(generator.prompts.last)
+        XCTAssertTrue(prompt.localizedCaseInsensitiveContains("warranty exception"))
+    }
+
+    func testAskWithoutRelevantGroundingReturnsNoCitations() async throws {
+        let url = try makeTextPDF(pages: ["Apples and pears.", "Bananas and grapes."])
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let session = try DocumentTextSession(documentURL: url)
+        let generator = StubGenerator(response: "I could not find that topic in the document.")
+        let service = DocumentCopilotService(interactionStore: AIInteractionStore(persistToDisk: false), client: generator)
+
+        let result = try await service.respond(
+            to: .ask(
+                question: "What does the document say about rocket engines?",
+                scope: .document
+            ),
+            using: session,
+            sourceName: "sample.pdf",
+            modelName: "stub-model"
+        )
+
+        XCTAssertEqual(result.grounding, .ungrounded)
+        XCTAssertTrue(result.citations.isEmpty)
+    }
+
+    func testExplainSelectionWithoutRelevantGroundingReturnsNoCitations() async throws {
+        let url = try makeTextPDF(pages: ["Invoice total is due on receipt.", "Payment terms net 30."])
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let session = try DocumentTextSession(documentURL: url)
+        let generator = StubGenerator(response: "The selected passage is not supported by the available document scope.")
+        let service = DocumentCopilotService(interactionStore: AIInteractionStore(persistToDisk: false), client: generator)
+
+        let result = try await service.respond(
+            to: .explainSelection(
+                selection: "Discuss the rocket engine diagram.",
+                scope: .document
+            ),
+            using: session,
+            sourceName: "sample.pdf",
+            modelName: "stub-model"
+        )
+
+        XCTAssertEqual(result.grounding, .ungrounded)
+        XCTAssertTrue(result.citations.isEmpty)
+    }
+
+    func testDistinctRequestsMapToDistinctReaderCopilotActivityKinds() async throws {
+        let url = try makeTextPDF(pages: ["Page one content.", "Page two content."])
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let session = try DocumentTextSession(documentURL: url)
+        let generator = StubGenerator(response: "ok")
+        let store = AIInteractionStore(persistToDisk: false)
+        let service = DocumentCopilotService(interactionStore: store, client: generator)
+
+        let requests: [DocumentCopilotRequest] = [
+            .quickSummary(scope: .document),
+            .ask(question: "What is on page one?", scope: .document),
+            .explainSelection(selection: "Page one content.", scope: .document),
+            .currentPageDigest(scope: .currentPage(index: 1)),
+            .keySections(scope: .pageRange("1-2"))
+        ]
+
+        for request in requests {
+            _ = try await service.respond(
+                to: request,
+                using: session,
+                sourceName: "sample.pdf",
+                modelName: "stub-model"
+            )
+        }
+
+        let kinds = store.entries.map(\.kind)
+        XCTAssertEqual(
+            kinds,
+            [
+                .readerCopilot(action: .keySections),
+                .readerCopilot(action: .currentPageDigest),
+                .readerCopilot(action: .selectionExplanation),
+                .readerCopilot(action: .documentQuestion),
+                .readerCopilot(action: .quickSummary)
+            ]
+        )
+    }
+
+    func testPromptTrimmingMetadataSeparatesRequestAndContextTruncation() async throws {
+        let longPage = String(repeating: "Context filler without the exact answer. ", count: 120)
+        let url = try makeTextPDF(pages: Array(repeating: longPage, count: 6))
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let longQuestion = String(repeating: "Explain every nuance of this content in detail. ", count: 50)
+        let session = try DocumentTextSession(documentURL: url)
+        let generator = StubGenerator(response: "summary")
+        let service = DocumentCopilotService(
+            interactionStore: AIInteractionStore(persistToDisk: false),
+            client: generator,
+            maxPromptCharacters: 1_100,
+            maxChunkCharacters: 150
+        )
+
+        let result = try await service.respond(
+            to: .ask(question: longQuestion, scope: .document),
+            using: session,
+            sourceName: "sample.pdf",
+            modelName: "stub-model"
+        )
+
+        XCTAssertTrue(result.requestWasTrimmed)
+        XCTAssertTrue(result.contextWasTrimmed)
+        XCTAssertTrue(result.inputWasTrimmed)
+        XCTAssertLessThanOrEqual(result.promptCharacterCount, 1_100)
     }
 
     private func makeTextPDF(pages: [String]) throws -> URL {
