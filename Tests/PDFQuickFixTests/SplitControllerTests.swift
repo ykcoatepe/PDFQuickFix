@@ -60,6 +60,41 @@ final class SplitControllerTests: XCTestCase {
     }
 
     @MainActor
+    func testFolderSplitSkipsUnreadablePDFAndRecordsWarning() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let outputDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: folder)
+            try? FileManager.default.removeItem(at: outputDir)
+        }
+
+        let validSource = try TestPDFBuilder.makeMultipagePDF(pageCount: 2, textPrefix: "Batch")
+        let copiedValidSource = folder.appendingPathComponent("valid.pdf")
+        try FileManager.default.copyItem(at: validSource, to: copiedValidSource)
+        let invalidSource = folder.appendingPathComponent("broken.pdf")
+        try Data("not a pdf".utf8).write(to: invalidSource)
+
+        let controller = SplitController(defaults: defaults)
+        controller.setSource(url: copiedValidSource)
+        controller.setDestination(url: outputDir)
+        controller.mode = .maxPagesPerFile
+        controller.maxPagesPerFile = 1
+        controller.applyToAllPDFsInFolder = true
+
+        controller.split()
+        waitForSplit(controller)
+
+        XCTAssertEqual(controller.lastOutputFiles.count, 2)
+        XCTAssertEqual(controller.history.count, 1)
+        XCTAssertEqual(controller.history.first?.fileCount, 2)
+        XCTAssertEqual(controller.history.first?.outputCount, 2)
+        XCTAssertEqual(controller.status, "Done. 2 file(s) written to \(outputDir.lastPathComponent).")
+        XCTAssertEqual(controller.history.first?.errorSummary, "Skipped broken.pdf: unreadable or invalid PDF.")
+    }
+
+    @MainActor
     private func waitForSplit(_ controller: SplitController, timeout: TimeInterval = 5) {
         let deadline = Date().addingTimeInterval(timeout)
         while controller.isWorking && Date() < deadline {

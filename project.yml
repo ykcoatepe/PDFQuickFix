@@ -15,6 +15,13 @@ targets:
     deploymentTarget: "13.0"
     sources:
       - path: Sources/PDFQuickFix
+    entitlements:
+      path: Sources/PDFQuickFix/PDFQuickFix.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.files.user-selected.read-write: true
+        com.apple.security.network.client: true
+        com.apple.security.print: true
     info:
       path: Sources/PDFQuickFix/Info.plist
       properties:

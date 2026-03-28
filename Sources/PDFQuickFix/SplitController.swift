@@ -243,22 +243,38 @@ final class SplitController: ObservableObject {
             guard !urls.isEmpty else { throw SplitControllerError.noPDFsInFolder(folder) }
 
             var outputs: [URL] = []
-            let warnings: [String] = []
+            var warnings: [String] = []
 
             for fileURL in urls {
                 if shouldCancel() { throw SplitControllerError.cancelled }
-                let repairedURL = try repairInputIfNeeded(fileURL)
-                let mode = try makeMode(from: settings)
-                let splitResult = try splitter.split(
-                    options: PDFSplitOptions(sourceURL: repairedURL,
-                                             destinationDirectory: destination,
-                                             mode: mode),
-                    progress: { processed, total in
-                        progress?(processed, total)
-                    },
-                    shouldCancel: shouldCancel
-                )
-                outputs.append(contentsOf: splitResult.outputFiles)
+                do {
+                    let repairedURL = try repairInputIfNeeded(fileURL)
+                    let mode = try makeMode(from: settings)
+                    let splitResult = try splitter.split(
+                        options: PDFSplitOptions(sourceURL: repairedURL,
+                                                 destinationDirectory: destination,
+                                                 mode: mode),
+                        progress: { processed, total in
+                            progress?(processed, total)
+                        },
+                        shouldCancel: shouldCancel
+                    )
+                    outputs.append(contentsOf: splitResult.outputFiles)
+                } catch is CancellationError {
+                    throw SplitControllerError.cancelled
+                } catch let splitError as SplitControllerError {
+                    if case .cancelled = splitError {
+                        throw splitError
+                    }
+                    warnings.append(batchWarning(for: fileURL, error: splitError))
+                } catch let splitError as PDFSplitError {
+                    if case .cancelled = splitError {
+                        throw SplitControllerError.cancelled
+                    }
+                    warnings.append(batchWarning(for: fileURL, error: splitError))
+                } catch {
+                    warnings.append(batchWarning(for: fileURL, error: error))
+                }
             }
 
             return SplitExecutionResult(
@@ -409,6 +425,37 @@ final class SplitController: ObservableObject {
         } catch {
             return url
         }
+    }
+
+    private nonisolated func batchWarning(for fileURL: URL, error: Error) -> String {
+        let detail: String
+        switch error {
+        case let splitError as PDFSplitError:
+            switch splitError {
+            case .cannotOpenSource:
+                detail = "unreadable or invalid PDF"
+            case .noPages:
+                detail = "PDF has no pages"
+            case .invalidMode(let message):
+                detail = message
+            case .writeFailed(let outputURL):
+                detail = "failed to write \(outputURL.lastPathComponent)"
+            case .cancelled:
+                detail = "operation cancelled"
+            }
+        case let controllerError as SplitControllerError:
+            switch controllerError {
+            case .cancelled:
+                detail = "operation cancelled"
+            case .noPDFsInFolder:
+                detail = "no PDFs found in folder"
+            case .invalidSettings(let message):
+                detail = message
+            }
+        default:
+            detail = error.localizedDescription
+        }
+        return "Skipped \(fileURL.lastPathComponent): \(detail)."
     }
 
     private nonisolated func resolvedURL(from path: String?) -> URL? {
