@@ -11,9 +11,9 @@ struct RedactionPattern: Identifiable, Hashable {
     var name: String
     var regex: NSRegularExpression
     
-    init(name: String, pattern: String, options: NSRegularExpression.Options = [.caseInsensitive]) {
+    init(name: String, pattern: String, options: NSRegularExpression.Options = [.caseInsensitive]) throws {
         self.name = name
-        self.regex = try! NSRegularExpression(pattern: pattern, options: options)
+        self.regex = try NSRegularExpression(pattern: pattern, options: options)
     }
 }
 

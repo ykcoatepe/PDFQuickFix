@@ -1,4 +1,5 @@
 import Foundation
+import UniformTypeIdentifiers
 
 struct AIInteractionEntry: Identifiable, Codable, Hashable {
     let id: UUID
@@ -10,6 +11,44 @@ struct AIInteractionEntry: Identifiable, Codable, Hashable {
     let sourceName: String?
     let inputCharacterCount: Int
     let inputWasTrimmed: Bool
+}
+
+enum AIActivityExportFormat: String, CaseIterable, Codable, Hashable {
+    case json
+    case markdown
+
+    var fileExtension: String {
+        switch self {
+        case .json:
+            return "json"
+        case .markdown:
+            return "md"
+        }
+    }
+
+    var displayName: String {
+        switch self {
+        case .json:
+            return "JSON"
+        case .markdown:
+            return "Markdown"
+        }
+    }
+
+    var contentType: UTType {
+        switch self {
+        case .json:
+            return .json
+        case .markdown:
+            return UTType(filenameExtension: "md") ?? .plainText
+        }
+    }
+}
+
+struct AIActivityExportDocument {
+    let fileName: String
+    let data: Data
+    let contentType: UTType
 }
 
 @MainActor
@@ -105,6 +144,80 @@ final class AIInteractionStore: ObservableObject {
 
     private func deletePersisted() {
         try? FileManager.default.removeItem(at: fileURL)
+    }
+
+    func exportDocument(for entries: [AIInteractionEntry],
+                        format: AIActivityExportFormat) throws -> AIActivityExportDocument {
+        guard !entries.isEmpty else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        let fileName = Self.makeExportFileName(entries: entries, format: format)
+        switch format {
+        case .json:
+            let data = try Self.makeJSONExportData(entries: entries)
+            return AIActivityExportDocument(fileName: fileName, data: data, contentType: format.contentType)
+        case .markdown:
+            let text = Self.makeMarkdownExport(entries: entries)
+            guard let data = text.data(using: .utf8) else {
+                throw CocoaError(.fileWriteUnknown)
+            }
+            return AIActivityExportDocument(fileName: fileName, data: data, contentType: format.contentType)
+        }
+    }
+
+    static func makeExportFileName(entries: [AIInteractionEntry],
+                                   format: AIActivityExportFormat) -> String {
+        let base = entries.count == 1 ? "ai-activity-\(entries[0].task.rawValue)" : "ai-activity-session"
+        return "\(base).\(format.fileExtension)"
+    }
+
+    static func makeJSONExportData(entries: [AIInteractionEntry]) throws -> Data {
+        struct Payload: Codable {
+            let exportedAt: Date
+            let formatVersion: Int
+            let entries: [AIInteractionEntry]
+        }
+
+        let payload = Payload(exportedAt: Date(), formatVersion: 1, entries: entries)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        return try encoder.encode(payload)
+    }
+
+    static func makeMarkdownExport(entries: [AIInteractionEntry]) -> String {
+        var output: [String] = []
+        output.append("# AI Activity Export")
+        output.append("")
+        output.append("Entries: \(entries.count)")
+        output.append("")
+        for (index, entry) in entries.enumerated() {
+            output.append("## Entry \(index + 1)")
+            output.append("")
+            output.append("- Task: \(entry.task.displayName)")
+            output.append("- Model: \(entry.model)")
+            output.append("- Timestamp: \(entry.timestamp.formatted(date: .abbreviated, time: .standard))")
+            if let sourceName = entry.sourceName {
+                output.append("- Source: \(sourceName)")
+            }
+            if entry.inputWasTrimmed {
+                output.append("- Input trimmed: \(entry.inputCharacterCount) characters")
+            }
+            output.append("")
+            output.append("### Prompt")
+            output.append("")
+            output.append("```text")
+            output.append(entry.prompt)
+            output.append("```")
+            output.append("")
+            output.append("### Response")
+            output.append("")
+            output.append("```text")
+            output.append(entry.response)
+            output.append("```")
+            output.append("")
+        }
+        return output.joined(separator: "\n")
     }
 
     private func sanitize(_ entry: AIInteractionEntry) -> AIInteractionEntry {

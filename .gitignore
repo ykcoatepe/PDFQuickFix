@@ -5,6 +5,8 @@
 
 # Xcode
 build/
+build_nobase/
+build_noent/
 DerivedData/
 *.xcworkspace
 xcuserdata/
@@ -36,3 +38,4 @@ dist/
 
 # Temporary
 .tmp/
+*.profraw

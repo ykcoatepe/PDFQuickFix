@@ -14,6 +14,7 @@ extension PDFSplitter {
     /// Runs splitting on a background queue and calls back on the main queue.
     func splitAsync(options: PDFSplitOptions,
                     progress: ((Int, Int) -> Void)? = nil,
+                    shouldCancel: (() -> Bool)? = nil,
                     completion: @escaping (Result<PDFSplitResult, Error>) -> Void) {
 
         // Ensure UI-bound progress callbacks execute on the main queue.
@@ -27,7 +28,7 @@ extension PDFSplitter {
 
         DispatchQueue.global(qos: .userInitiated).async {
             do {
-                let result = try self.split(options: options, progress: progressOnMain)
+                let result = try self.split(options: options, progress: progressOnMain, shouldCancel: shouldCancel)
                 DispatchQueue.main.async {
                     completion(.success(result))
                 }
@@ -55,18 +56,24 @@ enum PDFSplitError: Error {
     case noPages
     case invalidMode(String)
     case writeFailed(URL)
+    case cancelled
 }
 
 final class PDFSplitter {
 
     /// Synchronous API; call from a background queue for large documents.
-    func split(options: PDFSplitOptions, progress: ((Int, Int) -> Void)? = nil) throws -> PDFSplitResult {
+    func split(options: PDFSplitOptions,
+               progress: ((Int, Int) -> Void)? = nil,
+               shouldCancel: (() -> Bool)? = nil) throws -> PDFSplitResult {
         guard let sourceDoc = PDFDocument(url: options.sourceURL) else {
             throw PDFSplitError.cannotOpenSource
         }
         let pageCount = sourceDoc.pageCount
         guard pageCount > 0 else {
             throw PDFSplitError.noPages
+        }
+        if shouldCancel?() == true {
+            throw PDFSplitError.cancelled
         }
 
         let effectiveMode: PDFSplitMode
@@ -84,7 +91,8 @@ final class PDFSplitter {
                                         ranges: ranges,
                                         sourceURL: options.sourceURL,
                                         destinationDirectory: options.destinationDirectory,
-                                        progress: progress)
+                                        progress: progress,
+                                        shouldCancel: shouldCancel)
         return PDFSplitResult(outputFiles: outputURLs)
     }
 
@@ -176,7 +184,8 @@ final class PDFSplitter {
                             ranges: [Range<Int>],
                             sourceURL: URL,
                             destinationDirectory: URL,
-                            progress: ((Int, Int) -> Void)? = nil) throws -> [URL] {
+                            progress: ((Int, Int) -> Void)? = nil,
+                            shouldCancel: (() -> Bool)? = nil) throws -> [URL] {
         let baseName = sourceURL.deletingPathExtension().lastPathComponent
         let totalParts = ranges.count
         var outputURLs: [URL] = []
@@ -186,6 +195,9 @@ final class PDFSplitter {
         var processedPages = 0
 
         for (index, range) in ranges.enumerated() {
+            if shouldCancel?() == true {
+                throw PDFSplitError.cancelled
+            }
             let partIndex = index + 1
             let startPageNumber = range.lowerBound + 1 // 1-based
             let endPageNumber = range.upperBound       // 1-based
@@ -201,6 +213,9 @@ final class PDFSplitter {
             let partDoc = PDFDocument()
             var targetIndex = 0
             for pageIndex in range {
+                if shouldCancel?() == true {
+                    throw PDFSplitError.cancelled
+                }
                 // Copy pages so the source document remains intact; PDFPage can belong to only one PDFDocument.
                 guard let pageCopy = source.page(at: pageIndex)?.copy() as? PDFPage else { continue }
                 partDoc.insert(pageCopy, at: targetIndex)

@@ -1,8 +1,10 @@
 import SwiftUI
+import AppKit
 
 struct AIActivityView: View {
     @EnvironmentObject private var aiInteractions: AIInteractionStore
     @State private var selection: AIInteractionEntry.ID?
+    @State private var exportFormat: AIActivityExportFormat = .json
 
     var body: some View {
         VStack(spacing: 0) {
@@ -22,6 +24,24 @@ struct AIActivityView: View {
                 .font(.title2)
                 .bold()
             Spacer()
+            Picker("Format", selection: $exportFormat) {
+                ForEach(AIActivityExportFormat.allCases, id: \.self) { format in
+                    Text(format.displayName).tag(format)
+                }
+            }
+            .pickerStyle(.menu)
+            .frame(width: 120)
+
+            Button("Export Selected…") {
+                export(entries: selectedEntries)
+            }
+            .disabled(selectedEntries.isEmpty)
+
+            Button("Export Session…") {
+                export(entries: aiInteractions.entries)
+            }
+            .disabled(aiInteractions.entries.isEmpty)
+
             Button("Clear") {
                 aiInteractions.clear()
             }
@@ -29,6 +49,14 @@ struct AIActivityView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
+    }
+
+    private var selectedEntries: [AIInteractionEntry] {
+        guard let selection,
+              let entry = aiInteractions.entries.first(where: { $0.id == selection }) else {
+            return []
+        }
+        return [entry]
     }
 
     private var listView: some View {
@@ -111,5 +139,24 @@ struct AIActivityView: View {
             }
         }
         .padding(16)
+    }
+
+    private func export(entries: [AIInteractionEntry]) {
+        guard !entries.isEmpty else { return }
+        do {
+            let document = try aiInteractions.exportDocument(for: entries, format: exportFormat)
+            let panel = NSSavePanel()
+            panel.allowedContentTypes = [document.contentType]
+            panel.canCreateDirectories = true
+            panel.nameFieldStringValue = document.fileName
+            panel.directoryURL = FileManager.default.temporaryDirectory
+            panel.message = entries.count == 1 ? "Export selected AI interaction" : "Export AI activity session"
+
+            if panel.runModal() == .OK, let url = panel.url {
+                try document.data.write(to: url, options: [.atomic])
+            }
+        } catch {
+            // Best-effort export; keep the workflow lightweight.
+        }
     }
 }

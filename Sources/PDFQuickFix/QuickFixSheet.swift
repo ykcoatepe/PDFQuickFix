@@ -110,7 +110,7 @@ struct QuickFixSheet: View {
                 }
                 await MainActor.run {
                     self.quickFixResult = result
-                    QuickFixResultStore.shared.set(result)
+                    QuickFixResultStore.shared.set(result, sourceURL: inputURL)
                     self.log += "✅ Done → \(result.outputURL.path)\n"
                     self.isProcessing = false
                     self.onDone(result.outputURL)
