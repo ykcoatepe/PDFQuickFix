@@ -58,8 +58,15 @@ enum AIInteractionKind: Codable, Hashable {
         case .readerCopilot(let action):
             return action.rawValue
         case .unknown(let family, let value):
-            return "\(family)-\(value)"
+            return Self.makeFilenameSafeSlug("\(family)-\(value)")
         }
+    }
+
+    private static func makeFilenameSafeSlug(_ rawValue: String) -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-"))
+        let pieces = rawValue.unicodeScalars.map { allowed.contains($0) ? String($0) : "-" }
+        let collapsed = pieces.joined().replacingOccurrences(of: "-+", with: "-", options: .regularExpression)
+        return collapsed.trimmingCharacters(in: CharacterSet(charactersIn: "-")).lowercased()
     }
 
     init(from decoder: Decoder) throws {

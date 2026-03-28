@@ -179,6 +179,28 @@ final class AIInteractionStoreTests: XCTestCase {
         XCTAssertEqual(document.fileName, "ai-activity-document-question.json")
     }
 
+    func testExportDocumentSanitizesUnknownKindSlugForFilenameSafety() throws {
+        let store = AIInteractionStore(persistToDisk: false)
+        let entry = AIInteractionEntry(
+            id: UUID(),
+            timestamp: Date(timeIntervalSince1970: 1_700_000_000),
+            kind: .unknown(family: "future/copilot", value: "document:insight?"),
+            model: "stub-model",
+            prompt: "prompt",
+            response: "response",
+            sourceName: nil,
+            inputCharacterCount: 7,
+            inputWasTrimmed: false
+        )
+
+        let document = try store.exportDocument(for: [entry], format: .json)
+        XCTAssertTrue(document.fileName.hasPrefix("ai-activity-"))
+        XCTAssertTrue(document.fileName.hasSuffix(".json"))
+        XCTAssertFalse(document.fileName.contains("/"))
+        XCTAssertFalse(document.fileName.contains(":"))
+        XCTAssertFalse(document.fileName.contains("?"))
+    }
+
     func testDecodesLegacyTaskOnlyEntry() throws {
         let json = """
         [
