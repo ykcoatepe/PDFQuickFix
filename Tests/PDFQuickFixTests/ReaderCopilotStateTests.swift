@@ -137,6 +137,31 @@ final class ReaderCopilotStateTests: XCTestCase {
         XCTAssertNil(controller.copilotError)
         XCTAssertFalse(controller.isCopilotRunning)
     }
+
+    func testCloseDocumentIgnoresInFlightCopilotResponse() async throws {
+        let service = BlockingCopilotService(response: .makeStub(answer: "Late response"))
+        let controller = ReaderControllerPro(copilotService: service)
+
+        let pdfURL = try TestPDFBuilder.makeSimplePDF(text: "Close document test")
+        defer { try? FileManager.default.removeItem(at: pdfURL) }
+
+        let data = try Data(contentsOf: pdfURL)
+        controller.document = PDFDocument(data: data)
+
+        let task = Task {
+            await controller.runCopilotRequest(.quickSummary(scope: .document))
+        }
+
+        await service.waitUntilStarted()
+        controller.closeDocument()
+        await service.resume()
+        await task.value
+
+        XCTAssertNil(controller.copilotResponse)
+        XCTAssertNil(controller.copilotError)
+        XCTAssertFalse(controller.isCopilotRunning)
+        XCTAssertNil(controller.document)
+    }
 }
 
 private final class StubCopilotService: DocumentCopilotServicing {
@@ -179,6 +204,42 @@ private final class DelayedCopilotService: DocumentCopilotServicing {
             try? await Task.sleep(nanoseconds: delay)
         }
         return response
+    }
+}
+
+private actor BlockingCopilotService: DocumentCopilotServicing {
+    let response: DocumentCopilotResponse
+    private var hasStarted = false
+    private var startContinuation: CheckedContinuation<Void, Never>?
+    private var responseContinuation: CheckedContinuation<DocumentCopilotResponse, Never>?
+
+    init(response: DocumentCopilotResponse) {
+        self.response = response
+    }
+
+    func respond(to request: DocumentCopilotRequest,
+                 using session: DocumentTextSession,
+                 sourceName: String?,
+                 modelName: String?) async throws -> DocumentCopilotResponse {
+        hasStarted = true
+        startContinuation?.resume()
+        startContinuation = nil
+
+        return await withCheckedContinuation { continuation in
+            responseContinuation = continuation
+        }
+    }
+
+    func waitUntilStarted() async {
+        guard !hasStarted else { return }
+        await withCheckedContinuation { continuation in
+            startContinuation = continuation
+        }
+    }
+
+    func resume() {
+        responseContinuation?.resume(returning: response)
+        responseContinuation = nil
     }
 }
 

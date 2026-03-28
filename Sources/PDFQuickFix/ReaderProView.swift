@@ -44,7 +44,8 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
 
     private var findObserver: NSObjectProtocol?
     private let validationRunner = DocumentValidationRunner()
-    private let copilotService: any DocumentCopilotServicing
+    private var copilotService: any DocumentCopilotServicing
+    private let usesCustomCopilotService: Bool
     private var searchDebounceWorkItem: DispatchWorkItem?
     private var activeCopilotRequestID: UInt64 = 0
     private enum ValidationMode { case idle, quick, full }
@@ -53,6 +54,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
 
     init(copilotService: (any DocumentCopilotServicing)? = nil) {
         self.copilotService = copilotService ?? DocumentCopilotService(interactionStore: AIInteractionStore())
+        self.usesCustomCopilotService = copilotService != nil
         super.init()
     }
 
@@ -688,6 +690,11 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         pdfView?.go(to: page)
         currentPageIndex = citation.pageIndex
     }
+
+    func configureCopilotInteractionStore(_ interactionStore: AIInteractionStore) {
+        guard !usesCustomCopilotService else { return }
+        copilotService = DocumentCopilotService(interactionStore: interactionStore)
+    }
     
     // MARK: - Helpers
     
@@ -714,6 +721,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
     }
 
     private func clearCopilotOutput() {
+        activeCopilotRequestID &+= 1
         copilotResponse = nil
         copilotError = nil
         isCopilotRunning = false
