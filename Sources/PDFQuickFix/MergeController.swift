@@ -214,8 +214,10 @@ final class MergeController: ObservableObject {
         let inputURLs = sourceURLs
         let destinationFolder = outputSelection.url.deletingLastPathComponent()
         let settings = currentSettings(with: outputSelection.url)
-        currentTask = Task.detached(priority: .userInitiated) { [weak self] in
+        let outputAccess = outputSelection.access
+        currentTask = Task.detached(priority: .userInitiated) { [weak self, outputAccess] in
             guard let self else { return }
+            _ = outputAccess
             do {
                 let result = try self.mergeEngine.merge(
                     urls: inputURLs,

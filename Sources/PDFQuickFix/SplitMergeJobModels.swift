@@ -3,7 +3,9 @@ import Foundation
 
 struct SplitJobSettings: Codable, Hashable {
     var sourceURLString: String?
+    var sourceBookmarkData: Data? = nil
     var destinationURLString: String?
+    var destinationBookmarkData: Data? = nil
     var applyToAllPDFsInFolder: Bool
     var mode: SplitUIMode
     var maxPagesPerFile: Int

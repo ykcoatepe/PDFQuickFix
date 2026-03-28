@@ -60,13 +60,17 @@ final class SplitController: ObservableObject {
     @Published var lastOutputFiles: [URL] = []
 
     private let defaults: UserDefaults
+    private let bookmarking: Bookmarking
     private var currentTask: Task<Void, Never>?
+    private var sourceAccess: SecurityScopedAccess?
+    private var destinationAccess: SecurityScopedAccess?
 
     private let presetsKey = "SplitController.presets"
     private let historyKey = "SplitController.history"
 
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = .standard, bookmarking: Bookmarking = SystemBookmarking()) {
         self.defaults = defaults
+        self.bookmarking = bookmarking
         presets = CodableUserDefaultsStore.loadArray([SplitJobPreset].self, key: presetsKey, defaults: defaults)
         history = CodableUserDefaultsStore.loadArray([SplitJobRecord].self, key: historyKey, defaults: defaults)
     }
@@ -110,12 +114,16 @@ final class SplitController: ObservableObject {
     func clearSources() {
         sourceURL = nil
         destinationURL = nil
+        sourceAccess = nil
+        destinationAccess = nil
         lastOutputFiles = []
     }
 
     func setSource(url: URL) {
         sourceURL = url
         destinationURL = url.deletingLastPathComponent()
+        sourceAccess = SecurityScopedAccess(url: url)
+        destinationAccess = destinationURL.map(SecurityScopedAccess.init(url:))
         status = "Ready"
         progressText = nil
         progressValue = nil
@@ -124,6 +132,7 @@ final class SplitController: ObservableObject {
 
     func setDestination(url: URL) {
         destinationURL = url
+        destinationAccess = SecurityScopedAccess(url: url)
     }
 
     func cancel() {
@@ -184,6 +193,8 @@ final class SplitController: ObservableObject {
 
         let destination = destinationURL ?? source.deletingLastPathComponent()
         let settings = currentSettings()
+        let sourceAccess = self.sourceAccess
+        let destinationAccess = self.destinationAccess
 
         isWorking = true
         status = "Splitting…"
@@ -191,8 +202,10 @@ final class SplitController: ObservableObject {
         progressValue = nil
         lastOutputFiles = []
 
-        currentTask = Task.detached(priority: .userInitiated) { [weak self] in
+        currentTask = Task.detached(priority: .userInitiated) { [weak self, sourceAccess, destinationAccess] in
             guard let self else { return }
+            _ = sourceAccess
+            _ = destinationAccess
             do {
                 let result = try self.executeSplit(
                     settings: settings,
@@ -345,9 +358,13 @@ final class SplitController: ObservableObject {
     }
 
     private func currentSettings() -> SplitJobSettings {
-        SplitJobSettings(
-            sourceURLString: sourceURL?.standardizedFileURL.path,
-            destinationURLString: destinationURL?.standardizedFileURL.path,
+        let normalizedSourceURL = sourceURL?.standardizedFileURL
+        let normalizedDestinationURL = destinationURL?.standardizedFileURL
+        return SplitJobSettings(
+            sourceURLString: normalizedSourceURL?.path,
+            sourceBookmarkData: bookmarkData(for: sourceBookmarkURL(sourceURL: normalizedSourceURL)),
+            destinationURLString: normalizedDestinationURL?.path,
+            destinationBookmarkData: bookmarkData(for: normalizedDestinationURL),
             applyToAllPDFsInFolder: applyToAllPDFsInFolder,
             mode: mode,
             maxPagesPerFile: maxPagesPerFile,
@@ -364,8 +381,10 @@ final class SplitController: ObservableObject {
         approxSizeMB = settings.approxSizeMB
         explicitBreaksText = settings.explicitBreaksText
         applyToAllPDFsInFolder = settings.applyToAllPDFsInFolder
-        sourceURL = resolvedURL(from: settings.sourceURLString)
-        destinationURL = resolvedURL(from: settings.destinationURLString)
+        sourceAccess = access(from: settings.sourceBookmarkData)
+        destinationAccess = access(from: settings.destinationBookmarkData)
+        sourceURL = resolvedURL(from: settings.sourceURLString) ?? sourceAccess?.url
+        destinationURL = destinationAccess?.url ?? resolvedURL(from: settings.destinationURLString)
         progressText = nil
         progressValue = nil
         lastOutputFiles = []
@@ -456,6 +475,26 @@ final class SplitController: ObservableObject {
             detail = error.localizedDescription
         }
         return "Skipped \(fileURL.lastPathComponent): \(detail)."
+    }
+
+    private func sourceBookmarkURL(sourceURL: URL?) -> URL? {
+        guard let sourceURL else { return nil }
+        return applyToAllPDFsInFolder ? sourceURL.deletingLastPathComponent() : sourceURL
+    }
+
+    private func bookmarkData(for url: URL?) -> Data? {
+        guard let url else { return nil }
+        return try? bookmarking.bookmarkData(for: url, includingResourceValuesForKeys: nil, relativeTo: nil)
+    }
+
+    private func access(from bookmarkData: Data?) -> SecurityScopedAccess? {
+        guard let bookmarkData,
+              let result = try? bookmarking.resolveBookmarkData(bookmarkData,
+                                                               options: .withSecurityScope,
+                                                               relativeTo: nil) else {
+            return nil
+        }
+        return SecurityScopedAccess(url: result.url)
     }
 
     private nonisolated func resolvedURL(from path: String?) -> URL? {
