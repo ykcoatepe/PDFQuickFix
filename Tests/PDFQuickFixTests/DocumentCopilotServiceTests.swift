@@ -101,6 +101,37 @@ final class DocumentCopilotServiceTests: XCTestCase {
         XCTAssertTrue(result.citations.isEmpty)
     }
 
+    func testAskWithStopwordHeavyPromptFallsBackToGroundedContext() async throws {
+        let url = try makeTextPDF(pages: [
+            "Quarterly revenue increased because enterprise renewals expanded in EMEA.",
+            "Appendix"
+        ])
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let session = try DocumentTextSession(documentURL: url)
+        let generator = StubGenerator(response: "It is about quarterly revenue growth driven by enterprise renewals.")
+        let service = DocumentCopilotService(
+            interactionStore: AIInteractionStore(persistToDisk: false),
+            client: generator
+        )
+
+        let result = try await service.respond(
+            to: .ask(
+                question: "What is it about?",
+                scope: .document
+            ),
+            using: session,
+            sourceName: "sample.pdf",
+            modelName: "stub-model"
+        )
+
+        XCTAssertEqual(result.grounding, .grounded)
+        XCTAssertFalse(result.citations.isEmpty)
+        XCTAssertEqual(result.citations.first?.pageIndex, 0)
+        let prompt = try XCTUnwrap(generator.prompts.last)
+        XCTAssertTrue(prompt.localizedCaseInsensitiveContains("Quarterly revenue increased"))
+    }
+
     func testDistinctRequestsMapToDistinctReaderCopilotActivityKinds() async throws {
         let url = try makeTextPDF(pages: ["Page one content.", "Page two content."])
         defer { try? FileManager.default.removeItem(at: url) }

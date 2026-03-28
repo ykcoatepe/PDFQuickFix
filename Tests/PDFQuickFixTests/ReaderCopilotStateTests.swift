@@ -145,6 +145,31 @@ final class ReaderCopilotStateTests: XCTestCase {
         XCTAssertNil(controller.copilotError)
     }
 
+    func testCurrentPageDigestUsesLiveDisplayedPage() async throws {
+        let expectedResponse = DocumentCopilotResponse.makeStub(answer: "Digest")
+        let service = StubCopilotService(response: expectedResponse)
+        let controller = ReaderControllerPro(copilotService: service)
+        let pdfView = PDFView()
+        controller.pdfView = pdfView
+
+        let pdfURL = try TestPDFBuilder.makeMultipagePDF(pageCount: 3, textPrefix: "Page")
+        defer { try? FileManager.default.removeItem(at: pdfURL) }
+
+        let data = try Data(contentsOf: pdfURL)
+        let document = try XCTUnwrap(PDFDocument(data: data))
+        controller.document = document
+        pdfView.document = document
+
+        controller.currentPageIndex = 0
+        let livePage = try XCTUnwrap(document.page(at: 2))
+        pdfView.go(to: livePage)
+
+        await controller.runCurrentPageDigest()
+
+        XCTAssertEqual(service.requests, [.currentPageDigest(scope: .currentPage(index: 2))])
+        XCTAssertEqual(controller.copilotResponse, expectedResponse)
+    }
+
     func testLatestCopilotRequestWinsRace() async throws {
         let firstResponse = DocumentCopilotResponse.makeStub(answer: "Older response")
         let secondResponse = DocumentCopilotResponse.makeStub(answer: "Latest response")

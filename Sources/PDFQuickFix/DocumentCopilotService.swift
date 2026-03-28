@@ -177,6 +177,17 @@ final class DocumentCopilotService {
         }
 
         if preparedRequest.requiresGroundingSearch {
+            if preparedRequest.queryTerms.isEmpty {
+                let selection = fitChunks(interleavedChunks(scopeContent.chunks), budget: baseBudget)
+                return RetrievalResult(
+                    grounding: selection.chunks.isEmpty ? .ungrounded : .grounded,
+                    selectedChunks: selection.chunks,
+                    citations: makeCitations(from: selection.chunks, allowCitations: scopeContent.citationsAllowed),
+                    contextText: selection.chunks.isEmpty ? groundedMissingMessage : selection.contextText,
+                    contextWasTrimmed: selection.wasTrimmed
+                )
+            }
+
             let scoredChunks = scopeContent.chunks
                 .map { chunk in (chunk: chunk, score: score(chunk: chunk, queryTerms: preparedRequest.queryTerms)) }
                 .filter { $0.score > 0 }

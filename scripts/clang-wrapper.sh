@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REAL_CLANG="/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang"
+if ! REAL_CLANG="$(/usr/bin/xcrun --find clang 2>/dev/null)"; then
+    REAL_CLANG="/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang"
+fi
 
 has_verbose=0
 has_preprocess=0

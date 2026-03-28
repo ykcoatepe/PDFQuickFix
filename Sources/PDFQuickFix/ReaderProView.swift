@@ -692,6 +692,11 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         await runCopilotRequest(.explainSelection(selection: selectionText, scope: .selection(selectionText)))
     }
 
+    func runCurrentPageDigest() async {
+        let pageIndex = currentDisplayedPageIndex() ?? currentPageIndex
+        await runCopilotRequest(.currentPageDigest(scope: .currentPage(index: pageIndex)))
+    }
+
     func jumpToCitationPage(_ citation: DocumentCopilotCitation) {
         guard let document, citation.pageIndex >= 0, let page = document.page(at: citation.pageIndex) else { return }
         pdfView?.go(to: page)

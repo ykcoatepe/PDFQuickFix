@@ -19,7 +19,7 @@ struct ReaderCopilotView: View {
                     .disabled(!hasDocument)
 
                     Button {
-                        Task { await controller.runCopilotRequest(.currentPageDigest(scope: .currentPage(index: controller.currentPageIndex))) }
+                        Task { await controller.runCurrentPageDigest() }
                     } label: {
                         Label("Current Page Digest", systemImage: "doc.text.magnifyingglass")
                     }
