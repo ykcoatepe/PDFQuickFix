@@ -25,4 +25,23 @@ final class QuickFixOptionsModelTests: XCTestCase {
             }
         }
     }
+
+    func testMakeAIImageOCRParametersIgnoresInvalidCustomRegex() {
+        let suiteName = "QuickFixOptionsModelTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let model = QuickFixOptionsModel(defaults: defaults)
+        model.customRegexText = "["
+        model.doOCR = false
+        model.langTR = false
+        model.langEN = false
+
+        let parameters = model.makeAIImageOCRParameters()
+
+        XCTAssertFalse(parameters.options.doOCR)
+        XCTAssertEqual(parameters.languages, ["en-US"])
+    }
 }

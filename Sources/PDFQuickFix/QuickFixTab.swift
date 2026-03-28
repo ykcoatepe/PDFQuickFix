@@ -519,10 +519,10 @@ struct QuickFixTab: View {
                     log += "ℹ️ Result already points to \(destination.path)\n"
                     return
                 }
-                if FileManager.default.fileExists(atPath: destination.path) {
-                    try FileManager.default.removeItem(at: destination)
-                }
-                try FileManager.default.copyItem(at: result.outputURL, to: destination)
+                try Self.copyResultPreservingExistingFile(
+                    from: result.outputURL,
+                    to: destination
+                )
                 OutputDirectoryAccessStore.shared.store(directory: destination.deletingLastPathComponent())
                 let savedResult = result.savedCopy(outputURL: destination)
                 let previousOutputURL = result.outputURL
@@ -626,7 +626,7 @@ struct QuickFixTab: View {
     }
 
     private func generateImageOCRTextSource(from imageURL: URL) async throws -> URL {
-        let parameters = try await MainActor.run { try optionsModel.makeParameters() }
+        let parameters = await MainActor.run { optionsModel.makeAIImageOCRParameters() }
         let preprocessImages = await MainActor.run { optionsModel.preprocessImages }
         let targetDPI = await MainActor.run { CGFloat(optionsModel.dpi) }
         return try await Task.detached(priority: .userInitiated) {
@@ -652,6 +652,25 @@ struct QuickFixTab: View {
             try? FileManager.default.removeItem(at: tempInput)
             return outputURL
         }.value
+    }
+
+    static func copyResultPreservingExistingFile(from sourceURL: URL,
+                                                 to destinationURL: URL,
+                                                 fileManager: FileManager = .default) throws {
+        let tempCopyURL = temporaryFileURL(prefix: "quickfix-save-", extension: destinationURL.pathExtension.isEmpty ? "pdf" : destinationURL.pathExtension)
+        do {
+            try fileManager.copyItem(at: sourceURL, to: tempCopyURL)
+            if fileManager.fileExists(atPath: destinationURL.path) {
+                _ = try fileManager.replaceItemAt(destinationURL, withItemAt: tempCopyURL)
+            } else {
+                try fileManager.moveItem(at: tempCopyURL, to: destinationURL)
+            }
+        } catch {
+            if fileManager.fileExists(atPath: tempCopyURL.path) {
+                try? fileManager.removeItem(at: tempCopyURL)
+            }
+            throw error
+        }
     }
 
     private nonisolated static func temporaryFileURL(prefix: String, extension ext: String) -> URL {

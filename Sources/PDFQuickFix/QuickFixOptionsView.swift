@@ -58,6 +58,7 @@ final class QuickFixOptionsModel: ObservableObject {
     }
 
     func makeParameters(manualRedactions: [Int: [CGRect]] = [:]) throws -> QuickFixExecutionParameters {
+        let (options, languages) = makeExecutionContext()
         var patterns: [RedactionPattern] = []
         if useDefaults {
             patterns.append(contentsOf: DefaultPatterns.defaults())
@@ -70,17 +71,6 @@ final class QuickFixOptionsModel: ObservableObject {
             findReplaceRules.append(.init(find: findText, replace: replaceText))
         }
 
-        let languages = preferredLanguages()
-        let options = QuickFixOptions(
-            doOCR: doOCR,
-            dpi: CGFloat(dpi),
-            redactionPadding: CGFloat(padding),
-            ocrProvider: ocrProvider,
-            localOCRModel: localOCRModel,
-            cloudOcrEnabled: cloudOcrEnabled,
-            cloudOcrApiKey: cloudOcrApiKey
-        )
-
         return QuickFixExecutionParameters(
             options: options,
             languages: languages,
@@ -89,6 +79,10 @@ final class QuickFixOptionsModel: ObservableObject {
             findReplace: findReplaceRules,
             manualRedactions: manualRedactions
         )
+    }
+
+    func makeAIImageOCRParameters() -> (options: QuickFixOptions, languages: [String]) {
+        makeExecutionContext()
     }
 
     func runQuickFix(inputURL: URL,
@@ -134,6 +128,20 @@ final class QuickFixOptionsModel: ObservableObject {
             languages = ["en-US"]
         }
         return languages
+    }
+
+    private func makeExecutionContext() -> (options: QuickFixOptions, languages: [String]) {
+        let languages = preferredLanguages()
+        let options = QuickFixOptions(
+            doOCR: doOCR,
+            dpi: CGFloat(dpi),
+            redactionPadding: CGFloat(padding),
+            ocrProvider: ocrProvider,
+            localOCRModel: localOCRModel,
+            cloudOcrEnabled: cloudOcrEnabled,
+            cloudOcrApiKey: cloudOcrApiKey
+        )
+        return (options, languages)
     }
 
     private func parseCustomRegexes() throws -> [NSRegularExpression] {
