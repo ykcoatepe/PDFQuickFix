@@ -52,6 +52,40 @@ final class ReaderCopilotStateTests: XCTestCase {
         XCTAssertEqual(controller.copilotResponse, expectedResponse)
     }
 
+    func testSelectionChangePublishesUpdatedExplainSelectionAvailability() throws {
+        let controller = ReaderControllerPro(copilotService: StubCopilotService(response: .makeStub()))
+        let pdfView = ReaderPDFView()
+        pdfView.controller = controller
+        controller.pdfView = pdfView
+
+        let document = try makeTextDocument(text: "Selected text lives here")
+        controller.document = document
+        pdfView.document = document
+
+        guard let page = document.page(at: 0),
+              let pageText = page.string,
+              let selection = document.selection(from: page,
+                                                 atCharacterIndex: 0,
+                                                 to: page,
+                                                 atCharacterIndex: pageText.count - 1) else {
+            XCTFail("Unable to create selection from text-backed PDF")
+            return
+        }
+
+        let stateChanged = expectation(description: "selection state published")
+        controller.$currentSelectionTextState
+            .compactMap { $0 }
+            .first()
+            .sink { _ in stateChanged.fulfill() }
+            .store(in: &cancellables)
+
+        pdfView.setCurrentSelection(selection, animate: false)
+
+        wait(for: [stateChanged], timeout: 1.0)
+        XCTAssertEqual(controller.currentSelectionTextState, pageText)
+        XCTAssertEqual(controller.currentSelectionText, pageText)
+    }
+
     func testQuickSummaryPopulatesControllerResponse() throws {
         let expectedResponse = DocumentCopilotResponse(
             answer: "Summary ready.",

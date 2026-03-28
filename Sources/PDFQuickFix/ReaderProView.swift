@@ -39,18 +39,20 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
     @Published var isRepaired: Bool = false
     @Published var skippedQuickValidation: Bool = false
     @Published var isDocumentHealthPresented: Bool = false
+    @Published private(set) var currentSelectionTextState: String?
 
-    weak var pdfView: PDFView?
-    var currentSelectionText: String? {
-        guard let value = pdfView?.currentSelection?.string?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-            !value.isEmpty else {
-            return nil
+    weak var pdfView: PDFView? {
+        didSet {
+            rebindPDFViewObservers(from: oldValue, to: pdfView)
+            refreshSelectionState()
         }
-        return value
+    }
+    var currentSelectionText: String? {
+        currentSelectionTextState ?? normalizedSelectionText(from: pdfView?.currentSelection)
     }
 
     private var findObserver: NSObjectProtocol?
+    private var selectionObserver: NSObjectProtocol?
     private let validationRunner = DocumentValidationRunner()
     private var copilotService: any DocumentCopilotServicing
     private let usesCustomCopilotService: Bool
@@ -68,6 +70,9 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
 
     deinit {
         if let observer = findObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        if let observer = selectionObserver {
             NotificationCenter.default.removeObserver(observer)
         }
         validationRunner.cancelAll()
@@ -186,6 +191,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
             pdfView?.displayMode = .singlePage
             pdfView?.displaysPageBreaks = false
             pdfView?.autoScales = true
+            refreshSelectionState()
         }
         currentPageIndex = 0
         searchMatches.removeAll()
@@ -226,6 +232,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         isFullValidationRunning = false
         validationMode = .idle
         log = "❌ \(error.localizedDescription)"
+        currentSelectionTextState = nil
         clearCopilotOutput()
         present(error)
     }
@@ -257,6 +264,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         isFullValidationRunning = false
         validationMode = .idle
         log = ""
+        currentSelectionTextState = nil
         clearCopilotOutput()
     }
 
@@ -717,6 +725,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
                                     resetScale: true)
         view.delegate = self
         zoomScale = view.scaleFactor
+        refreshSelectionState()
     }
 
     private func makeCopilotSession() -> DocumentTextSession? {
@@ -737,6 +746,42 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         copilotResponse = nil
         copilotError = nil
         isCopilotRunning = false
+    }
+
+    private func normalizedSelectionText(from selection: PDFSelection?) -> String? {
+        guard let value = selection?.string?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty else {
+            return nil
+        }
+        return value
+    }
+
+    private func refreshSelectionState() {
+        let selectionText = normalizedSelectionText(from: pdfView?.currentSelection)
+        guard currentSelectionTextState != selectionText else { return }
+        currentSelectionTextState = selectionText
+    }
+
+    fileprivate func handlePDFSelectionChange() {
+        refreshSelectionState()
+    }
+
+    private func rebindPDFViewObservers(from oldValue: PDFView?, to newValue: PDFView?) {
+        if let observer = selectionObserver {
+            NotificationCenter.default.removeObserver(observer)
+            selectionObserver = nil
+        }
+
+        guard let newValue else { return }
+        selectionObserver = NotificationCenter.default.addObserver(
+            forName: .PDFViewSelectionChanged,
+            object: newValue,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.refreshSelectionState()
+            }
+        }
     }
 
     private func annotationRects(for selection: PDFSelection, on page: PDFPage) -> [CGRect] {
@@ -1785,6 +1830,11 @@ struct PDFViewProRepresented: NSViewRepresentable {
 
 class ReaderPDFView: PDFView {
     weak var controller: ReaderControllerPro?
+
+    override func setCurrentSelection(_ selection: PDFSelection?, animate: Bool) {
+        super.setCurrentSelection(selection, animate: animate)
+        controller?.handlePDFSelectionChange()
+    }
     
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = super.menu(for: event) ?? NSMenu()

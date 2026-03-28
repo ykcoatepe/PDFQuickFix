@@ -32,7 +32,7 @@ struct ReaderCopilotView: View {
                         Label("Explain Selection", systemImage: "quote.bubble")
                     }
                     .buttonStyle(SecondaryButtonStyle())
-                    .disabled(controller.currentSelectionText == nil)
+                    .disabled(controller.currentSelectionTextState == nil)
 
                     HStack(spacing: 8) {
                         TextField("Ask this document", text: $controller.copilotQuery)
