@@ -557,6 +557,7 @@ struct QuickFixTab: View {
     private func cleanupTransientOutputs() {
         if let cached = aiImageOCRURL {
             try? FileManager.default.removeItem(at: cached)
+            aiImageOCRURL = nil
         }
         if let result = quickFixResult, result.isTemporaryOutput {
             try? FileManager.default.removeItem(at: result.outputURL)
@@ -604,7 +605,7 @@ struct QuickFixTab: View {
             throw PDFTextExtractorError.missingInput
         }
         if documentInputKind(for: inputURL) == .image {
-            if let cached = aiImageOCRURL {
+            if let cached = Self.existingCachedOCRURL(aiImageOCRURL) {
                 return cached
             }
             await MainActor.run {
@@ -617,6 +618,11 @@ struct QuickFixTab: View {
             return generated
         }
         return inputURL
+    }
+
+    static func existingCachedOCRURL(_ url: URL?) -> URL? {
+        guard let url else { return nil }
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
     private func generateImageOCRTextSource(from imageURL: URL) async throws -> URL {
