@@ -82,9 +82,11 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     @Published var loadingStatus: String?
     @Published var isLargeDocument: Bool = false
     @Published var isMassiveDocument: Bool = false
+    @Published var skippedQuickValidation: Bool = false
     @Published var selectedAnnotation: PDFAnnotation?
     @Published var selectedTool: StudioTool = .organize
     @Published var isRepaired: Bool = false
+    @Published var isDocumentHealthPresented: Bool = false
     
     // MARK: - PDFActionable
     func zoomIn() {
@@ -270,6 +272,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
             estimatedPages: nil,
             resolvedPageCount: newDocument.pageCount
         )
+        skippedQuickValidation = shouldSkipAutoValidation
         if !isMassive && !shouldSkipAutoValidation {
             scheduleValidation(for: workingURL, pageLimit: 10, mode: .quick)
         }
@@ -295,13 +298,12 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         }
         document = nil
         pdfView?.document = nil
-        document = nil
-        pdfView?.document = nil
         currentURL = nil
         sourceURL = nil
         activeSecurityScope = nil
         isLargeDocument = false
         isMassiveDocument = false
+        skippedQuickValidation = false
         resetThumbnailState()
         validationStatus = nil
         validationMode = .idle
@@ -332,6 +334,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         activeSecurityScope = nil
         isLargeDocument = false
         isMassiveDocument = false
+        skippedQuickValidation = false
         deferOutlineLoad = false
         deferAnnotationScan = false
         resetThumbnailState()
@@ -346,6 +349,35 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         logMessages = []
         isRepaired = false
         streamingLoader.close()
+    }
+
+    var canShowDocumentHealth: Bool {
+        document != nil
+    }
+
+    var hasActiveSecurityScope: Bool {
+        activeSecurityScope != nil
+    }
+
+    func showDocumentHealth() {
+        guard canShowDocumentHealth else { return }
+        isDocumentHealthPresented = true
+    }
+
+    var documentHealthSummary: DocumentHealthSummary? {
+        guard let document else { return nil }
+        let name = currentURL?.lastPathComponent ?? sourceURL?.lastPathComponent ?? "PDF"
+        let quickFixResult = currentURL.flatMap { QuickFixResultStore.shared.result(for: $0) }
+        return DocumentHealthSummary.build(
+            documentName: name,
+            pageCount: document.pageCount,
+            isRepaired: isRepaired,
+            isLargeDocument: isLargeDocument,
+            isMassiveDocument: isMassiveDocument,
+            skippedQuickValidation: skippedQuickValidation,
+            validationStatus: validationStatus,
+            quickFixResult: quickFixResult
+        )
     }
 
 
@@ -1828,3 +1860,4 @@ private extension Int {
 extension StudioController: FileExportable {}
 extension StudioController: DocumentPrintable {}
 extension StudioController: DocumentClosable {}
+extension StudioController: DocumentHealthPresentable {}

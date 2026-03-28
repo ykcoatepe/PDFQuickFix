@@ -106,4 +106,56 @@ final class AIInteractionStoreTests: XCTestCase {
         XCTAssertTrue(sessionStore.entries.contains(persistedEntry))
         XCTAssertTrue(sessionStore.entries.contains(sessionEntry))
     }
+
+    func testExportDocumentProducesJSONPayload() throws {
+        let store = AIInteractionStore(persistToDisk: false)
+        let entry = AIInteractionEntry(
+            id: UUID(),
+            timestamp: Date(timeIntervalSince1970: 1_700_000_000),
+            task: .summarize,
+            model: "stub-model",
+            prompt: "prompt",
+            response: "response",
+            sourceName: "source.pdf",
+            inputCharacterCount: 42,
+            inputWasTrimmed: true
+        )
+
+        let document = try store.exportDocument(for: [entry], format: .json)
+        XCTAssertEqual(document.fileName, "ai-activity-summarize.json")
+
+        let payloadObject = try JSONSerialization.jsonObject(with: document.data)
+        let payload = try XCTUnwrap(payloadObject as? [String: Any])
+        XCTAssertEqual(payload["formatVersion"] as? Int, 1)
+        XCTAssertNotNil(payload["exportedAt"])
+        let entries = try XCTUnwrap(payload["entries"] as? [[String: Any]])
+        XCTAssertEqual(entries.count, 1)
+        XCTAssertEqual(entries[0]["task"] as? String, LocalAITask.summarize.rawValue)
+        XCTAssertEqual(entries[0]["model"] as? String, "stub-model")
+    }
+
+    func testExportDocumentProducesMarkdownPayload() throws {
+        let store = AIInteractionStore(persistToDisk: false)
+        let entry = AIInteractionEntry(
+            id: UUID(),
+            timestamp: Date(timeIntervalSince1970: 1_700_000_000),
+            task: .translate,
+            model: "stub-model",
+            prompt: "prompt",
+            response: "response",
+            sourceName: nil,
+            inputCharacterCount: 10,
+            inputWasTrimmed: false
+        )
+
+        let document = try store.exportDocument(for: [entry], format: .markdown)
+        XCTAssertEqual(document.fileName, "ai-activity-translate.md")
+
+        let text = try XCTUnwrap(String(data: document.data, encoding: .utf8))
+        XCTAssertTrue(text.contains("# AI Activity Export"))
+        XCTAssertTrue(text.contains("Task: Translate"))
+        XCTAssertTrue(text.contains("Model: stub-model"))
+        XCTAssertTrue(text.contains("```text"))
+        XCTAssertTrue(text.contains("response"))
+    }
 }

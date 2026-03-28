@@ -257,6 +257,7 @@ struct SplitDestinationCard: View {
 
 struct SplitHistoryCard: View {
     let history: [SplitJobRecord]
+    let onApplySettings: (SplitJobRecord) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -283,23 +284,30 @@ struct SplitHistoryCard: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(history) { job in
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(job.sourceDescription)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundColor(AppTheme.Colors.primaryText)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                        Text("\(job.fileCount) input → \(job.outputCount) output in \(job.destinationFolder)")
-                            .font(.caption2)
-                            .foregroundColor(AppTheme.Colors.secondaryText)
-                        Text("\(job.modeDescription) · \(job.date.formatted(date: .abbreviated, time: .shortened))")
-                            .font(.caption2)
-                            .foregroundColor(AppTheme.Colors.secondaryText)
-                        if let err = job.errorSummary, !err.isEmpty {
-                            Text("Errors: \(err)")
+                    HStack(alignment: .top, spacing: 10) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(job.sourceDescription)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundColor(AppTheme.Colors.primaryText)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Text("\(job.fileCount) input → \(job.outputCount) output in \(job.destinationFolder)")
                                 .font(.caption2)
-                                .foregroundColor(.red)
+                                .foregroundColor(AppTheme.Colors.secondaryText)
+                            Text("\(job.modeDescription) · \(job.date.formatted(date: .abbreviated, time: .shortened))")
+                                .font(.caption2)
+                                .foregroundColor(AppTheme.Colors.secondaryText)
+                            if let err = job.errorSummary, !err.isEmpty {
+                                Text("Errors: \(err)")
+                                    .font(.caption2)
+                                    .foregroundColor(.red)
+                            }
                         }
+                        Spacer()
+                        Button("Apply Settings") {
+                            onApplySettings(job)
+                        }
+                        .buttonStyle(.bordered)
                     }
                     .padding(8)
                     .background(
@@ -478,6 +486,7 @@ struct MergeDestinationCard: View {
 
 struct MergeHistoryCard: View {
     let history: [MergeJobRecord]
+    let onApplySettings: (MergeJobRecord) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -492,21 +501,28 @@ struct MergeHistoryCard: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 8) {
                         ForEach(history) { job in
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(job.outputFileName)
-                                    .font(.subheadline.weight(.semibold))
-                                    .foregroundColor(AppTheme.Colors.primaryText)
-                                Text("\(job.sourceCount) selected → \(job.mergedDocumentCount) merged, \(job.mergedPageCount) pages")
-                                    .font(.caption2)
-                                    .foregroundColor(AppTheme.Colors.secondaryText)
-                                Text("\(job.destinationFolder) · \(job.date.formatted(date: .abbreviated, time: .shortened))")
-                                    .font(.caption2)
-                                    .foregroundColor(AppTheme.Colors.secondaryText)
-                                if let warning = job.warningsSummary, !warning.isEmpty {
-                                    Text("Warnings: \(warning)")
+                            HStack(alignment: .top, spacing: 10) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(job.outputFileName)
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundColor(AppTheme.Colors.primaryText)
+                                    Text("\(job.sourceCount) selected → \(job.mergedDocumentCount) merged, \(job.mergedPageCount) pages")
                                         .font(.caption2)
-                                        .foregroundColor(.orange)
+                                        .foregroundColor(AppTheme.Colors.secondaryText)
+                                    Text("\(job.destinationFolder) · \(job.date.formatted(date: .abbreviated, time: .shortened))")
+                                        .font(.caption2)
+                                        .foregroundColor(AppTheme.Colors.secondaryText)
+                                    if let warning = job.warningsSummary, !warning.isEmpty {
+                                        Text("Warnings: \(warning)")
+                                            .font(.caption2)
+                                            .foregroundColor(.orange)
+                                    }
                                 }
+                                Spacer()
+                                Button("Apply Settings") {
+                                    onApplySettings(job)
+                                }
+                                .buttonStyle(.bordered)
                             }
                             .padding(8)
                             .background(

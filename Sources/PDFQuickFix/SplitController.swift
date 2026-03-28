@@ -1,38 +1,45 @@
 import Foundation
 import Combine
+import AppKit
 import PDFQuickFixKit
 
-struct SplitJobRecord: Identifiable {
-    let id = UUID()
-    let date: Date
-    let sourceDescription: String
-    let modeDescription: String
-    let fileCount: Int           // number of input PDFs processed
-    let outputCount: Int         // total output PDF files created
-    let destinationFolder: String
-    let errorSummary: String?
-}
-
-enum SplitUIMode: Int, CaseIterable {
+enum SplitUIMode: Int, CaseIterable, Codable {
     case maxPagesPerFile
     case numberOfParts
-    case approxSizeMB        // approximate MB target per part
-    case explicitBreaks      // comma-separated start pages
+    case approxSizeMB
+    case explicitBreaks
     case outlineChapters
 
     var title: String {
         switch self {
         case .maxPagesPerFile: return "By max pages"
-        case .numberOfParts:   return "By parts"
-        case .approxSizeMB:    return "By size"
-        case .explicitBreaks:  return "By page breaks"
+        case .numberOfParts: return "By parts"
+        case .approxSizeMB: return "By size"
+        case .explicitBreaks: return "By page breaks"
         case .outlineChapters: return "By chapters"
         }
     }
 }
 
-final class SplitController: ObservableObject {
+enum SplitControllerError: LocalizedError {
+    case cancelled
+    case noPDFsInFolder(URL)
+    case invalidSettings(String)
 
+    var errorDescription: String? {
+        switch self {
+        case .cancelled:
+            return "Operation cancelled."
+        case .noPDFsInFolder(let url):
+            return "No PDF files were found in \(url.lastPathComponent)."
+        case .invalidSettings(let message):
+            return message
+        }
+    }
+}
+
+@MainActor
+final class SplitController: ObservableObject {
     @Published var sourceURL: URL?
     @Published var destinationURL: URL?
 
@@ -42,7 +49,9 @@ final class SplitController: ObservableObject {
     @Published var approxSizeMB: Double = 50
     @Published var explicitBreaksText: String = "1"
     @Published var applyToAllPDFsInFolder: Bool = false
-    @Published var history: [SplitJobRecord] = []
+
+    @Published private(set) var presets: [SplitJobPreset] = []
+    @Published private(set) var history: [SplitJobRecord] = []
 
     @Published var isWorking: Bool = false
     @Published var status: String = "Ready"
@@ -50,7 +59,22 @@ final class SplitController: ObservableObject {
     @Published var progressValue: Double?
     @Published var lastOutputFiles: [URL] = []
 
-    /// Simple validation flag for the Split button.
+    private let defaults: UserDefaults
+    private var currentTask: Task<Void, Never>?
+
+    private let presetsKey = "SplitController.presets"
+    private let historyKey = "SplitController.history"
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        presets = CodableUserDefaultsStore.loadArray([SplitJobPreset].self, key: presetsKey, defaults: defaults)
+        history = CodableUserDefaultsStore.loadArray([SplitJobRecord].self, key: historyKey, defaults: defaults)
+    }
+
+    deinit {
+        currentTask?.cancel()
+    }
+
     var canSplit: Bool {
         guard sourceURL != nil else { return false }
         switch mode {
@@ -63,15 +87,34 @@ final class SplitController: ObservableObject {
         case .explicitBreaks:
             return !explicitBreaksText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         case .outlineChapters:
-            return true   // validation handled by the splitter based on outline presence
+            return true
         }
     }
 
-    private let splitter = PDFSplitter()
+    func addSourceURLs(_ urls: [URL]) {
+        guard let first = urls.first else { return }
+        if sourceURL == nil {
+            sourceURL = first
+        }
+        if destinationURL == nil {
+            destinationURL = first.deletingLastPathComponent()
+        }
+        status = "Ready"
+    }
+
+    func removeSource(at offsets: IndexSet) {
+        guard offsets.contains(0) else { return }
+        sourceURL = nil
+    }
+
+    func clearSources() {
+        sourceURL = nil
+        destinationURL = nil
+        lastOutputFiles = []
+    }
 
     func setSource(url: URL) {
         sourceURL = url
-        // Default destination mirrors the source folder.
         destinationURL = url.deletingLastPathComponent()
         status = "Ready"
         progressText = nil
@@ -83,18 +126,64 @@ final class SplitController: ObservableObject {
         destinationURL = url
     }
 
+    func cancel() {
+        currentTask?.cancel()
+        if isWorking {
+            status = "Cancelling…"
+        }
+    }
+
+    func savePresetFromPrompt() {
+        let defaultName = "Split Preset"
+        guard let name = promptForText(title: "Save Split Preset",
+                                       message: "Choose a name for the current split settings.",
+                                       defaultValue: defaultName) else { return }
+        savePreset(named: name)
+    }
+
+    func duplicateCurrentSettings() {
+        let defaultName = "Copy of Split Preset"
+        guard let name = promptForText(title: "Duplicate Split Settings",
+                                       message: "Save the current split settings as a new preset.",
+                                       defaultValue: defaultName) else { return }
+        savePreset(named: name)
+    }
+
+    func savePreset(named name: String) {
+        let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return }
+        let preset = SplitJobPreset(id: UUID(), name: cleaned, createdAt: Date(), settings: currentSettings())
+        if let index = presets.firstIndex(where: { $0.name.caseInsensitiveCompare(cleaned) == .orderedSame }) {
+            presets[index] = preset
+        } else {
+            presets.insert(preset, at: 0)
+        }
+        persistPresets()
+    }
+
+    func applyPreset(_ preset: SplitJobPreset) {
+        apply(settings: preset.settings)
+        status = "Preset applied: \(preset.name)"
+    }
+
+    func applyHistory(_ record: SplitJobRecord) {
+        apply(settings: record.settings)
+        status = "Settings restored from history."
+    }
+
     func split() {
-        guard let src = sourceURL else {
+        guard !isWorking else { return }
+        guard let source = sourceURL else {
             status = "Select a PDF file first."
             return
         }
-        guard let mode = makeSplitMode() else {
+        guard let _ = makeSplitMode() else {
             status = "Invalid split settings."
             return
         }
 
-        let dest = destinationURL ?? src.deletingLastPathComponent()
-        let sourceFolder = src.deletingLastPathComponent()
+        let destination = destinationURL ?? source.deletingLastPathComponent()
+        let settings = currentSettings()
 
         isWorking = true
         status = "Splitting…"
@@ -102,195 +191,245 @@ final class SplitController: ObservableObject {
         progressValue = nil
         lastOutputFiles = []
 
-        if applyToAllPDFsInFolder {
-            splitBatch(inFolder: sourceFolder, destination: dest, mode: mode)
-        } else {
-            splitSingleFile(source: src, destination: dest, mode: mode) { [weak self] result in
-                guard let self else { return }
-                self.isWorking = false
-                switch result {
-                case .success(let splitResult):
-                    self.lastOutputFiles = splitResult.outputFiles
-                    let count = splitResult.outputFiles.count
-                    if count == 0 {
-                        self.status = "No output files were produced."
-                    } else {
-                        let folder = dest.lastPathComponent
-                        self.status = "Done. \(count) file(s) written to \(folder)."
+        currentTask = Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self else { return }
+            do {
+                let result = try self.executeSplit(
+                    settings: settings,
+                    sourceURL: source,
+                    destinationURL: destination,
+                    shouldCancel: { Task.isCancelled },
+                    progress: { processed, total in
+                        Task { @MainActor in
+                            self.progressText = "Processed \(processed)/\(total) pages"
+                            self.progressValue = total > 0 ? Double(processed) / Double(total) : nil
+                        }
                     }
-                    let record = SplitJobRecord(
-                        date: Date(),
-                        sourceDescription: src.lastPathComponent,
-                        modeDescription: self.describeMode(),
-                        fileCount: 1,
-                        outputCount: count,
-                        destinationFolder: dest.lastPathComponent,
-                        errorSummary: nil
-                    )
-                    self.history.append(record)
-                    self.progressText = nil
-                    self.progressValue = nil
-                case .failure(let error):
-                    self.status = "Split failed: \(error.localizedDescription)"
-                    self.progressText = nil
-                    self.progressValue = nil
+                )
+                await MainActor.run {
+                    self.finishSplit(result: result, destinationURL: destination, settings: settings)
+                }
+            } catch {
+                await MainActor.run {
+                    self.finishSplitFailure(error: error)
                 }
             }
         }
     }
 
-    private func makeSplitMode() -> PDFSplitMode? {
-        switch mode {
+    private struct SplitExecutionResult {
+        let outputFiles: [URL]
+        let fileCount: Int
+        let sourceDescription: String
+        let destinationFolder: String
+        let warnings: [String]
+    }
+
+    private nonisolated func executeSplit(settings: SplitJobSettings,
+                                          sourceURL: URL,
+                                          destinationURL: URL,
+                                          shouldCancel: @escaping () -> Bool,
+                                          progress: ((Int, Int) -> Void)?) throws -> SplitExecutionResult {
+        if shouldCancel() { throw SplitControllerError.cancelled }
+
+        let destination = destinationURL
+        let splitter = PDFSplitter()
+        if settings.applyToAllPDFsInFolder {
+            let folder = sourceURL.deletingLastPathComponent()
+            let urls = try FileManager.default.contentsOfDirectory(at: folder,
+                                                                   includingPropertiesForKeys: nil,
+                                                                   options: [.skipsHiddenFiles])
+                .filter { $0.pathExtension.lowercased() == "pdf" }
+            guard !urls.isEmpty else { throw SplitControllerError.noPDFsInFolder(folder) }
+
+            var outputs: [URL] = []
+            let warnings: [String] = []
+
+            for fileURL in urls {
+                if shouldCancel() { throw SplitControllerError.cancelled }
+                let repairedURL = try repairInputIfNeeded(fileURL)
+                let mode = try makeMode(from: settings)
+                let splitResult = try splitter.split(
+                    options: PDFSplitOptions(sourceURL: repairedURL,
+                                             destinationDirectory: destination,
+                                             mode: mode),
+                    progress: { processed, total in
+                        progress?(processed, total)
+                    },
+                    shouldCancel: shouldCancel
+                )
+                outputs.append(contentsOf: splitResult.outputFiles)
+            }
+
+            return SplitExecutionResult(
+                outputFiles: outputs,
+                fileCount: urls.count,
+                sourceDescription: folder.lastPathComponent,
+                destinationFolder: destination.lastPathComponent,
+                warnings: warnings
+            )
+        }
+
+        let repairedURL = try repairInputIfNeeded(sourceURL)
+        let mode = try makeMode(from: settings)
+        let splitResult = try splitter.split(
+            options: PDFSplitOptions(sourceURL: repairedURL,
+                                     destinationDirectory: destination,
+                                     mode: mode),
+            progress: progress,
+            shouldCancel: shouldCancel
+        )
+        return SplitExecutionResult(
+            outputFiles: splitResult.outputFiles,
+            fileCount: 1,
+            sourceDescription: sourceURL.lastPathComponent,
+            destinationFolder: destination.lastPathComponent,
+            warnings: []
+        )
+    }
+
+    private func finishSplit(result: SplitExecutionResult,
+                             destinationURL: URL,
+                             settings: SplitJobSettings) {
+        isWorking = false
+        currentTask = nil
+        lastOutputFiles = result.outputFiles
+        progressText = nil
+        progressValue = nil
+        if result.outputFiles.isEmpty {
+            status = "No output files were produced."
+        } else {
+            status = "Done. \(result.outputFiles.count) file(s) written to \(destinationURL.lastPathComponent)."
+        }
+        appendHistory(
+            SplitJobRecord(
+                id: UUID(),
+                date: Date(),
+                settings: settings,
+                sourceDescription: result.sourceDescription,
+                modeDescription: describeMode(from: settings),
+                fileCount: result.fileCount,
+                outputCount: result.outputFiles.count,
+                destinationFolder: result.destinationFolder,
+                errorSummary: result.warnings.isEmpty ? nil : result.warnings.joined(separator: " | ")
+            )
+        )
+    }
+
+    private func finishSplitFailure(error: Error) {
+        isWorking = false
+        currentTask = nil
+        progressText = nil
+        progressValue = nil
+        if let splitError = error as? SplitControllerError, case .cancelled = splitError {
+            status = "Split cancelled."
+        } else {
+            status = "Split failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func currentSettings() -> SplitJobSettings {
+        SplitJobSettings(
+            sourceURLString: sourceURL?.standardizedFileURL.path,
+            destinationURLString: destinationURL?.standardizedFileURL.path,
+            applyToAllPDFsInFolder: applyToAllPDFsInFolder,
+            mode: mode,
+            maxPagesPerFile: maxPagesPerFile,
+            numberOfParts: numberOfParts,
+            approxSizeMB: approxSizeMB,
+            explicitBreaksText: explicitBreaksText
+        )
+    }
+
+    private func apply(settings: SplitJobSettings) {
+        mode = settings.mode
+        maxPagesPerFile = settings.maxPagesPerFile
+        numberOfParts = settings.numberOfParts
+        approxSizeMB = settings.approxSizeMB
+        explicitBreaksText = settings.explicitBreaksText
+        applyToAllPDFsInFolder = settings.applyToAllPDFsInFolder
+        sourceURL = resolvedURL(from: settings.sourceURLString)
+        destinationURL = resolvedURL(from: settings.destinationURLString)
+        progressText = nil
+        progressValue = nil
+        lastOutputFiles = []
+    }
+
+    private nonisolated func describeMode(from settings: SplitJobSettings) -> String {
+        switch settings.mode {
         case .maxPagesPerFile:
-            guard maxPagesPerFile > 0 else { return nil }
-            return .maxPagesPerPart(maxPagesPerFile)
+            return "max \(settings.maxPagesPerFile) pages"
         case .numberOfParts:
-            guard numberOfParts > 1 else { return nil }
-            return .numberOfParts(numberOfParts)
+            return "\(settings.numberOfParts) parts"
         case .approxSizeMB:
-            guard approxSizeMB > 0 else { return nil }
-            return .approxTargetSizeMB(approxSizeMB)
+            return "~\(settings.approxSizeMB) MB"
         case .explicitBreaks:
-            let breaks = parseExplicitBreaks(from: explicitBreaksText)
-            guard !breaks.isEmpty else { return nil }
+            return "page breaks: \(settings.explicitBreaksText)"
+        case .outlineChapters:
+            return "outline chapters"
+        }
+    }
+
+    private func makeSplitMode() -> PDFSplitMode? {
+        try? makeMode(from: currentSettings())
+    }
+
+    private nonisolated func makeMode(from settings: SplitJobSettings) throws -> PDFSplitMode {
+        switch settings.mode {
+        case .maxPagesPerFile:
+            guard settings.maxPagesPerFile > 0 else { throw SplitControllerError.invalidSettings("Max pages per file must be greater than zero.") }
+            return .maxPagesPerPart(settings.maxPagesPerFile)
+        case .numberOfParts:
+            guard settings.numberOfParts > 1 else { throw SplitControllerError.invalidSettings("Number of parts must be greater than one.") }
+            return .numberOfParts(settings.numberOfParts)
+        case .approxSizeMB:
+            guard settings.approxSizeMB > 0 else { throw SplitControllerError.invalidSettings("Approx. size must be greater than zero.") }
+            return .approxTargetSizeMB(settings.approxSizeMB)
+        case .explicitBreaks:
+            let breaks = parseExplicitBreaks(from: settings.explicitBreaksText)
+            guard !breaks.isEmpty else { throw SplitControllerError.invalidSettings("Enter at least one valid page break.") }
             return .explicitBreaks(breaks)
         case .outlineChapters:
             return .outlineChapters
         }
     }
 
-    private func describeMode() -> String {
-        switch mode {
-        case .maxPagesPerFile:
-            return "max \(maxPagesPerFile) pages"
-        case .numberOfParts:
-            return "\(numberOfParts) parts"
-        case .approxSizeMB:
-            return "~\(approxSizeMB) MB"
-        case .explicitBreaks:
-            return "page breaks: \(explicitBreaksText)"
-        case .outlineChapters:
-            return "outline chapters"
-        }
-    }
-
-    private func splitSingleFile(source: URL,
-                                 destination: URL,
-                                 mode: PDFSplitMode,
-                                 completion: @escaping (Result<PDFSplitResult, Error>) -> Void) {
-        
-        // Repair/Normalize
-        var finalSource = source
-        do {
-            finalSource = try PDFRepairService().repairIfNeeded(inputURL: source)
-        } catch {
-            print("Split repair failed: \(error)")
-        }
-        
-        let options = PDFSplitOptions(sourceURL: finalSource,
-                                      destinationDirectory: destination,
-                                      mode: mode)
-        splitter.splitAsync(options: options,
-                            progress: { [weak self] processed, total in
-                                guard let self else { return }
-                                self.progressText = "Processed \(processed)/\(total) pages"
-                                if total > 0 {
-                                    self.progressValue = Double(processed) / Double(total)
-                                } else {
-                                    self.progressValue = nil
-                                }
-                            },
-                            completion: completion)
-    }
-
-    private func splitBatch(inFolder folder: URL,
-                            destination: URL,
-                            mode: PDFSplitMode) {
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self else { return }
-
-            let fm = FileManager.default
-            let urls: [URL]
-            do {
-                let contents = try fm.contentsOfDirectory(at: folder,
-                                                         includingPropertiesForKeys: nil,
-                                                         options: [.skipsHiddenFiles])
-                urls = contents.filter { $0.pathExtension.lowercased() == "pdf" }
-            } catch {
-                DispatchQueue.main.async {
-                    self.isWorking = false
-                    self.status = "Failed to list folder: \(error.localizedDescription)"
-                }
-                return
-            }
-
-            if urls.isEmpty {
-                DispatchQueue.main.async {
-                    self.isWorking = false
-                    self.status = "No PDF files found in folder."
-                }
-                return
-            }
-
-            var allOutputs: [URL] = []
-            var errors: [String] = []
-
-            for (index, fileURL) in urls.enumerated() {
-                DispatchQueue.main.async {
-                    self.status = "Splitting \(fileURL.lastPathComponent) (\(index + 1)/\(urls.count))…"
-                }
-
-                // Repair/Normalize
-                var finalSource = fileURL
-                do {
-                    finalSource = try PDFRepairService().repairIfNeeded(inputURL: fileURL)
-                } catch {
-                    print("Split batch repair failed: \(error)")
-                }
-
-                let options = PDFSplitOptions(sourceURL: finalSource,
-                                              destinationDirectory: destination,
-                                              mode: mode)
-                do {
-                    let result = try self.splitter.split(options: options)
-                    allOutputs.append(contentsOf: result.outputFiles)
-                } catch {
-                    errors.append("\(fileURL.lastPathComponent): \(error.localizedDescription)")
-                }
-            }
-
-            DispatchQueue.main.async {
-                self.isWorking = false
-                self.lastOutputFiles = allOutputs
-                if !errors.isEmpty {
-                    self.status = "Done with errors. Processed \(urls.count) PDFs, created \(allOutputs.count) files."
-                } else {
-                    self.status = "Done. Processed \(urls.count) PDFs, created \(allOutputs.count) files."
-                }
-                let errorsSummary: String? = errors.isEmpty ? nil : errors.joined(separator: " | ")
-                let record = SplitJobRecord(
-                    date: Date(),
-                    sourceDescription: folder.lastPathComponent,
-                    modeDescription: self.describeMode(),
-                    fileCount: urls.count,
-                    outputCount: allOutputs.count,
-                    destinationFolder: destination.lastPathComponent,
-                    errorSummary: errorsSummary
-                )
-                self.history.append(record)
-                self.progressText = nil
-                self.progressValue = nil
-            }
-        }
-    }
-
-    private func parseExplicitBreaks(from text: String) -> [Int] {
+    private nonisolated func parseExplicitBreaks(from text: String) -> [Int] {
         let separators = CharacterSet(charactersIn: ",; ")
-        let tokens = text.components(separatedBy: separators)
-        let values = tokens.compactMap { token -> Int? in
-            let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
-            return Int(trimmed)
+        return text.components(separatedBy: separators)
+            .compactMap { token -> Int? in
+                let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
+                return Int(trimmed)
+            }
+    }
+
+    private nonisolated func repairInputIfNeeded(_ url: URL) throws -> URL {
+        do {
+            return try PDFRepairService().repairIfNeeded(inputURL: url)
+        } catch {
+            return url
         }
-        return values
+    }
+
+    private nonisolated func resolvedURL(from path: String?) -> URL? {
+        guard let path, !path.isEmpty else { return nil }
+        let url = URL(fileURLWithPath: path)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
+    private func appendHistory(_ record: SplitJobRecord) {
+        history.insert(record, at: 0)
+        if history.count > 100 {
+            history.removeLast(history.count - 100)
+        }
+        persistHistory()
+    }
+
+    private func persistHistory() {
+        CodableUserDefaultsStore.saveArray(history, key: historyKey, defaults: defaults)
+    }
+
+    private func persistPresets() {
+        CodableUserDefaultsStore.saveArray(presets, key: presetsKey, defaults: defaults)
     }
 }

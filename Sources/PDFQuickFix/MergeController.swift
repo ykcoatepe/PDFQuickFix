@@ -3,17 +3,15 @@ import Combine
 import AppKit
 import UniformTypeIdentifiers
 
-@MainActor
-struct MergeJobRecord: Identifiable {
-    let id = UUID()
-    let date: Date
-    let sourceCount: Int
-    let mergedDocumentCount: Int
-    let mergedPageCount: Int
-    let destinationFolder: String
-    let outputFileName: String
-    let skippedCount: Int
-    let warningsSummary: String?
+enum MergeControllerError: LocalizedError {
+    case cancelled
+
+    var errorDescription: String? {
+        switch self {
+        case .cancelled:
+            return "Operation cancelled."
+        }
+    }
 }
 
 @MainActor
@@ -34,11 +32,29 @@ final class MergeController: ObservableObject {
     @Published var outlinePolicy: MergeOutlinePolicy = .addTopLevelPerSource
     @Published var metadataPolicy: MergeMetadataPolicy = .keepFirst
 
+    @Published private(set) var presets: [MergeJobPreset] = []
+    @Published private(set) var history: [MergeJobRecord] = []
+
     @Published var isWorking: Bool = false
     @Published var status: String = "Ready"
     @Published var warnings: [String] = []
-    @Published var history: [MergeJobRecord] = []
     @Published var lastOutputURL: URL?
+
+    private let defaults: UserDefaults
+    private let presetsKey = "MergeController.presets"
+    private let historyKey = "MergeController.history"
+    private let mergeEngine = PDFMerge.self
+    private var currentTask: Task<Void, Never>?
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        presets = CodableUserDefaultsStore.loadArray([MergeJobPreset].self, key: presetsKey, defaults: defaults)
+        history = CodableUserDefaultsStore.loadArray([MergeJobRecord].self, key: historyKey, defaults: defaults)
+    }
+
+    deinit {
+        currentTask?.cancel()
+    }
 
     var canMerge: Bool {
         sourceURLs.count >= 2 && destinationFolderURL != nil && !outputFileNameTrimmed.isEmpty
@@ -105,6 +121,49 @@ final class MergeController: ObservableObject {
         }
     }
 
+    func cancel() {
+        currentTask?.cancel()
+        if isWorking {
+            status = "Cancelling…"
+        }
+    }
+
+    func savePresetFromPrompt() {
+        guard let name = promptForText(title: "Save Merge Preset",
+                                       message: "Choose a name for the current merge settings.",
+                                       defaultValue: "Merge Preset") else { return }
+        savePreset(named: name)
+    }
+
+    func duplicateCurrentSettings() {
+        guard let name = promptForText(title: "Duplicate Merge Settings",
+                                       message: "Save the current merge settings as a new preset.",
+                                       defaultValue: "Copy of Merge Preset") else { return }
+        savePreset(named: name)
+    }
+
+    func savePreset(named name: String) {
+        let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return }
+        let preset = MergeJobPreset(id: UUID(), name: cleaned, createdAt: Date(), settings: currentSettings())
+        if let index = presets.firstIndex(where: { $0.name.caseInsensitiveCompare(cleaned) == .orderedSame }) {
+            presets[index] = preset
+        } else {
+            presets.insert(preset, at: 0)
+        }
+        persistPresets()
+    }
+
+    func applyPreset(_ preset: MergeJobPreset) {
+        apply(settings: preset.settings)
+        status = "Preset applied: \(preset.name)"
+    }
+
+    func applyHistory(_ record: MergeJobRecord) {
+        apply(settings: record.settings)
+        status = "Settings restored from history."
+    }
+
     func merge() {
         guard !isWorking else { return }
         guard sourceURLs.count >= 2 else {
@@ -151,35 +210,27 @@ final class MergeController: ObservableObject {
         lastOutputURL = nil
 
         let inputURLs = sourceURLs
-        Task.detached(priority: .userInitiated) {
+        let destinationFolder = outputSelection.url.deletingLastPathComponent()
+        let settings = currentSettings(with: outputSelection.url)
+        currentTask = Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self else { return }
             do {
-                let result = try withExtendedLifetime(outputSelection.access) {
-                    try PDFMerge.merge(urls: inputURLs, outputURL: outputSelection.url, options: options)
-                }
+                let result = try self.mergeEngine.merge(
+                    urls: inputURLs,
+                    outputURL: outputSelection.url,
+                    options: options,
+                    shouldCancel: { Task.isCancelled }
+                )
                 await MainActor.run {
-                    self.isWorking = false
-                    self.lastOutputURL = result.outputURL
-                    self.warnings = result.warnings
-                    let warningSuffix = result.skippedSources.isEmpty ? "" : " (\(result.skippedSources.count) skipped)"
-                    self.status = "Done. \(result.mergedPageCount) pages from \(result.mergedDocumentCount) documents\(warningSuffix)."
-                    self.history.append(
-                        MergeJobRecord(
-                            date: Date(),
-                            sourceCount: inputURLs.count,
-                            mergedDocumentCount: result.mergedDocumentCount,
-                            mergedPageCount: result.mergedPageCount,
-                            destinationFolder: selectedDestinationFolderURL.lastPathComponent,
-                            outputFileName: result.outputURL.lastPathComponent,
-                            skippedCount: result.skippedSources.count,
-                            warningsSummary: result.warnings.isEmpty ? nil : result.warnings.joined(separator: " | ")
-                        )
+                    self.finishMerge(
+                        result: result,
+                        settings: settings,
+                        selectedDestinationFolderURL: destinationFolder
                     )
                 }
             } catch {
                 await MainActor.run {
-                    self.isWorking = false
-                    self.status = "Merge failed: \(error.localizedDescription)"
-                    self.warnings = []
+                    self.finishMergeFailure(error: error)
                 }
             }
         }
@@ -228,5 +279,89 @@ final class MergeController: ObservableObject {
             counter += 1
         }
         return candidate
+    }
+
+    func currentSettings(with outputURL: URL? = nil) -> MergeJobSettings {
+        MergeJobSettings(
+            sourceURLStrings: sourceURLs.map { $0.standardizedFileURL.path },
+            destinationFolderURLString: outputURL?.deletingLastPathComponent().standardizedFileURL.path ?? destinationFolderURL?.standardizedFileURL.path,
+            outputFileName: outputFileNameTrimmed.isEmpty ? "Merged.pdf" : outputFileNameTrimmed,
+            insertBlankPageBetweenDocuments: insertBlankPageBetweenDocuments,
+            skipUnreadableSources: skipUnreadableSources,
+            deduplicateSources: deduplicateSources,
+            outlinePolicy: outlinePolicy,
+            metadataPolicy: metadataPolicy
+        )
+    }
+
+    private func apply(settings: MergeJobSettings) {
+        sourceURLs = settings.sourceURLStrings.compactMap { resolvedURL(from: $0) }
+        destinationFolderURL = resolvedURL(from: settings.destinationFolderURLString)
+        outputFileName = settings.outputFileName
+        insertBlankPageBetweenDocuments = settings.insertBlankPageBetweenDocuments
+        skipUnreadableSources = settings.skipUnreadableSources
+        deduplicateSources = settings.deduplicateSources
+        outlinePolicy = settings.outlinePolicy
+        metadataPolicy = settings.metadataPolicy
+        warnings = []
+        lastOutputURL = nil
+    }
+
+    private func finishMerge(result: PDFMergeResult,
+                             settings: MergeJobSettings,
+                             selectedDestinationFolderURL: URL) {
+        isWorking = false
+        currentTask = nil
+        lastOutputURL = result.outputURL
+        warnings = result.warnings
+        let warningSuffix = result.skippedSources.isEmpty ? "" : " (\(result.skippedSources.count) skipped)"
+        status = "Done. \(result.mergedPageCount) pages from \(result.mergedDocumentCount) documents\(warningSuffix)."
+        appendHistory(
+            MergeJobRecord(
+                id: UUID(),
+                date: Date(),
+                settings: settings,
+                sourceCount: sourceURLs.count,
+                mergedDocumentCount: result.mergedDocumentCount,
+                mergedPageCount: result.mergedPageCount,
+                destinationFolder: selectedDestinationFolderURL.lastPathComponent,
+                outputFileName: result.outputURL.lastPathComponent,
+                skippedCount: result.skippedSources.count,
+                warningsSummary: result.warnings.isEmpty ? nil : result.warnings.joined(separator: " | ")
+            )
+        )
+    }
+
+    private func finishMergeFailure(error: Error) {
+        isWorking = false
+        currentTask = nil
+        if error is MergeControllerError {
+            status = "Merge cancelled."
+        } else {
+            status = "Merge failed: \(error.localizedDescription)"
+        }
+        warnings = []
+    }
+
+    private func appendHistory(_ record: MergeJobRecord) {
+        history.insert(record, at: 0)
+        if history.count > 100 {
+            history.removeLast(history.count - 100)
+        }
+        persistHistory()
+    }
+
+    private func persistHistory() {
+        CodableUserDefaultsStore.saveArray(history, key: historyKey, defaults: defaults)
+    }
+
+    private func persistPresets() {
+        CodableUserDefaultsStore.saveArray(presets, key: presetsKey, defaults: defaults)
+    }
+
+    private func resolvedURL(from path: String?) -> URL? {
+        guard let path, !path.isEmpty else { return nil }
+        let url = URL(fileURLWithPath: path)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 }

@@ -423,6 +423,14 @@ struct UnifiedToolbar: View {
             .cornerRadius(6)
             
             Divider().frame(height: 16)
+
+            Button(action: { readerController.showDocumentHealth() }) {
+                Image(systemName: "cross.case")
+                    .foregroundColor(AppTheme.Colors.primaryText)
+            }
+            .buttonStyle(.plain)
+            .help("Document Health")
+            .disabled(readerController.document == nil)
             
             // Right Panel Toggle
             Button(action: {
@@ -440,6 +448,12 @@ struct UnifiedToolbar: View {
     
     private var studioRightControls: some View {
         HStack(spacing: 12) {
+            Button(action: { studioController.showDocumentHealth() }) {
+                Label("Health", systemImage: "cross.case")
+            }
+            .buttonStyle(GhostButtonStyle())
+            .disabled(studioController.document == nil)
+
             // Tools Menu
             Menu {
                 Button("Watermark…") { showingWatermarkSheet = true }

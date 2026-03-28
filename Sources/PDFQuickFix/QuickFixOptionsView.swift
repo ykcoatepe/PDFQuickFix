@@ -1,6 +1,17 @@
 import SwiftUI
 import AppKit
 
+enum QuickFixOptionsError: LocalizedError {
+    case invalidCustomRegex(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidCustomRegex(let pattern):
+            return "Invalid custom regex: \(pattern)"
+        }
+    }
+}
+
 final class QuickFixOptionsModel: ObservableObject {
     private static let localOCRModelKey = "LocalOCR.defaultModel"
     private static let cloudOcrEnabledKey = "CloudOCR.enabled"
@@ -46,17 +57,13 @@ final class QuickFixOptionsModel: ObservableObject {
                                                 account: Self.cloudOcrApiKeyAccount) ?? ""
     }
 
-    func makeParameters(manualRedactions: [Int: [CGRect]] = [:]) -> QuickFixExecutionParameters {
+    func makeParameters(manualRedactions: [Int: [CGRect]] = [:]) throws -> QuickFixExecutionParameters {
         var patterns: [RedactionPattern] = []
         if useDefaults {
             patterns.append(contentsOf: DefaultPatterns.defaults())
         }
 
-        let regexes: [NSRegularExpression] = customRegexText
-            .split(separator: ",")
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .compactMap { try? NSRegularExpression(pattern: $0, options: .caseInsensitive) }
+        let regexes = try parseCustomRegexes()
 
         var findReplaceRules: [FindReplaceRule] = []
         if !findText.isEmpty {
@@ -101,7 +108,7 @@ final class QuickFixOptionsModel: ObservableObject {
                            manualRedactions: [Int: [CGRect]] = [:],
                            shouldCancel: QuickFixCancellationChecker? = nil,
                            progress: ((Int, Int) -> Void)? = nil) throws -> QuickFixResult {
-        let parameters = makeParameters(manualRedactions: manualRedactions)
+        let parameters = try makeParameters(manualRedactions: manualRedactions)
         let engine = PDFQuickFixEngine(options: parameters.options, languages: parameters.languages)
         return try engine.processResult(
             inputURL: inputURL,
@@ -123,6 +130,20 @@ final class QuickFixOptionsModel: ObservableObject {
             languages = ["en-US"]
         }
         return languages
+    }
+
+    private func parseCustomRegexes() throws -> [NSRegularExpression] {
+        try customRegexText
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .map { pattern in
+                do {
+                    return try NSRegularExpression(pattern: pattern, options: .caseInsensitive)
+                } catch {
+                    throw QuickFixOptionsError.invalidCustomRegex(pattern)
+                }
+            }
     }
 }
 

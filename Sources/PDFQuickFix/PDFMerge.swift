@@ -2,13 +2,13 @@ import Foundation
 import PDFKit
 import PDFQuickFixKit
 
-enum MergeOutlinePolicy: String, CaseIterable, Identifiable {
+enum MergeOutlinePolicy: String, CaseIterable, Identifiable, Codable {
     case addTopLevelPerSource
 
     var id: String { rawValue }
 }
 
-enum MergeMetadataPolicy: String, CaseIterable, Identifiable {
+enum MergeMetadataPolicy: String, CaseIterable, Identifiable, Codable {
     case keepFirst
     case keepLast
     case clear
@@ -40,6 +40,7 @@ enum PDFMergeError: LocalizedError {
     case cannotOpenSource(URL)
     case noReadableSources
     case failedToWriteOutput(URL)
+    case cancelled
 
     var errorDescription: String? {
         switch self {
@@ -51,6 +52,8 @@ enum PDFMergeError: LocalizedError {
             return "None of the selected PDFs could be opened."
         case .failedToWriteOutput(let url):
             return "Failed to write merged file to \(url.path)."
+        case .cancelled:
+            return "Operation cancelled."
         }
     }
 }
@@ -63,13 +66,17 @@ enum PDFMerge {
 
     static func merge(urls: [URL],
                       outputURL: URL,
-                      options: PDFMergeOptions = .default) throws -> PDFMergeResult {
+                      options: PDFMergeOptions = .default,
+                      shouldCancel: (() -> Bool)? = nil) throws -> PDFMergeResult {
         let inputURLs = options.deduplicateSources ? deduplicated(urls: urls) : urls
         guard !inputURLs.isEmpty else {
             throw PDFMergeError.noPDFsSelected
         }
+        if shouldCancel?() == true {
+            throw PDFMergeError.cancelled
+        }
 
-        let loaded = try loadDocuments(urls: inputURLs, skipUnreadable: options.skipUnreadableSources)
+        let loaded = try loadDocuments(urls: inputURLs, skipUnreadable: options.skipUnreadableSources, shouldCancel: shouldCancel)
         guard let firstLoaded = loaded.documents.first else {
             throw PDFMergeError.noReadableSources
         }
@@ -103,6 +110,9 @@ enum PDFMerge {
                 )
             )
             for pageIndex in 0..<item.document.pageCount {
+                if shouldCancel?() == true {
+                    throw PDFMergeError.cancelled
+                }
                 guard let page = item.document.page(at: pageIndex)?.copy() as? PDFPage else { continue }
                 baseDocument.insert(page, at: baseDocument.pageCount)
             }
@@ -110,6 +120,9 @@ enum PDFMerge {
 
         applyMetadata(policy: options.metadataPolicy, to: baseDocument, loadedDocuments: loaded.documents)
         applyOutline(policy: options.outlinePolicy, to: baseDocument, entries: outlineEntries)
+        if shouldCancel?() == true {
+            throw PDFMergeError.cancelled
+        }
 
         var warnings = loaded.warnings
         if !writeWithRecovery(document: baseDocument, to: outputURL, warnings: &warnings) {
@@ -156,12 +169,15 @@ private extension PDFMerge {
         return unique
     }
 
-    static func loadDocuments(urls: [URL], skipUnreadable: Bool) throws -> LoadDocumentsResult {
+    static func loadDocuments(urls: [URL], skipUnreadable: Bool, shouldCancel: (() -> Bool)? = nil) throws -> LoadDocumentsResult {
         var loaded: [LoadedDocument] = []
         var skipped: [URL] = []
         var warnings: [String] = []
 
         for url in urls {
+            if shouldCancel?() == true {
+                throw PDFMergeError.cancelled
+            }
             do {
                 let doc = try PDFDocumentSanitizer.loadDocument(at: url)
                 loaded.append(LoadedDocument(url: url, document: doc))

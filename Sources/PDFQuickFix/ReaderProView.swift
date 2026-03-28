@@ -32,6 +32,8 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
     @Published var isMassiveDocument: Bool = false
     @Published var isPartialLoad: Bool = false
     @Published var isRepaired: Bool = false
+    @Published var skippedQuickValidation: Bool = false
+    @Published var isDocumentHealthPresented: Bool = false
 
     weak var pdfView: PDFView?
 
@@ -167,8 +169,6 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         searchMatches.removeAll()
         validationStatus = nil
         validationMode = .idle
-        validationStatus = nil
-        validationMode = .idle
         isFullValidationRunning = false
         isPartialLoad = false
         self.isRepaired = isRepaired
@@ -177,6 +177,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
             estimatedPages: nil,
             resolvedPageCount: newDocument.pageCount
         )
+        skippedQuickValidation = shouldSkipAutoValidation
         let isMassive = profile.isMassive
         if !isMassive && !shouldSkipAutoValidation {
             scheduleValidation(for: workingURL, pageLimit: 10, mode: .quick)
@@ -192,11 +193,12 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
     private func handleOpenError(_ error: Error) {
         document = nil
         pdfView?.document = nil
-        pdfView?.document = nil
         currentURL = nil
         sourceURL = nil
         activeSecurityScope = nil
         isLargeDocument = false
+        isMassiveDocument = false
+        skippedQuickValidation = false
         validationStatus = nil
         isFullValidationRunning = false
         validationMode = .idle
@@ -224,6 +226,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         isMassiveDocument = false
         isPartialLoad = false
         isRepaired = false
+        skippedQuickValidation = false
         searchMatches.removeAll()
         currentMatchIndex = nil
         validationStatus = nil
@@ -698,10 +701,40 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
     private func logMassiveDocument(pageCount: Int, url: URL?) {
         NSLog("PDFPerfTelemetry: massiveDocEnabled pageCount=%d file=%@", pageCount, url?.lastPathComponent ?? "unknown")
     }
+
+    var canShowDocumentHealth: Bool {
+        document != nil
+    }
+
+    var hasActiveSecurityScope: Bool {
+        activeSecurityScope != nil
+    }
+
+    func showDocumentHealth() {
+        guard canShowDocumentHealth else { return }
+        isDocumentHealthPresented = true
+    }
+
+    var documentHealthSummary: DocumentHealthSummary? {
+        guard let document else { return nil }
+        let name = currentURL?.lastPathComponent ?? document.documentURL?.lastPathComponent ?? "PDF"
+        let quickFixResult = currentURL.flatMap { QuickFixResultStore.shared.result(for: $0) }
+        return DocumentHealthSummary.build(
+            documentName: name,
+            pageCount: document.pageCount,
+            isRepaired: isRepaired,
+            isLargeDocument: isLargeDocument,
+            isMassiveDocument: isMassiveDocument,
+            skippedQuickValidation: skippedQuickValidation,
+            validationStatus: validationStatus,
+            quickFixResult: quickFixResult
+        )
+    }
 }
 
 extension ReaderControllerPro: DocumentClosable {}
 extension ReaderControllerPro: DocumentPrintable {}
+extension ReaderControllerPro: DocumentHealthPresentable {}
 
 extension ReaderControllerPro: FileExportable {
      func exportSanitized() {
@@ -869,6 +902,7 @@ struct ReaderProView: View, Equatable {
             .focusedSceneValue(\.documentPrintable, controller)
             .focusedSceneValue(\.pdfActionable, controller)
             .focusedSceneValue(\.documentClosable, controller)
+            .focusedSceneValue(\.documentHealthPresentable, controller)
             .onDrop(of: [.fileURL, .url, .pdf], delegate: PDFURLDropDelegate { url in
                 droppedURL = url
             })
@@ -910,6 +944,19 @@ struct ReaderProView: View, Equatable {
                 }
                 .padding(16)
                 .frame(minWidth: 420)
+            }
+            .sheet(isPresented: $controller.isDocumentHealthPresented) {
+                if let summary = controller.documentHealthSummary {
+                    DocumentHealthSheet(
+                        summary: summary,
+                        onRepairAndSaveAs: { controller.repairAndSaveAs() },
+                        onExportSanitized: { controller.exportSanitized() },
+                        onOpenQuickFix: { selectedTab = .quickFix }
+                    )
+                } else {
+                    Text("No active document.")
+                        .padding(24)
+                }
             }
             .onAppear {
                 syncFromHub()

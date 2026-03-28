@@ -60,4 +60,99 @@ final class PDFSplitterTests: XCTestCase {
         let part2 = PDFDocument(url: result.outputFiles[1])!
         XCTAssertEqual(part2.pageCount, 5)
     }
+
+    func testSplitExplicitBreaks() throws {
+        let url = try TestPDFBuilder.makeMultipagePDF(pageCount: 10)
+        let options = PDFSplitOptions(
+            sourceURL: url,
+            destinationDirectory: tempDir,
+            mode: .explicitBreaks([1, 4, 8])
+        )
+        let splitter = PDFSplitter()
+
+        let result = try splitter.split(options: options)
+
+        XCTAssertEqual(result.outputFiles.count, 3)
+        XCTAssertEqual(PDFDocument(url: result.outputFiles[0])?.pageCount, 3)
+        XCTAssertEqual(PDFDocument(url: result.outputFiles[1])?.pageCount, 4)
+        XCTAssertEqual(PDFDocument(url: result.outputFiles[2])?.pageCount, 3)
+    }
+
+    func testSplitApproxTargetSizeProducesSmallerParts() throws {
+        let url = try TestPDFBuilder.makeMultipagePDF(pageCount: 6)
+        let options = PDFSplitOptions(
+            sourceURL: url,
+            destinationDirectory: tempDir,
+            mode: .approxTargetSizeMB(0.001)
+        )
+        let splitter = PDFSplitter()
+
+        let result = try splitter.split(options: options)
+
+        XCTAssertGreaterThan(result.outputFiles.count, 1)
+        XCTAssertTrue(result.outputFiles.allSatisfy { PDFDocument(url: $0)?.pageCount == 1 })
+    }
+
+    func testSplitOutlineChaptersUsesTopLevelBookmarks() throws {
+        let url = try makeOutlinedPDF(pageCount: 5, breakPages: [1, 4])
+        let options = PDFSplitOptions(
+            sourceURL: url,
+            destinationDirectory: tempDir,
+            mode: .outlineChapters
+        )
+        let splitter = PDFSplitter()
+
+        let result = try splitter.split(options: options)
+
+        XCTAssertEqual(result.outputFiles.count, 2)
+        XCTAssertEqual(PDFDocument(url: result.outputFiles[0])?.pageCount, 3)
+        XCTAssertEqual(PDFDocument(url: result.outputFiles[1])?.pageCount, 2)
+    }
+
+    func testSplitCancellationStopsWork() throws {
+        let url = try TestPDFBuilder.makeMultipagePDF(pageCount: 8)
+        let options = PDFSplitOptions(
+            sourceURL: url,
+            destinationDirectory: tempDir,
+            mode: .maxPagesPerPart(2)
+        )
+        let splitter = PDFSplitter()
+        var calls = 0
+
+        XCTAssertThrowsError(
+            try splitter.split(options: options, shouldCancel: {
+                calls += 1
+                return calls > 1
+            })
+        ) { error in
+            guard case PDFSplitError.cancelled = error else {
+                XCTFail("Unexpected error: \(error)")
+                return
+            }
+        }
+    }
+
+    private func makeOutlinedPDF(pageCount: Int, breakPages: [Int]) throws -> URL {
+        let url = try TestPDFBuilder.makeMultipagePDF(pageCount: pageCount)
+        guard let document = PDFDocument(url: url) else {
+            XCTFail("Unable to reopen test PDF")
+            return url
+        }
+
+        let root = PDFOutline()
+        root.label = "Outline"
+        for pageNumber in breakPages {
+            guard pageNumber > 0,
+                  pageNumber <= document.pageCount,
+                  let page = document.page(at: pageNumber - 1) else { continue }
+            let destination = PDFDestination(page: page, at: CGPoint(x: 0, y: page.bounds(for: .mediaBox).maxY))
+            let child = PDFOutline()
+            child.label = "Page \(pageNumber)"
+            child.destination = destination
+            root.insertChild(child, at: root.numberOfChildren)
+        }
+        document.outlineRoot = root
+        XCTAssertTrue(document.write(to: url))
+        return url
+    }
 }

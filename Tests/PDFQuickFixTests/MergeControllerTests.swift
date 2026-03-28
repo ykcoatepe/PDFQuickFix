@@ -2,10 +2,24 @@ import XCTest
 @testable import PDFQuickFix
 
 final class MergeControllerTests: XCTestCase {
+    private var suiteName: String!
+    private var defaults: UserDefaults!
+
+    override func setUp() {
+        super.setUp()
+        suiteName = "MergeControllerTests.\(UUID().uuidString)"
+        defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+    }
+
+    override func tearDown() {
+        defaults.removePersistentDomain(forName: suiteName)
+        super.tearDown()
+    }
 
     @MainActor
     func testCanMergeRequiresAtLeastTwoSourcesAndDestination() {
-        let controller = MergeController()
+        let controller = MergeController(defaults: defaults)
         controller.outputFileName = "Merged.pdf"
 
         XCTAssertFalse(controller.canMerge)
@@ -23,7 +37,7 @@ final class MergeControllerTests: XCTestCase {
 
     @MainActor
     func testCanMergeFalseWhenOutputNameEmpty() {
-        let controller = MergeController()
+        let controller = MergeController(defaults: defaults)
         controller.addSourceURLs([
             URL(fileURLWithPath: "/tmp/a.pdf"),
             URL(fileURLWithPath: "/tmp/b.pdf")
@@ -35,7 +49,7 @@ final class MergeControllerTests: XCTestCase {
 
     @MainActor
     func testUniqueOutputURLAvoidsExistingFileCollisions() throws {
-        let controller = MergeController()
+        let controller = MergeController(defaults: defaults)
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -47,5 +61,57 @@ final class MergeControllerTests: XCTestCase {
 
         let unique = controller.uniqueOutputURL(for: requested)
         XCTAssertEqual(unique.lastPathComponent, "Merged (3).pdf")
+    }
+
+    @MainActor
+    func testPresetPersistenceRoundTrip() {
+        let controller = MergeController(defaults: defaults)
+        controller.addSourceURLs([
+            URL(fileURLWithPath: "/tmp/a.pdf"),
+            URL(fileURLWithPath: "/tmp/b.pdf")
+        ])
+        controller.destinationFolderURL = URL(fileURLWithPath: "/tmp")
+        controller.outputFileName = "Archive.pdf"
+        controller.insertBlankPageBetweenDocuments = true
+        controller.savePreset(named: "Archive")
+
+        let reloaded = MergeController(defaults: defaults)
+        XCTAssertEqual(reloaded.presets.count, 1)
+        XCTAssertEqual(reloaded.presets.first?.name, "Archive")
+        XCTAssertEqual(reloaded.presets.first?.settings.outputFileName, "Archive.pdf")
+    }
+
+    @MainActor
+    func testHistoryPersistsAfterMerge() throws {
+        let source1 = try TestPDFBuilder.makeMultipagePDF(pageCount: 1, textPrefix: "One")
+        let source2 = try TestPDFBuilder.makeMultipagePDF(pageCount: 1, textPrefix: "Two")
+        let outputDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: outputDir) }
+
+        let controller = MergeController(defaults: defaults)
+        controller.addSourceURLs([source1, source2])
+        controller.destinationFolderURL = outputDir
+        controller.outputFileName = "Merged.pdf"
+
+        controller.merge()
+        waitForMerge(controller)
+
+        XCTAssertEqual(controller.history.count, 1)
+        XCTAssertEqual(controller.history.first?.destinationFolder, outputDir.lastPathComponent)
+        XCTAssertEqual(controller.history.first?.outputFileName, "Merged.pdf")
+
+        let reloaded = MergeController(defaults: defaults)
+        XCTAssertEqual(reloaded.history.count, 1)
+        XCTAssertEqual(reloaded.history.first?.destinationFolder, outputDir.lastPathComponent)
+    }
+
+    @MainActor
+    private func waitForMerge(_ controller: MergeController, timeout: TimeInterval = 5) {
+        let deadline = Date().addingTimeInterval(timeout)
+        while controller.isWorking && Date() < deadline {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
+        }
+        XCTAssertFalse(controller.isWorking)
     }
 }
