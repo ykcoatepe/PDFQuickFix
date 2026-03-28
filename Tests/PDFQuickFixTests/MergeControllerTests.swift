@@ -124,6 +124,41 @@ final class MergeControllerTests: XCTestCase {
     }
 
     @MainActor
+    func testMoveSourceAdjustsDestinationAfterRemovingLowerIndexes() {
+        let controller = MergeController(defaults: defaults)
+        controller.sourceURLs = [
+            URL(fileURLWithPath: "/tmp/1.pdf"),
+            URL(fileURLWithPath: "/tmp/2.pdf"),
+            URL(fileURLWithPath: "/tmp/3.pdf"),
+            URL(fileURLWithPath: "/tmp/4.pdf")
+        ]
+
+        controller.moveSource(from: IndexSet(integer: 1), to: 3)
+
+        XCTAssertEqual(controller.sourceURLs.map(\.lastPathComponent), ["1.pdf", "3.pdf", "2.pdf", "4.pdf"])
+    }
+
+    @MainActor
+    func testMergeCancellationSetsCancelledStatus() throws {
+        let source1 = try TestPDFBuilder.makeMultipagePDF(pageCount: 1200, textPrefix: "One")
+        let source2 = try TestPDFBuilder.makeMultipagePDF(pageCount: 1200, textPrefix: "Two")
+        let outputDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: outputDir) }
+
+        let controller = MergeController(defaults: defaults)
+        controller.addSourceURLs([source1, source2])
+        controller.destinationFolderURL = outputDir
+        controller.outputFileName = "Merged.pdf"
+
+        controller.merge()
+        controller.cancel()
+        waitForMerge(controller, timeout: 10)
+
+        XCTAssertEqual(controller.status, "Merge cancelled.")
+    }
+
+    @MainActor
     private func waitForMerge(_ controller: MergeController, timeout: TimeInterval = 5) {
         let deadline = Date().addingTimeInterval(timeout)
         while controller.isWorking && Date() < deadline {

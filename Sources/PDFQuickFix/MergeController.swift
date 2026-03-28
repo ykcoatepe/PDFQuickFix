@@ -92,11 +92,13 @@ final class MergeController: ObservableObject {
 
     func moveSource(from offsets: IndexSet, to destination: Int) {
         let moving = offsets.sorted().compactMap { sourceURLs.indices.contains($0) ? sourceURLs[$0] : nil }
+        let removedBeforeDestination = offsets.filter { $0 < destination }.count
         for index in offsets.sorted(by: >) {
             guard sourceURLs.indices.contains(index) else { continue }
             sourceURLs.remove(at: index)
         }
-        let boundedDestination = max(0, min(destination, sourceURLs.count))
+        let adjustedDestination = destination - removedBeforeDestination
+        let boundedDestination = max(0, min(adjustedDestination, sourceURLs.count))
         sourceURLs.insert(contentsOf: moving, at: boundedDestination)
     }
 
@@ -335,7 +337,7 @@ final class MergeController: ObservableObject {
     private func finishMergeFailure(error: Error) {
         isWorking = false
         currentTask = nil
-        if error is MergeControllerError {
+        if isCancellationError(error) {
             status = "Merge cancelled."
         } else {
             status = "Merge failed: \(error.localizedDescription)"
@@ -363,5 +365,15 @@ final class MergeController: ObservableObject {
         guard let path, !path.isEmpty else { return nil }
         let url = URL(fileURLWithPath: path)
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
+    private func isCancellationError(_ error: Error) -> Bool {
+        if error is MergeControllerError || error is CancellationError {
+            return true
+        }
+        if let mergeError = error as? PDFMergeError, case .cancelled = mergeError {
+            return true
+        }
+        return false
     }
 }
