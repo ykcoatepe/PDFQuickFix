@@ -14,11 +14,40 @@ final class DocumentTextSessionTests: XCTestCase {
         let url = try makeTextPDF(pages: ["Doc 1", "Doc 2", "Doc 3"])
         defer { try? FileManager.default.removeItem(at: url) }
 
-        let session = DocumentTextSession(documentURL: url)
+        let session = try DocumentTextSession(documentURL: url)
         let text = try session.extractText(pageSelection: "2")
 
         XCTAssertTrue(text.contains("--- Page 2 ---"))
         XCTAssertTrue(text.contains("Doc 2"))
+    }
+
+    func testExtractTextForCurrentPageUsesLiveDocument() throws {
+        let url = try makeTextPDF(pages: ["Doc 1", "Doc 2", "Doc 3"])
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let document = try XCTUnwrap(PDFDocument(url: url))
+        let session = DocumentTextSession(document: document)
+        let text = try session.extractText(currentPageIndex: 1)
+
+        XCTAssertTrue(text.contains("--- Page 2 ---"))
+        XCTAssertTrue(text.contains("Doc 2"))
+    }
+
+    func testSelectionScopeReturnsSelectionText() throws {
+        let session = DocumentTextSession(document: PDFDocument())
+        XCTAssertEqual(try session.extractText(scope: .selection("Selected text")), "Selected text")
+    }
+
+    func testParsePageSelectionThrowsForInvalidToken() {
+        XCTAssertThrowsError(try DocumentTextSession.parsePageSelection("1, abc", pageCount: 3)) { error in
+            XCTAssertEqual(error as? PDFTextExtractorError, .invalidPageSelection("abc"))
+        }
+    }
+
+    func testParsePageSelectionThrowsForOutOfRangePage() {
+        XCTAssertThrowsError(try DocumentTextSession.parsePageSelection("4", pageCount: 3)) { error in
+            XCTAssertEqual(error as? PDFTextExtractorError, .pageOutOfRange(4, 3))
+        }
     }
 
     private func makeTextPDF(pages: [String]) throws -> URL {

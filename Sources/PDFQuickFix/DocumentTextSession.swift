@@ -9,10 +9,15 @@ struct DocumentTextSession {
         case selection(String)
     }
 
-    let documentURL: URL
+    private let document: PDFDocument
 
-    init(documentURL: URL) {
-        self.documentURL = documentURL
+    init(document: PDFDocument) {
+        self.document = document
+    }
+
+    init(documentURL: URL) throws {
+        let data = try Data(contentsOf: documentURL)
+        self.document = PDFDocument(data: data) ?? PDFDocument()
     }
 
     func extractText(pageSelection: String? = nil) throws -> String {
@@ -81,10 +86,6 @@ struct DocumentTextSession {
     }
 
     private func extractDocumentText(pageSelection: String?) throws -> String {
-        let data = try Data(contentsOf: documentURL)
-        guard let document = PDFDocument(data: data) else {
-            return ""
-        }
         let pageCount = document.pageCount
         guard pageCount > 0 else { return "" }
         let pages = try Self.parsePageSelection(pageSelection, pageCount: pageCount)
@@ -105,7 +106,7 @@ struct DocumentTextSession {
     }
 }
 
-enum PDFTextExtractorError: LocalizedError {
+enum PDFTextExtractorError: LocalizedError, Equatable {
     case invalidPageSelection(String)
     case pageOutOfRange(Int, Int)
     case emptyPageSelection
@@ -116,11 +117,11 @@ enum PDFTextExtractorError: LocalizedError {
         case .invalidPageSelection(let token):
             return "Invalid page selection: \"\(token)\". Use formats like 1-3, 6."
         case .pageOutOfRange(let page, let total):
-            return "Page \(page) is out of range. This PDF has \(total) pages."
+            return "Page \(page) is out of range. This document has \(total) pages."
         case .emptyPageSelection:
             return "No pages selected. Enter a page range like 1-3."
         case .missingInput:
-            return "Select a PDF or image first."
+            return "Select a document first."
         }
     }
 }
