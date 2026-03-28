@@ -396,7 +396,7 @@ struct QuickFixTab: View {
                 let sourceURL = try await resolveAITaskSourceURL()
                 let selection = task == .summarize ? aiPageSelection : ""
                 let text = try await Task.detached(priority: .userInitiated) {
-                    try PDFTextExtractor.extractText(from: sourceURL, pageSelection: selection)
+                    try DocumentTextSession(documentURL: sourceURL).extractText(pageSelection: selection)
                 }.value
                 if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     updateAIState(error: "No text found. Run OCR first, then try again.")
@@ -837,92 +837,6 @@ final class QuickFixPrintCoordinator: ObservableObject, DocumentPrintable {
 
     private func isPDF(_ url: URL) -> Bool {
         url.pathExtension.lowercased() == "pdf"
-    }
-}
-
-enum PDFTextExtractor {
-    static func extractText(from url: URL, pageSelection: String? = nil) throws -> String {
-        let data = try Data(contentsOf: url)
-        guard let document = PDFDocument(data: data) else {
-            return ""
-        }
-        let pageCount = document.pageCount
-        guard pageCount > 0 else { return "" }
-        let pages = try parsePageSelection(pageSelection, pageCount: pageCount)
-        var combined = ""
-        for index in pages {
-            guard let page = document.page(at: index), let text = page.string else { continue }
-            combined.append("--- Page \(index + 1) ---\n")
-            combined.append(text)
-            combined.append("\n\n")
-        }
-        return combined
-    }
-
-    private static func parsePageSelection(_ selection: String?, pageCount: Int) throws -> [Int] {
-        guard let selection = selection?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !selection.isEmpty else {
-            return Array(0..<pageCount)
-        }
-        var selected = Set<Int>()
-        for token in selection.split(separator: ",") {
-            let trimmed = String(token).trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { continue }
-            let parts = trimmed.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false)
-            if parts.count == 1 {
-                let value = String(parts[0]).trimmingCharacters(in: .whitespacesAndNewlines)
-                guard let page = Int(value) else {
-                    throw PDFTextExtractorError.invalidPageSelection(String(trimmed))
-                }
-                try validatePage(page, pageCount: pageCount)
-                selected.insert(page - 1)
-            } else if parts.count == 2 {
-                let startString = String(parts[0]).trimmingCharacters(in: .whitespacesAndNewlines)
-                let endString = String(parts[1]).trimmingCharacters(in: .whitespacesAndNewlines)
-                guard let start = Int(startString), let end = Int(endString), start <= end else {
-                    throw PDFTextExtractorError.invalidPageSelection(String(trimmed))
-                }
-                try validatePage(start, pageCount: pageCount)
-                try validatePage(end, pageCount: pageCount)
-                for page in start...end {
-                    selected.insert(page - 1)
-                }
-            } else {
-                throw PDFTextExtractorError.invalidPageSelection(String(trimmed))
-            }
-        }
-
-        let sorted = selected.sorted()
-        if sorted.isEmpty {
-            throw PDFTextExtractorError.emptyPageSelection
-        }
-        return sorted
-    }
-
-    private static func validatePage(_ page: Int, pageCount: Int) throws {
-        guard page >= 1 && page <= pageCount else {
-            throw PDFTextExtractorError.pageOutOfRange(page, pageCount)
-        }
-    }
-}
-
-enum PDFTextExtractorError: LocalizedError {
-    case invalidPageSelection(String)
-    case pageOutOfRange(Int, Int)
-    case emptyPageSelection
-    case missingInput
-
-    var errorDescription: String? {
-        switch self {
-        case .invalidPageSelection(let token):
-            return "Invalid page selection: \"\(token)\". Use formats like 1-3, 6."
-        case .pageOutOfRange(let page, let total):
-            return "Page \(page) is out of range. This PDF has \(total) pages."
-        case .emptyPageSelection:
-            return "No pages selected. Enter a page range like 1-3."
-        case .missingInput:
-            return "Select a PDF or image first."
-        }
     }
 }
 
