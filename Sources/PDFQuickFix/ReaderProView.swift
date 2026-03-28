@@ -41,6 +41,14 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
     @Published var isDocumentHealthPresented: Bool = false
 
     weak var pdfView: PDFView?
+    var currentSelectionText: String? {
+        guard let value = pdfView?.currentSelection?.string?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !value.isEmpty else {
+            return nil
+        }
+        return value
+    }
 
     private var findObserver: NSObjectProtocol?
     private let validationRunner = DocumentValidationRunner()
@@ -677,8 +685,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
     }
 
     func explainCurrentSelection() async {
-        guard let selectionText = pdfView?.currentSelection?.string?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !selectionText.isEmpty else {
+        guard let selectionText = currentSelectionText else {
             copilotError = "Select text first."
             return
         }
@@ -835,6 +842,28 @@ enum ReaderRightPanelTab: String, CaseIterable, Identifiable {
     case copilot
 
     var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .info:
+            return "Info"
+        case .comments:
+            return "Comments"
+        case .copilot:
+            return "Copilot"
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .info:
+            return "info.circle"
+        case .comments:
+            return "text.bubble"
+        case .copilot:
+            return "sparkles"
+        }
+    }
 }
 
 extension ReaderControllerPro: DocumentClosable {}
@@ -1544,22 +1573,22 @@ struct ReaderSidebarLeft: View {
 struct ReaderSidebarRight: View {
     @ObservedObject var controller: ReaderControllerPro
     let profile: DocumentProfile
-    @State private var selectedTab: RightTab = .info
-    
-    enum RightTab { case info, comments }
     
     var body: some View {
         VStack(spacing: 0) {
-            Picker("", selection: $selectedTab) {
-                Image(systemName: "info.circle").tag(RightTab.info)
-                Image(systemName: "text.bubble").tag(RightTab.comments)
+            Picker("", selection: $controller.selectedRightPanelTab) {
+                ForEach(ReaderRightPanelTab.allCases) { tab in
+                    Label(tab.displayName, systemImage: tab.symbolName)
+                        .tag(tab)
+                }
             }
             .pickerStyle(.segmented)
             .padding(8)
             
             Divider()
             
-            if selectedTab == .info {
+            switch controller.selectedRightPanelTab {
+            case .info:
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
                         InfoRow(label: "File", value: controller.currentURL?.lastPathComponent ?? "-")
@@ -1572,10 +1601,12 @@ struct ReaderSidebarRight: View {
                     }
                     .padding()
                 }
-            } else {
+            case .comments:
                 Text("No Comments")
                     .foregroundColor(AppTheme.Colors.secondaryText)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+            case .copilot:
+                ReaderCopilotView(controller: controller)
             }
         }
         .background(AppTheme.Colors.sidebarBackground)

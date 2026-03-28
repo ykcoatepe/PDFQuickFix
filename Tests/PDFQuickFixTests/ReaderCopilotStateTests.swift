@@ -12,6 +12,46 @@ final class ReaderCopilotStateTests: XCTestCase {
         super.tearDown()
     }
 
+    func testReaderRightPanelTabsIncludeCopilot() {
+        XCTAssertTrue(ReaderRightPanelTab.allCases.contains(.copilot))
+    }
+
+    func testReaderRightPanelTabHasCopilotDisplayMetadata() {
+        XCTAssertEqual(ReaderRightPanelTab.copilot.displayName, "Copilot")
+        XCTAssertEqual(ReaderRightPanelTab.copilot.symbolName, "sparkles")
+    }
+
+    func testExplainSelectionUsesCurrentPDFSelectionText() async throws {
+        let expectedResponse = DocumentCopilotResponse.makeStub(answer: "Explained")
+        let service = StubCopilotService(response: expectedResponse)
+        let controller = ReaderControllerPro(copilotService: service)
+        let pdfView = PDFView()
+        controller.pdfView = pdfView
+
+        let document = try makeTextDocument(text: "Selected text lives here")
+        controller.document = document
+        pdfView.document = document
+
+        guard let page = document.page(at: 0),
+              let pageText = page.string,
+              let selection = document.selection(from: page,
+                                                 atCharacterIndex: 0,
+                                                 to: page,
+                                                 atCharacterIndex: pageText.count - 1) else {
+            XCTFail("Unable to create selection from text-backed PDF")
+            return
+        }
+
+        pdfView.setCurrentSelection(selection, animate: false)
+        await controller.explainCurrentSelection()
+
+        XCTAssertEqual(
+            service.requests,
+            [.explainSelection(selection: pageText, scope: .selection(pageText))]
+        )
+        XCTAssertEqual(controller.copilotResponse, expectedResponse)
+    }
+
     func testQuickSummaryPopulatesControllerResponse() throws {
         let expectedResponse = DocumentCopilotResponse(
             answer: "Summary ready.",
@@ -162,6 +202,24 @@ final class ReaderCopilotStateTests: XCTestCase {
         XCTAssertFalse(controller.isCopilotRunning)
         XCTAssertNil(controller.document)
     }
+
+    func testExplainCurrentSelectionUsesCurrentPDFSelectionText() async throws {
+        let service = StubCopilotService(response: .makeStub(answer: "Explained"))
+        let controller = ReaderControllerPro(copilotService: service)
+        let pdfView = StubPDFView()
+        pdfView.currentSelection = StubPDFSelection(text: "Selected text lives here")
+        controller.pdfView = pdfView
+        controller.document = PDFDocument()
+
+        await controller.explainCurrentSelection()
+
+        XCTAssertEqual(
+            service.requests,
+            [.explainSelection(selection: "Selected text lives here", scope: .selection("Selected text lives here"))]
+        )
+        XCTAssertEqual(controller.copilotResponse, .makeStub(answer: "Explained"))
+        XCTAssertNil(controller.copilotError)
+    }
 }
 
 private final class StubCopilotService: DocumentCopilotServicing {
@@ -243,6 +301,26 @@ private actor BlockingCopilotService: DocumentCopilotServicing {
     }
 }
 
+private final class StubPDFSelection: PDFSelection {
+    private let selectionString: String
+
+    init(text: String) {
+        self.selectionString = text
+        super.init(document: PDFDocument())
+    }
+
+    override var string: String? { selectionString }
+}
+
+private final class StubPDFView: PDFView {
+    private var selectionStorage: PDFSelection?
+
+    override var currentSelection: PDFSelection? {
+        get { selectionStorage }
+        set { selectionStorage = newValue }
+    }
+}
+
 private extension DocumentCopilotResponse {
     static func makeStub(answer: String = "ok") -> DocumentCopilotResponse {
         DocumentCopilotResponse(
@@ -257,4 +335,44 @@ private extension DocumentCopilotResponse {
             contextWasTrimmed: false
         )
     }
+}
+
+private func makeTextDocument(text: String) throws -> PDFDocument {
+    let url = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString)
+        .appendingPathExtension("pdf")
+
+    var mediaBox = CGRect(x: 0, y: 0, width: 320, height: 240)
+    guard let context = CGContext(url as CFURL, mediaBox: &mediaBox, nil) else {
+        throw NSError(domain: "ReaderCopilotStateTests", code: -1, userInfo: [
+            NSLocalizedDescriptionKey: "Unable to create PDF context"
+        ])
+    }
+
+    context.beginPDFPage(nil)
+    let graphicsContext = NSGraphicsContext(cgContext: context, flipped: false)
+    NSGraphicsContext.saveGraphicsState()
+    NSGraphicsContext.current = graphicsContext
+    NSColor.white.setFill()
+    mediaBox.fill()
+    NSAttributedString(
+        string: text,
+        attributes: [
+            .font: NSFont.systemFont(ofSize: 18),
+            .foregroundColor: NSColor.black
+        ]
+    ).draw(in: CGRect(x: 24, y: 120, width: 272, height: 40))
+    NSGraphicsContext.restoreGraphicsState()
+    context.endPDFPage()
+    context.closePDF()
+
+    defer { try? FileManager.default.removeItem(at: url) }
+
+    guard let document = PDFDocument(url: url) else {
+        throw NSError(domain: "ReaderCopilotStateTests", code: -2, userInfo: [
+            NSLocalizedDescriptionKey: "Unable to open generated PDF"
+        ])
+    }
+
+    return document
 }
