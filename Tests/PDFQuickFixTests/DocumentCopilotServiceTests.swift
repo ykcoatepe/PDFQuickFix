@@ -74,6 +74,9 @@ final class DocumentCopilotServiceTests: XCTestCase {
 
         XCTAssertEqual(result.grounding, .ungrounded)
         XCTAssertTrue(result.citations.isEmpty)
+        XCTAssertFalse(result.requestWasTrimmed)
+        XCTAssertFalse(result.contextWasTrimmed)
+        XCTAssertFalse(result.inputWasTrimmed)
     }
 
     func testExplainSelectionWithoutRelevantGroundingReturnsNoCitations() async throws {
@@ -137,7 +140,7 @@ final class DocumentCopilotServiceTests: XCTestCase {
         )
     }
 
-    func testPromptTrimmingMetadataSeparatesRequestAndContextTruncation() async throws {
+    func testPromptTrimmingMetadataKeepsUngroundedMissSeparateFromContextTruncation() async throws {
         let longPage = String(repeating: "Context filler without the exact answer. ", count: 120)
         let url = try makeTextPDF(pages: Array(repeating: longPage, count: 6))
         defer { try? FileManager.default.removeItem(at: url) }
@@ -160,7 +163,7 @@ final class DocumentCopilotServiceTests: XCTestCase {
         )
 
         XCTAssertTrue(result.requestWasTrimmed)
-        XCTAssertTrue(result.contextWasTrimmed)
+        XCTAssertFalse(result.contextWasTrimmed)
         XCTAssertTrue(result.inputWasTrimmed)
         XCTAssertLessThanOrEqual(result.promptCharacterCount, 1_100)
     }

@@ -196,7 +196,7 @@ final class DocumentCopilotService {
                     selectedChunks: [],
                     citations: [],
                     contextText: groundedMissingMessage,
-                    contextWasTrimmed: !scopeContent.chunks.isEmpty
+                    contextWasTrimmed: false
                 )
             }
 
