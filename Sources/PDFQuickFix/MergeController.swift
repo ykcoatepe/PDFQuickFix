@@ -26,6 +26,7 @@ final class MergeController: ObservableObject {
         didSet {
             if deduplicateSources {
                 sourceURLs = deduplicated(sourceURLs)
+                rebuildSourceAccesses()
             }
         }
     }
@@ -41,13 +42,17 @@ final class MergeController: ObservableObject {
     @Published var lastOutputURL: URL?
 
     private let defaults: UserDefaults
+    private let bookmarking: Bookmarking
     private let presetsKey = "MergeController.presets"
     private let historyKey = "MergeController.history"
     private let mergeEngine = PDFMerge.self
     private var currentTask: Task<Void, Never>?
+    private var sourceAccesses: [SecurityScopedAccess] = []
+    private var destinationAccess: SecurityScopedAccess?
 
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = .standard, bookmarking: Bookmarking = SystemBookmarking()) {
         self.defaults = defaults
+        self.bookmarking = bookmarking
         presets = CodableUserDefaultsStore.loadArray([MergeJobPreset].self, key: presetsKey, defaults: defaults)
         history = CodableUserDefaultsStore.loadArray([MergeJobRecord].self, key: historyKey, defaults: defaults)
     }
@@ -76,6 +81,10 @@ final class MergeController: ObservableObject {
         if deduplicateSources {
             sourceURLs = deduplicated(sourceURLs)
         }
+        rebuildSourceAccesses()
+        if let destinationFolderURL {
+            destinationAccess = SecurityScopedAccess(url: destinationFolderURL)
+        }
         status = "Ready"
     }
 
@@ -84,10 +93,12 @@ final class MergeController: ObservableObject {
             guard sourceURLs.indices.contains(index) else { continue }
             sourceURLs.remove(at: index)
         }
+        rebuildSourceAccesses()
     }
 
     func clearSources() {
         sourceURLs = []
+        sourceAccesses = []
     }
 
     func moveSource(from offsets: IndexSet, to destination: Int) {
@@ -100,6 +111,7 @@ final class MergeController: ObservableObject {
         let adjustedDestination = destination - removedBeforeDestination
         let boundedDestination = max(0, min(adjustedDestination, sourceURLs.count))
         sourceURLs.insert(contentsOf: moving, at: boundedDestination)
+        rebuildSourceAccesses()
     }
 
     func chooseSources() {
@@ -120,6 +132,7 @@ final class MergeController: ObservableObject {
         panel.prompt = "Choose"
         if panel.runModal() == .OK, let url = panel.url {
             destinationFolderURL = url
+            destinationAccess = SecurityScopedAccess(url: url)
         }
     }
 
@@ -215,9 +228,13 @@ final class MergeController: ObservableObject {
         let destinationFolder = outputSelection.url.deletingLastPathComponent()
         let settings = currentSettings(with: outputSelection.url)
         let outputAccess = outputSelection.access
-        currentTask = Task.detached(priority: .userInitiated) { [weak self, outputAccess] in
+        let sourceAccesses = self.sourceAccesses
+        let destinationAccess = self.destinationAccess
+        currentTask = Task.detached(priority: .userInitiated) { [weak self, outputAccess, sourceAccesses, destinationAccess] in
             guard let self else { return }
             _ = outputAccess
+            _ = sourceAccesses
+            _ = destinationAccess
             do {
                 let result = try self.mergeEngine.merge(
                     urls: inputURLs,
@@ -286,9 +303,12 @@ final class MergeController: ObservableObject {
     }
 
     func currentSettings(with outputURL: URL? = nil) -> MergeJobSettings {
-        MergeJobSettings(
+        let destinationFolder = outputURL?.deletingLastPathComponent().standardizedFileURL ?? destinationFolderURL?.standardizedFileURL
+        return MergeJobSettings(
             sourceURLStrings: sourceURLs.map { $0.standardizedFileURL.path },
-            destinationFolderURLString: outputURL?.deletingLastPathComponent().standardizedFileURL.path ?? destinationFolderURL?.standardizedFileURL.path,
+            sourceBookmarkData: sourceURLs.map { bookmarkData(for: $0.standardizedFileURL) },
+            destinationFolderURLString: destinationFolder?.path,
+            destinationFolderBookmarkData: bookmarkData(for: destinationFolder),
             outputFileName: outputURL?.lastPathComponent ?? (outputFileNameTrimmed.isEmpty ? "Merged.pdf" : outputFileNameTrimmed),
             insertBlankPageBetweenDocuments: insertBlankPageBetweenDocuments,
             skipUnreadableSources: skipUnreadableSources,
@@ -299,8 +319,20 @@ final class MergeController: ObservableObject {
     }
 
     private func apply(settings: MergeJobSettings) {
-        sourceURLs = settings.sourceURLStrings.compactMap { resolvedURL(from: $0) }
-        destinationFolderURL = resolvedURL(from: settings.destinationFolderURLString)
+        sourceAccesses = []
+        sourceURLs = []
+        for (index, path) in settings.sourceURLStrings.enumerated() {
+            let bookmarkData = index < settings.sourceBookmarkData.count ? settings.sourceBookmarkData[index] : nil
+            if let access = access(from: bookmarkData) {
+                sourceAccesses.append(access)
+                sourceURLs.append(access.url)
+            } else if let url = resolvedURL(from: path) {
+                sourceURLs.append(url)
+            }
+        }
+
+        destinationAccess = access(from: settings.destinationFolderBookmarkData)
+        destinationFolderURL = destinationAccess?.url ?? resolvedURL(from: settings.destinationFolderURLString)
         outputFileName = settings.outputFileName
         insertBlankPageBetweenDocuments = settings.insertBlankPageBetweenDocuments
         skipUnreadableSources = settings.skipUnreadableSources
@@ -361,6 +393,25 @@ final class MergeController: ObservableObject {
 
     private func persistPresets() {
         CodableUserDefaultsStore.saveArray(presets, key: presetsKey, defaults: defaults)
+    }
+
+    private func rebuildSourceAccesses() {
+        sourceAccesses = sourceURLs.map { SecurityScopedAccess(url: $0) }
+    }
+
+    private func bookmarkData(for url: URL?) -> Data? {
+        guard let url else { return nil }
+        return try? bookmarking.bookmarkData(for: url, includingResourceValuesForKeys: nil, relativeTo: nil)
+    }
+
+    private func access(from bookmarkData: Data?) -> SecurityScopedAccess? {
+        guard let bookmarkData,
+              let result = try? bookmarking.resolveBookmarkData(bookmarkData,
+                                                               options: .withSecurityScope,
+                                                               relativeTo: nil) else {
+            return nil
+        }
+        return SecurityScopedAccess(url: result.url)
     }
 
     private func resolvedURL(from path: String?) -> URL? {

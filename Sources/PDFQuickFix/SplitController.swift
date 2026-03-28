@@ -248,7 +248,7 @@ final class SplitController: ObservableObject {
         let destination = destinationURL
         let splitter = PDFSplitter()
         if settings.applyToAllPDFsInFolder {
-            let folder = sourceURL.deletingLastPathComponent()
+            let folder = batchSourceFolderURL(from: sourceURL)
             let urls = try FileManager.default.contentsOfDirectory(at: folder,
                                                                    includingPropertiesForKeys: nil,
                                                                    options: [.skipsHiddenFiles])
@@ -479,7 +479,7 @@ final class SplitController: ObservableObject {
 
     private func sourceBookmarkURL(sourceURL: URL?) -> URL? {
         guard let sourceURL else { return nil }
-        return applyToAllPDFsInFolder ? sourceURL.deletingLastPathComponent() : sourceURL
+        return applyToAllPDFsInFolder ? batchSourceFolderURL(from: sourceURL) : sourceURL
     }
 
     private func bookmarkData(for url: URL?) -> Data? {
@@ -495,6 +495,21 @@ final class SplitController: ObservableObject {
             return nil
         }
         return SecurityScopedAccess(url: result.url)
+    }
+
+    private nonisolated func batchSourceFolderURL(from sourceURL: URL) -> URL {
+        if sourceURL.hasDirectoryPath || isDirectory(sourceURL) {
+            return sourceURL
+        }
+        return sourceURL.deletingLastPathComponent()
+    }
+
+    private nonisolated func isDirectory(_ url: URL) -> Bool {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else {
+            return false
+        }
+        return isDirectory.boolValue
     }
 
     private nonisolated func resolvedURL(from path: String?) -> URL? {

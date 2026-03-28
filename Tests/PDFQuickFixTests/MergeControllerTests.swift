@@ -65,7 +65,7 @@ final class MergeControllerTests: XCTestCase {
 
     @MainActor
     func testPresetPersistenceRoundTrip() {
-        let controller = MergeController(defaults: defaults)
+        let controller = MergeController(defaults: defaults, bookmarking: MockBookmarking())
         controller.addSourceURLs([
             URL(fileURLWithPath: "/tmp/a.pdf"),
             URL(fileURLWithPath: "/tmp/b.pdf")
@@ -75,10 +75,12 @@ final class MergeControllerTests: XCTestCase {
         controller.insertBlankPageBetweenDocuments = true
         controller.savePreset(named: "Archive")
 
-        let reloaded = MergeController(defaults: defaults)
+        let reloaded = MergeController(defaults: defaults, bookmarking: MockBookmarking())
         XCTAssertEqual(reloaded.presets.count, 1)
         XCTAssertEqual(reloaded.presets.first?.name, "Archive")
         XCTAssertEqual(reloaded.presets.first?.settings.outputFileName, "Archive.pdf")
+        XCTAssertEqual(reloaded.presets.first?.settings.sourceBookmarkData.count, 2)
+        XCTAssertNotNil(reloaded.presets.first?.settings.destinationFolderBookmarkData)
     }
 
     @MainActor
@@ -156,6 +158,47 @@ final class MergeControllerTests: XCTestCase {
         waitForMerge(controller, timeout: 10)
 
         XCTAssertEqual(controller.status, "Merge cancelled.")
+    }
+
+    @MainActor
+    func testApplyPresetRestoresURLsFromBookmarksWhenPathsAreUnavailable() throws {
+        let bookmarking = MockBookmarking()
+        let source1 = try TestPDFBuilder.makeMultipagePDF(pageCount: 1, textPrefix: "One")
+        let source2 = try TestPDFBuilder.makeMultipagePDF(pageCount: 1, textPrefix: "Two")
+        let destination = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: source1)
+            try? FileManager.default.removeItem(at: source2)
+            try? FileManager.default.removeItem(at: destination)
+        }
+
+        let preset = MergeJobPreset(
+            id: UUID(),
+            name: "Bookmark Restore",
+            createdAt: Date(),
+            settings: MergeJobSettings(
+                sourceURLStrings: ["/tmp/missing-1.pdf", "/tmp/missing-2.pdf"],
+                sourceBookmarkData: [
+                    try bookmarking.bookmarkData(for: source1, includingResourceValuesForKeys: nil, relativeTo: nil),
+                    try bookmarking.bookmarkData(for: source2, includingResourceValuesForKeys: nil, relativeTo: nil)
+                ],
+                destinationFolderURLString: "/tmp/missing-destination",
+                destinationFolderBookmarkData: try bookmarking.bookmarkData(for: destination, includingResourceValuesForKeys: nil, relativeTo: nil),
+                outputFileName: "Merged.pdf",
+                insertBlankPageBetweenDocuments: false,
+                skipUnreadableSources: true,
+                deduplicateSources: false,
+                outlinePolicy: .addTopLevelPerSource,
+                metadataPolicy: .keepFirst
+            )
+        )
+
+        let controller = MergeController(defaults: defaults, bookmarking: bookmarking)
+        controller.applyPreset(preset)
+
+        XCTAssertEqual(controller.sourceURLs, [source1, source2])
+        XCTAssertEqual(controller.destinationFolderURL, destination)
     }
 
     @MainActor

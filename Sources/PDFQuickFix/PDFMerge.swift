@@ -76,25 +76,37 @@ enum PDFMerge {
             throw PDFMergeError.cancelled
         }
 
-        let loaded = try loadDocuments(urls: inputURLs, skipUnreadable: options.skipUnreadableSources, shouldCancel: shouldCancel)
-        guard let firstLoaded = loaded.documents.first else {
-            throw PDFMergeError.noReadableSources
-        }
-
-        let baseDocument = firstLoaded.document
+        var mergeState = try prepareInitialState(urls: inputURLs,
+                                                 skipUnreadable: options.skipUnreadableSources,
+                                                 shouldCancel: shouldCancel)
+        let baseDocument = mergeState.base.document
         var outlineEntries: [OutlineEntry] = []
-        outlineEntries.reserveCapacity(loaded.documents.count)
+        outlineEntries.reserveCapacity(inputURLs.count)
         outlineEntries.append(
             OutlineEntry(
-                title: firstLoaded.url.deletingPathExtension().lastPathComponent,
+                title: mergeState.base.url.deletingPathExtension().lastPathComponent,
                 startPageIndex: 0
             )
         )
 
         var insertedSeparatorPageCount = 0
-        for (index, item) in loaded.documents.enumerated() {
-            if index == 0 {
-                continue
+        var mergedDocumentCount = 1
+        var lastReadableAttributes = mergeState.firstReadableAttributes
+        for url in inputURLs.dropFirst(mergeState.firstReadableIndex + 1) {
+            if shouldCancel?() == true {
+                throw PDFMergeError.cancelled
+            }
+
+            let item: LoadedDocument
+            do {
+                item = try loadDocument(at: url)
+            } catch {
+                if options.skipUnreadableSources {
+                    mergeState.skippedSources.append(url)
+                    mergeState.warnings.append("Skipped unreadable source: \(url.lastPathComponent)")
+                    continue
+                }
+                throw PDFMergeError.cannotOpenSource(url)
             }
 
             if options.insertBlankPageBetweenDocuments, let blankPage = makeBlankPageLikeFirstPage(in: baseDocument) {
@@ -116,24 +128,29 @@ enum PDFMerge {
                 guard let page = item.document.page(at: pageIndex)?.copy() as? PDFPage else { continue }
                 baseDocument.insert(page, at: baseDocument.pageCount)
             }
+            mergedDocumentCount += 1
+            lastReadableAttributes = sanitizedAttributes(from: item.document.documentAttributes)
         }
 
-        applyMetadata(policy: options.metadataPolicy, to: baseDocument, loadedDocuments: loaded.documents)
+        applyMetadata(policy: options.metadataPolicy,
+                      to: baseDocument,
+                      firstReadableAttributes: mergeState.firstReadableAttributes,
+                      lastReadableAttributes: lastReadableAttributes)
         applyOutline(policy: options.outlinePolicy, to: baseDocument, entries: outlineEntries)
         if shouldCancel?() == true {
             throw PDFMergeError.cancelled
         }
 
-        var warnings = loaded.warnings
+        var warnings = mergeState.warnings
         if !writeWithRecovery(document: baseDocument, to: outputURL, warnings: &warnings) {
             throw PDFMergeError.failedToWriteOutput(outputURL)
         }
         return PDFMergeResult(
             outputURL: outputURL,
-            mergedDocumentCount: loaded.documents.count,
+            mergedDocumentCount: mergedDocumentCount,
             mergedPageCount: baseDocument.pageCount,
             insertedSeparatorPageCount: insertedSeparatorPageCount,
-            skippedSources: loaded.skippedSources,
+            skippedSources: mergeState.skippedSources,
             warnings: warnings
         )
     }
@@ -145,10 +162,12 @@ private extension PDFMerge {
         let document: PDFDocument
     }
 
-    struct LoadDocumentsResult {
-        let documents: [LoadedDocument]
-        let skippedSources: [URL]
-        let warnings: [String]
+    struct InitialMergeState {
+        let base: LoadedDocument
+        let firstReadableIndex: Int
+        let firstReadableAttributes: [AnyHashable: Any]
+        var skippedSources: [URL]
+        var warnings: [String]
     }
 
     struct OutlineEntry {
@@ -169,18 +188,23 @@ private extension PDFMerge {
         return unique
     }
 
-    static func loadDocuments(urls: [URL], skipUnreadable: Bool, shouldCancel: (() -> Bool)? = nil) throws -> LoadDocumentsResult {
-        var loaded: [LoadedDocument] = []
+    static func prepareInitialState(urls: [URL], skipUnreadable: Bool, shouldCancel: (() -> Bool)? = nil) throws -> InitialMergeState {
         var skipped: [URL] = []
         var warnings: [String] = []
 
-        for url in urls {
+        for (index, url) in urls.enumerated() {
             if shouldCancel?() == true {
                 throw PDFMergeError.cancelled
             }
             do {
-                let doc = try PDFDocumentSanitizer.loadDocument(at: url)
-                loaded.append(LoadedDocument(url: url, document: doc))
+                let loaded = try loadDocument(at: url)
+                return InitialMergeState(
+                    base: loaded,
+                    firstReadableIndex: index,
+                    firstReadableAttributes: sanitizedAttributes(from: loaded.document.documentAttributes),
+                    skippedSources: skipped,
+                    warnings: warnings
+                )
             } catch {
                 if skipUnreadable {
                     skipped.append(url)
@@ -191,7 +215,11 @@ private extension PDFMerge {
             }
         }
 
-        return LoadDocumentsResult(documents: loaded, skippedSources: skipped, warnings: warnings)
+        throw PDFMergeError.noReadableSources
+    }
+
+    static func loadDocument(at url: URL) throws -> LoadedDocument {
+        LoadedDocument(url: url, document: try PDFDocumentSanitizer.loadDocument(at: url))
     }
 
     static func makeBlankPageLikeFirstPage(in document: PDFDocument) -> PDFPage? {
@@ -206,12 +234,13 @@ private extension PDFMerge {
 
     static func applyMetadata(policy: MergeMetadataPolicy,
                               to baseDocument: PDFDocument,
-                              loadedDocuments: [LoadedDocument]) {
+                              firstReadableAttributes: [AnyHashable: Any],
+                              lastReadableAttributes: [AnyHashable: Any]) {
         switch policy {
         case .keepFirst:
-            baseDocument.documentAttributes = sanitizedAttributes(from: loadedDocuments.first?.document.documentAttributes)
+            baseDocument.documentAttributes = firstReadableAttributes
         case .keepLast:
-            baseDocument.documentAttributes = sanitizedAttributes(from: loadedDocuments.last?.document.documentAttributes)
+            baseDocument.documentAttributes = lastReadableAttributes
         case .clear:
             baseDocument.documentAttributes = [:]
         }

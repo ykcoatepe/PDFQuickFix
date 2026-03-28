@@ -133,6 +133,50 @@ final class SplitControllerTests: XCTestCase {
     }
 
     @MainActor
+    func testBatchPresetRestoresFolderBookmarkForSplitExecution() throws {
+        let bookmarking = MockBookmarking()
+        let parentFolder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let batchFolder = parentFolder.appendingPathComponent("batch", isDirectory: true)
+        let destination = parentFolder.appendingPathComponent("output", isDirectory: true)
+        try FileManager.default.createDirectory(at: batchFolder, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+        let source = try TestPDFBuilder.makeMultipagePDF(pageCount: 2, textPrefix: "BatchBookmark")
+        let copiedSource = batchFolder.appendingPathComponent("batch.pdf")
+        try FileManager.default.copyItem(at: source, to: copiedSource)
+        defer {
+            try? FileManager.default.removeItem(at: parentFolder)
+            try? FileManager.default.removeItem(at: source)
+        }
+
+        let preset = SplitJobPreset(
+            id: UUID(),
+            name: "Folder Bookmark Restore",
+            createdAt: Date(),
+            settings: SplitJobSettings(
+                sourceURLString: "/tmp/missing-source-folder.pdf",
+                sourceBookmarkData: try bookmarking.bookmarkData(for: batchFolder, includingResourceValuesForKeys: nil, relativeTo: nil),
+                destinationURLString: "/tmp/missing-destination",
+                destinationBookmarkData: try bookmarking.bookmarkData(for: destination, includingResourceValuesForKeys: nil, relativeTo: nil),
+                applyToAllPDFsInFolder: true,
+                mode: .maxPagesPerFile,
+                maxPagesPerFile: 1,
+                numberOfParts: 2,
+                approxSizeMB: 50,
+                explicitBreaksText: "1"
+            )
+        )
+
+        let controller = SplitController(defaults: defaults, bookmarking: bookmarking)
+        controller.applyPreset(preset)
+        controller.split()
+        waitForSplit(controller)
+
+        XCTAssertEqual(controller.sourceURL, batchFolder)
+        XCTAssertEqual(controller.lastOutputFiles.count, 2)
+        XCTAssertEqual(controller.status, "Done. 2 file(s) written to \(destination.lastPathComponent).")
+    }
+
+    @MainActor
     private func waitForSplit(_ controller: SplitController, timeout: TimeInterval = 5) {
         let deadline = Date().addingTimeInterval(timeout)
         while controller.isWorking && Date() < deadline {

@@ -35,7 +35,9 @@ struct SplitJobRecord: Identifiable, Codable, Hashable {
 
 struct MergeJobSettings: Codable, Hashable {
     var sourceURLStrings: [String]
+    var sourceBookmarkData: [Data?] = []
     var destinationFolderURLString: String?
+    var destinationFolderBookmarkData: Data? = nil
     var outputFileName: String
     var insertBlankPageBetweenDocuments: Bool
     var skipUnreadableSources: Bool
