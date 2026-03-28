@@ -64,7 +64,7 @@ struct AIActivityView: View {
             ForEach(aiInteractions.entries) { entry in
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
-                        Text(entry.task.displayName)
+                        Text(entry.kind.displayName)
                             .font(.headline)
                         Spacer()
                         Text(entry.timestamp, style: .time)
@@ -92,7 +92,7 @@ struct AIActivityView: View {
         return VStack(alignment: .leading, spacing: 12) {
             if let entry {
                 HStack {
-                    Label(entry.task.displayName, systemImage: entry.task.systemImage)
+                    Label(entry.kind.displayName, systemImage: entry.kind.systemImage)
                         .font(.headline)
                     Spacer()
                     Text(entry.timestamp, style: .date)

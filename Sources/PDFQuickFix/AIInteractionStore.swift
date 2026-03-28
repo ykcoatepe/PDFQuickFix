@@ -4,13 +4,68 @@ import UniformTypeIdentifiers
 struct AIInteractionEntry: Identifiable, Codable, Hashable {
     let id: UUID
     let timestamp: Date
-    let task: LocalAITask
+    let kind: AIInteractionKind
     let model: String
     let prompt: String
     let response: String
     let sourceName: String?
     let inputCharacterCount: Int
     let inputWasTrimmed: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case id, timestamp, kind, task, model, prompt, response, sourceName, inputCharacterCount, inputWasTrimmed
+    }
+
+    init(id: UUID,
+         timestamp: Date,
+         kind: AIInteractionKind,
+         model: String,
+         prompt: String,
+         response: String,
+         sourceName: String?,
+         inputCharacterCount: Int,
+         inputWasTrimmed: Bool) {
+        self.id = id
+        self.timestamp = timestamp
+        self.kind = kind
+        self.model = model
+        self.prompt = prompt
+        self.response = response
+        self.sourceName = sourceName
+        self.inputCharacterCount = inputCharacterCount
+        self.inputWasTrimmed = inputWasTrimmed
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        timestamp = try container.decode(Date.self, forKey: .timestamp)
+        if let kind = try container.decodeIfPresent(AIInteractionKind.self, forKey: .kind) {
+            self.kind = kind
+        } else {
+            let task = try container.decode(LocalAITask.self, forKey: .task)
+            self.kind = .quickFix(task: task)
+        }
+        model = try container.decode(String.self, forKey: .model)
+        prompt = try container.decode(String.self, forKey: .prompt)
+        response = try container.decode(String.self, forKey: .response)
+        sourceName = try container.decodeIfPresent(String.self, forKey: .sourceName)
+        inputCharacterCount = try container.decode(Int.self, forKey: .inputCharacterCount)
+        inputWasTrimmed = try container.decode(Bool.self, forKey: .inputWasTrimmed)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(timestamp, forKey: .timestamp)
+        try container.encode(kind, forKey: .kind)
+        try container.encode(model, forKey: .model)
+        try container.encode(prompt, forKey: .prompt)
+        try container.encode(response, forKey: .response)
+        try container.encodeIfPresent(sourceName, forKey: .sourceName)
+        try container.encode(inputCharacterCount, forKey: .inputCharacterCount)
+        try container.encode(inputWasTrimmed, forKey: .inputWasTrimmed)
+    }
 }
 
 enum AIActivityExportFormat: String, CaseIterable, Codable, Hashable {
@@ -167,7 +222,7 @@ final class AIInteractionStore: ObservableObject {
 
     static func makeExportFileName(entries: [AIInteractionEntry],
                                    format: AIActivityExportFormat) -> String {
-        let base = entries.count == 1 ? "ai-activity-\(entries[0].task.rawValue)" : "ai-activity-session"
+        let base = entries.count == 1 ? "ai-activity-\(entries[0].kind.exportSlug)" : "ai-activity-session"
         return "\(base).\(format.fileExtension)"
     }
 
@@ -194,7 +249,7 @@ final class AIInteractionStore: ObservableObject {
         for (index, entry) in entries.enumerated() {
             output.append("## Entry \(index + 1)")
             output.append("")
-            output.append("- Task: \(entry.task.displayName)")
+            output.append("- Kind: \(entry.kind.displayName)")
             output.append("- Model: \(entry.model)")
             output.append("- Timestamp: \(entry.timestamp.formatted(date: .abbreviated, time: .standard))")
             if let sourceName = entry.sourceName {
@@ -227,7 +282,7 @@ final class AIInteractionStore: ObservableObject {
         return AIInteractionEntry(
             id: entry.id,
             timestamp: entry.timestamp,
-            task: entry.task,
+            kind: entry.kind,
             model: entry.model,
             prompt: prompt,
             response: response,

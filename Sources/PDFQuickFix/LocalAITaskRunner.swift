@@ -50,7 +50,7 @@ final class LocalAITaskRunner {
         let entry = AIInteractionEntry(
             id: UUID(),
             timestamp: Date(),
-            task: task,
+            kind: .quickFix(task: task),
             model: modelName,
             prompt: prompt.text,
             response: response,

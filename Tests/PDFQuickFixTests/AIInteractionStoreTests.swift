@@ -10,7 +10,7 @@ final class AIInteractionStoreTests: XCTestCase {
         let entry = AIInteractionEntry(
             id: UUID(),
             timestamp: Date(),
-            task: .summarize,
+            kind: .quickFix(task: .summarize),
             model: "stub",
             prompt: longPrompt,
             response: longResponse,
@@ -37,7 +37,7 @@ final class AIInteractionStoreTests: XCTestCase {
             let entry = AIInteractionEntry(
                 id: UUID(),
                 timestamp: Date(),
-                task: .summarize,
+                kind: .quickFix(task: .summarize),
                 model: "stub",
                 prompt: "p",
                 response: "r",
@@ -56,7 +56,7 @@ final class AIInteractionStoreTests: XCTestCase {
         let entry = AIInteractionEntry(
             id: UUID(),
             timestamp: Date(),
-            task: .summarize,
+            kind: .quickFix(task: .summarize),
             model: "stub",
             prompt: "p",
             response: "r",
@@ -77,7 +77,7 @@ final class AIInteractionStoreTests: XCTestCase {
         let persistedEntry = AIInteractionEntry(
             id: UUID(),
             timestamp: Date().addingTimeInterval(-60),
-            task: .summarize,
+            kind: .quickFix(task: .summarize),
             model: "persisted",
             prompt: "p",
             response: "r",
@@ -91,7 +91,7 @@ final class AIInteractionStoreTests: XCTestCase {
         let sessionEntry = AIInteractionEntry(
             id: UUID(),
             timestamp: Date(),
-            task: .translate,
+            kind: .quickFix(task: .translate),
             model: "session",
             prompt: "p2",
             response: "r2",
@@ -112,7 +112,7 @@ final class AIInteractionStoreTests: XCTestCase {
         let entry = AIInteractionEntry(
             id: UUID(),
             timestamp: Date(timeIntervalSince1970: 1_700_000_000),
-            task: .summarize,
+            kind: .quickFix(task: .summarize),
             model: "stub-model",
             prompt: "prompt",
             response: "response",
@@ -130,7 +130,7 @@ final class AIInteractionStoreTests: XCTestCase {
         XCTAssertNotNil(payload["exportedAt"])
         let entries = try XCTUnwrap(payload["entries"] as? [[String: Any]])
         XCTAssertEqual(entries.count, 1)
-        XCTAssertEqual(entries[0]["task"] as? String, LocalAITask.summarize.rawValue)
+        XCTAssertEqual(entries[0]["kind"] as? String, AIInteractionKind.quickFix(task: .summarize).exportSlug)
         XCTAssertEqual(entries[0]["model"] as? String, "stub-model")
     }
 
@@ -139,7 +139,7 @@ final class AIInteractionStoreTests: XCTestCase {
         let entry = AIInteractionEntry(
             id: UUID(),
             timestamp: Date(timeIntervalSince1970: 1_700_000_000),
-            task: .translate,
+            kind: .quickFix(task: .translate),
             model: "stub-model",
             prompt: "prompt",
             response: "response",
@@ -153,9 +153,27 @@ final class AIInteractionStoreTests: XCTestCase {
 
         let text = try XCTUnwrap(String(data: document.data, encoding: .utf8))
         XCTAssertTrue(text.contains("# AI Activity Export"))
-        XCTAssertTrue(text.contains("Task: Translate"))
+        XCTAssertTrue(text.contains("Kind: Translate"))
         XCTAssertTrue(text.contains("Model: stub-model"))
         XCTAssertTrue(text.contains("```text"))
         XCTAssertTrue(text.contains("response"))
+    }
+
+    func testExportDocumentUsesGeneralizedSlugForReaderCopilotActions() throws {
+        let store = AIInteractionStore(persistToDisk: false)
+        let entry = AIInteractionEntry(
+            id: UUID(),
+            timestamp: Date(timeIntervalSince1970: 1_700_000_000),
+            kind: .readerCopilot(action: .documentQuestion),
+            model: "stub-model",
+            prompt: "prompt",
+            response: "response",
+            sourceName: "reader.pdf",
+            inputCharacterCount: 7,
+            inputWasTrimmed: false
+        )
+
+        let document = try store.exportDocument(for: [entry], format: .json)
+        XCTAssertEqual(document.fileName, "ai-activity-document-question.json")
     }
 }

@@ -39,6 +39,23 @@ final class LocalAITaskRunnerTests: XCTestCase {
         XCTAssertEqual(generator.lastFormat, "json")
     }
 
+    func testRecordsQuickFixKindForSummarizeRuns() async throws {
+        let generator = StubGenerator(response: "summary")
+        let store = AIInteractionStore(persistToDisk: false)
+        let runner = LocalAITaskRunner(interactionStore: store, client: generator)
+
+        _ = try await runner.run(
+            task: .summarize,
+            text: "Test",
+            parameters: LocalAITaskParameters(),
+            sourceName: nil,
+            modelName: "stub-model"
+        )
+
+        let entry = try XCTUnwrap(store.entries.first)
+        XCTAssertEqual(entry.kind, .quickFix(task: .summarize))
+    }
+
     func testFallsBackToRawTextWhenJSONInvalid() async throws {
         let response = "not json"
         let generator = StubGenerator(response: response)
