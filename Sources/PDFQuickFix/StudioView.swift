@@ -66,6 +66,8 @@ struct StudioView: View, Equatable {
             VStack(spacing: 0) {
                 // Toolbar handled by UnifiedToolbar in ContentView
 
+                workbenchHeader
+
                 GeometryReader { proxy in
                     let layout = StudioLayout(width: proxy.size.width)
 
@@ -93,19 +95,36 @@ struct StudioView: View, Equatable {
 
                 if !controller.logMessages.isEmpty {
                     Divider()
-                    ScrollView {
+                    VStack(alignment: .leading, spacing: 8) {
                         VStack(alignment: .leading, spacing: 4) {
-                            ForEach(controller.logMessages.enumerated().map({ $0 }), id: \.offset) { entry in
-                                Text(entry.element)
-                                    .font(.caption.monospaced())
-                                    .foregroundColor(AppTheme.Colors.secondaryText)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
+                            Text("Studio activity")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(AppTheme.Colors.support)
+                            Text("Recent organize, export, and cleanup handoff events")
+                                .font(.caption)
+                                .foregroundStyle(AppTheme.Colors.secondaryText)
                         }
-                        .padding(8)
+
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 4) {
+                                ForEach(controller.logMessages.enumerated().map({ $0 }), id: \.offset) { entry in
+                                    Text(entry.element)
+                                        .font(.caption.monospaced())
+                                        .foregroundColor(AppTheme.Colors.secondaryText)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                            }
+                            .padding(8)
+                        }
                     }
+                    .padding(12)
                     .frame(height: 140)
                     .background(AppTheme.Colors.cardBackground)
+                    .overlay(alignment: .top) {
+                        Rectangle()
+                            .fill(AppTheme.Colors.cardBorder.opacity(0.6))
+                            .frame(height: 1)
+                    }
                 }
             }
 
@@ -196,6 +215,30 @@ struct StudioView: View, Equatable {
         .focusedSceneValue(\.pdfActionable, controller)
         .focusedSceneValue(\.studioToolSwitchable, controller)
         .focusedSceneValue(\.documentClosable, controller)
+    }
+
+    private var workbenchHeader: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Studio workbench")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(AppTheme.Colors.support)
+            Text("Organize pages and prepare a controlled outbound copy")
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(AppTheme.Colors.primaryText)
+            Text(controller.document == nil
+                 ? "Open a PDF to reorder, annotate, and hand it off to cleanup or export."
+                 : "Duplicate, rotate, reorder, inspect annotations, and keep page operations in one focused station.")
+                .font(.subheadline)
+                .foregroundStyle(AppTheme.Colors.secondaryText)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 18)
+        .background(AppTheme.Colors.sidebarBackground)
+        .overlay(alignment: .bottom) {
+            Divider()
+                .overlay(AppTheme.Colors.cardBorder.opacity(0.6))
+        }
     }
 
     private var modeBar: some View {
@@ -320,7 +363,7 @@ struct StudioView: View, Equatable {
                             VStack {
                                 HStack(spacing: 8) {
                                     Image(systemName: "bolt.fill")
-                                        .foregroundColor(.yellow)
+                                        .foregroundColor(AppTheme.Colors.warning)
                                     Text("Performance Mode • \(doc.pageCount) pages")
                                         .font(.caption.weight(.medium))
                                     Spacer()
@@ -424,7 +467,7 @@ struct StudioView: View, Equatable {
                 .fill(isSelected ? AppTheme.Colors.cardBackground.opacity(0.8) : Color.clear)
                 .overlay(
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(isSelected ? Color.accentColor.opacity(0.6) : AppTheme.Colors.cardBorder, lineWidth: 1)
+                        .stroke(isSelected ? AppTheme.Colors.accent.opacity(0.6) : AppTheme.Colors.cardBorder, lineWidth: 1)
                 )
         )
         .contentShape(Rectangle())
@@ -437,24 +480,30 @@ struct StudioView: View, Equatable {
     @ViewBuilder
     private var outlineList: some View {
         if controller.outlineRows.isEmpty {
-            VStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 12) {
                 if controller.isMassiveDocument {
                     Text("Outline loading deferred for performance")
+                        .font(.headline)
+                        .foregroundColor(AppTheme.Colors.primaryText)
+                    Text("Load the outline only when you need chapter-level navigation for this large document.")
                         .font(.caption)
                         .foregroundColor(AppTheme.Colors.secondaryText)
                     Button("Load Outline") {
                         controller.loadOutlineIfNeeded()
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .buttonStyle(SecondaryButtonStyle())
                 } else {
-                    Text("No outline available.")
+                    Text("No outline available")
+                        .font(.headline)
+                        .foregroundColor(AppTheme.Colors.primaryText)
+                    Text("This PDF has no embedded outline, so page organization stays the primary navigation surface.")
                         .font(.caption)
                         .foregroundColor(AppTheme.Colors.secondaryText)
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .center)
-            .padding(.top, 20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(16)
+            .cardStyle()
         } else {
             OutlineTreeView(rows: controller.outlineRows, pdfView: controller.pdfView)
         }
@@ -480,7 +529,7 @@ struct StudioView: View, Equatable {
                 Label(selectedTool == .measure ? "Exit Measure" : "Measure", systemImage: "ruler")
             }
             .buttonStyle(.bordered)
-            .tint(.accentColor)
+            .tint(AppTheme.Colors.accent)
             .disabled(controller.document == nil)
             
             // Rotation Buttons
@@ -567,13 +616,28 @@ struct StudioView: View, Equatable {
         VStack(spacing: 16) {
             Image(systemName: "doc.badge.gearshape")
                 .font(.system(size: 48))
-                .foregroundColor(AppTheme.Colors.secondaryText)
-            Text("Open or drop a PDF to begin")
+                .foregroundColor(AppTheme.Colors.accent)
+            Text("Studio Station")
+                .font(.caption.weight(.semibold))
+                .foregroundColor(AppTheme.Colors.support)
+            Text("Open a PDF to inspect, reorder, and prepare it for export")
                 .font(.headline)
                 .foregroundColor(AppTheme.Colors.primaryText)
+            Text("Studio keeps page operations, annotations, and cleanup handoff in one place.")
+                .font(.subheadline)
+                .foregroundStyle(AppTheme.Colors.secondaryText)
             Button("Open File", action: openFile)
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(PrimaryButtonStyle())
         }
+        .padding(28)
+        .background(
+            RoundedRectangle(cornerRadius: AppTheme.Metrics.homePanelCornerRadius, style: .continuous)
+                .fill(AppTheme.Colors.cardBackground)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: AppTheme.Metrics.homePanelCornerRadius, style: .continuous)
+                .stroke(AppTheme.Colors.cardBorder, lineWidth: 1)
+        )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 

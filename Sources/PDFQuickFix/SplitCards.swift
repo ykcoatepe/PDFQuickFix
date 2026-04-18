@@ -260,21 +260,22 @@ struct SplitHistoryCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("History")
+            Text("Recent split receipts")
                 .font(.headline)
                 .foregroundColor(AppTheme.Colors.primaryText)
             if history.isEmpty {
-                Text("No recent jobs.")
-                    .font(.footnote)
-                    .foregroundColor(AppTheme.Colors.secondaryText)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("No split receipts yet")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundColor(AppTheme.Colors.primaryText)
+                    Text("Run a split job to capture source, destination, and outcome details here.")
+                        .font(.caption)
+                        .foregroundColor(AppTheme.Colors.secondaryText)
+                }
+                .cardStyle()
             } else {
                 historyList
-                    .padding(10)
-                    .background(AppTheme.Colors.cardBackground.opacity(0.6))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(AppTheme.Colors.cardBorder.opacity(0.6), lineWidth: 0.5)
-                    )
+                    .cardStyle()
             }
         }
     }
@@ -283,32 +284,30 @@ struct SplitHistoryCard: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(history) { job in
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: 8) {
                         Text(job.sourceDescription)
                             .font(.subheadline.weight(.semibold))
                             .foregroundColor(AppTheme.Colors.primaryText)
                             .lineLimit(1)
                             .truncationMode(.middle)
-                        Text("\(job.fileCount) input → \(job.outputCount) output in \(job.destinationFolder)")
-                            .font(.caption2)
-                            .foregroundColor(AppTheme.Colors.secondaryText)
-                        Text("\(job.modeDescription) · \(job.date.formatted(date: .abbreviated, time: .shortened))")
-                            .font(.caption2)
-                            .foregroundColor(AppTheme.Colors.secondaryText)
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            historyDetailRow("Outcome", "\(job.fileCount) input -> \(job.outputCount) output")
+                            historyDetailRow("Mode", job.modeDescription)
+                            historyDetailRow("Destination", job.destinationFolder)
+                            historyDetailRow("When", job.date.formatted(date: .abbreviated, time: .shortened))
+                        }
+                        .paperPanelStyle()
+
                         if let err = job.errorSummary, !err.isEmpty {
                             Text("Errors: \(err)")
-                                .font(.caption2)
-                                .foregroundColor(.red)
+                                .font(.caption)
+                                .foregroundColor(AppTheme.Colors.error)
                         }
                     }
-                    .padding(8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(AppTheme.Colors.cardBackground.opacity(0.9))
-                    )
+                    .padding(.vertical, 2)
                 }
             }
-            .padding(8)
         }
         .frame(maxHeight: 180)
     }
@@ -403,7 +402,7 @@ struct MergeOptionsCard: View {
                 HStack {
                     Text("Outline")
                     Spacer()
-                    Picker("", selection: $outlinePolicy) {
+                    Picker("Outline", selection: $outlinePolicy) {
                         Text("Top-level per source").tag(MergeOutlinePolicy.addTopLevelPerSource)
                     }
                     .labelsHidden()
@@ -413,7 +412,7 @@ struct MergeOptionsCard: View {
                 HStack {
                     Text("Metadata")
                     Spacer()
-                    Picker("", selection: $metadataPolicy) {
+                    Picker("Metadata", selection: $metadataPolicy) {
                         Text("Keep first").tag(MergeMetadataPolicy.keepFirst)
                         Text("Keep last").tag(MergeMetadataPolicy.keepLast)
                         Text("Clear").tag(MergeMetadataPolicy.clear)
@@ -459,6 +458,7 @@ struct MergeDestinationCard: View {
                     TextField("Merged.pdf", text: $outputFileName)
                         .textFieldStyle(.roundedBorder)
                         .frame(minWidth: 260)
+                        .accessibilityLabel("Output")
                 }
             }
             .padding(12)
@@ -481,51 +481,63 @@ struct MergeHistoryCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("History")
+            Text("Recent merge receipts")
                 .font(.headline)
                 .foregroundColor(AppTheme.Colors.primaryText)
             if history.isEmpty {
-                Text("No recent merge jobs.")
-                    .font(.footnote)
-                    .foregroundColor(AppTheme.Colors.secondaryText)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("No merge receipts yet")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundColor(AppTheme.Colors.primaryText)
+                    Text("Run a merge job to capture source count, destination, and warning details here.")
+                        .font(.caption)
+                        .foregroundColor(AppTheme.Colors.secondaryText)
+                }
+                .cardStyle()
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 8) {
                         ForEach(history) { job in
-                            VStack(alignment: .leading, spacing: 2) {
+                            VStack(alignment: .leading, spacing: 8) {
                                 Text(job.outputFileName)
                                     .font(.subheadline.weight(.semibold))
                                     .foregroundColor(AppTheme.Colors.primaryText)
-                                Text("\(job.sourceCount) selected → \(job.mergedDocumentCount) merged, \(job.mergedPageCount) pages")
-                                    .font(.caption2)
-                                    .foregroundColor(AppTheme.Colors.secondaryText)
-                                Text("\(job.destinationFolder) · \(job.date.formatted(date: .abbreviated, time: .shortened))")
-                                    .font(.caption2)
-                                    .foregroundColor(AppTheme.Colors.secondaryText)
+
+                                VStack(alignment: .leading, spacing: 6) {
+                                    historyDetailRow("Outcome", "\(job.sourceCount) selected -> \(job.mergedDocumentCount) merged, \(job.mergedPageCount) pages")
+                                    historyDetailRow("Destination", job.destinationFolder)
+                                    historyDetailRow("When", job.date.formatted(date: .abbreviated, time: .shortened))
+                                }
+                                .paperPanelStyle()
+
                                 if let warning = job.warningsSummary, !warning.isEmpty {
                                     Text("Warnings: \(warning)")
-                                        .font(.caption2)
-                                        .foregroundColor(.orange)
+                                        .font(.caption)
+                                        .foregroundColor(AppTheme.Colors.warning)
                                 }
                             }
-                            .padding(8)
-                            .background(
-                                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .fill(AppTheme.Colors.cardBackground.opacity(0.9))
-                            )
+                            .padding(.vertical, 2)
                         }
                     }
-                    .padding(8)
                 }
                 .frame(maxHeight: 180)
-                .padding(10)
-                .background(AppTheme.Colors.cardBackground.opacity(0.6))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(AppTheme.Colors.cardBorder.opacity(0.6), lineWidth: 0.5)
-                )
+                .cardStyle()
             }
         }
+    }
+}
+
+private func historyDetailRow(_ label: String, _ value: String) -> some View {
+    HStack(alignment: .top) {
+        Text(label)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(AppTheme.Colors.paperText.opacity(0.72))
+            .frame(width: 84, alignment: .leading)
+        Text(value)
+            .font(.caption)
+            .foregroundStyle(AppTheme.Colors.paperText)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .textSelection(.enabled)
     }
 }
 

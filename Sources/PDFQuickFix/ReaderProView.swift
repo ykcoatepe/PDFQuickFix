@@ -991,7 +991,7 @@ struct ReaderHomeView: View {
                     ZStack {
                         RoundedRectangle(cornerRadius: AppTheme.Metrics.dropZoneCornerRadius, style: .continuous)
                             .strokeBorder(style: StrokeStyle(lineWidth: AppTheme.Metrics.dropZoneBorderWidth, dash: [8]))
-                            .foregroundColor(isDragging ? Color.accentColor : AppTheme.Colors.dropZoneStroke)
+                            .foregroundColor(isDragging ? AppTheme.Colors.accent : AppTheme.Colors.dropZoneStroke)
                             .background(
                                 RoundedRectangle(cornerRadius: AppTheme.Metrics.dropZoneCornerRadius, style: .continuous)
                                     .fill(isDragging ? AppTheme.Colors.dropZoneFillHighlighted : AppTheme.Colors.dropZoneFill)
@@ -1000,15 +1000,25 @@ struct ReaderHomeView: View {
                         VStack(spacing: 20) {
                             Image(systemName: "folder.badge.plus")
                                 .font(.system(size: 64))
-                                .foregroundColor(AppTheme.Colors.secondaryText)
-                            
-                            VStack(spacing: 8) {
-                                Text("Drop PDF here")
+                                .foregroundColor(AppTheme.Colors.accent)
+
+                            VStack(spacing: 10) {
+                                Text("Private Cleanup Desk")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .tracking(1.6)
+                                    .foregroundColor(AppTheme.Colors.accent)
+                                Text("Open a PDF to inspect, repair, or prepare it for sharing")
                                     .font(.system(size: 24, weight: .bold))
                                     .foregroundColor(AppTheme.Colors.primaryText)
-                                Text("or click to browse files")
+                                    .multilineTextAlignment(.center)
+                                Text("Drag a PDF here or browse from your Mac. Review, cleanup, and export stay on this device.")
                                     .font(.body)
                                     .foregroundColor(AppTheme.Colors.secondaryText)
+                                    .multilineTextAlignment(.center)
+                                Text("For folder-wide cleanup, use Sanitize Folder to generate a batch receipt.")
+                                    .font(.caption)
+                                    .foregroundColor(AppTheme.Colors.accent)
+                                    .multilineTextAlignment(.center)
                             }
                         }
                     }
@@ -1026,63 +1036,70 @@ struct ReaderHomeView: View {
                 if !recentFiles.recentFiles.isEmpty {
                     VStack(alignment: .leading, spacing: 16) {
                         HStack {
-                            Text("Recent Files")
-                                .font(.title3)
-                                .fontWeight(.semibold)
-                                .foregroundColor(AppTheme.Colors.primaryText)
-                            Spacer()
-                            Button("Show All") {
-                                // Action for showing all files
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Recent Desk")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundColor(AppTheme.Colors.accent)
+                                Text("Return to the files you recently inspected")
+                                    .font(.title3.weight(.semibold))
+                                    .foregroundColor(AppTheme.Colors.primaryText)
                             }
-                            .buttonStyle(.link)
-                            .foregroundColor(AppTheme.Colors.secondaryText)
+                            Spacer()
+                            Text("\(recentFiles.recentFiles.count) saved")
+                                .font(.caption)
+                                .foregroundColor(AppTheme.Colors.secondaryText)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(AppTheme.Colors.cardBackground)
+                                .cornerRadius(AppTheme.Metrics.smallCornerRadius)
                         }
-                        
-                            LazyVGrid(columns: columns, spacing: 16) {
-                                ForEach(recentFiles.recentFiles.prefix(6)) { file in
-                                    Button(action: {
-                                        do {
-                                            let resolved = try recentFiles.resolveForOpen(file)
-                                            controller.open(url: resolved.url, access: resolved.access)
-                                        } catch {
-                                            let alert = NSAlert()
-                                            alert.messageText = "Cannot open file"
-                                            alert.informativeText = "The file at '\(file.displayName)' could not be found or opened. It may have been moved or deleted."
-                                            alert.addButton(withTitle: "OK")
-                                            alert.addButton(withTitle: "Remove from Recents")
-                                            if alert.runModal() == .alertSecondButtonReturn {
-                                                recentFiles.remove(file)
-                                            }
+
+                        Text("Recent work stays visible so you can reopen, inspect, and continue cleanup without searching Finder.")
+                            .font(.caption)
+                            .foregroundColor(AppTheme.Colors.secondaryText)
+
+                        LazyVGrid(columns: columns, spacing: 16) {
+                            ForEach(recentFiles.recentFiles.prefix(6)) { file in
+                                Button(action: {
+                                    do {
+                                        let resolved = try recentFiles.resolveForOpen(file)
+                                        controller.open(url: resolved.url, access: resolved.access)
+                                    } catch {
+                                        let alert = NSAlert()
+                                        alert.messageText = "Cannot open file"
+                                        alert.informativeText = "The file at '\(file.displayName)' could not be found or opened. It may have been moved or deleted."
+                                        alert.addButton(withTitle: "OK")
+                                        alert.addButton(withTitle: "Remove from Recents")
+                                        if alert.runModal() == .alertSecondButtonReturn {
+                                            recentFiles.remove(file)
                                         }
-                                    }) {
-                                        HStack(spacing: 16) {
-                                        // Thumbnail / Icon
+                                    }
+                                }) {
+                                    HStack(spacing: 16) {
                                         ZStack {
                                             RoundedRectangle(cornerRadius: AppTheme.Metrics.thumbnailCornerRadius, style: .continuous)
                                                 .fill(AppTheme.Colors.thumbnailBackground)
-                                                .frame(width: 48, height: 64)
+                                                .frame(width: 52, height: 68)
                                                 .overlay(
                                                     RoundedRectangle(cornerRadius: AppTheme.Metrics.thumbnailCornerRadius, style: .continuous)
                                                         .stroke(AppTheme.Colors.thumbnailBorder, lineWidth: 0.5)
                                                 )
                                                 .shadow(color: AppTheme.Shadows.card.opacity(0.57), radius: 2, x: 0, y: 1)
-                                            
-                                            // Simplified content lines
+
                                             VStack(alignment: .leading, spacing: 4) {
                                                 RoundedRectangle(cornerRadius: 1)
                                                     .fill(Color.gray.opacity(0.3))
-                                                    .frame(width: 32, height: 3)
-                                                
+                                                    .frame(width: 34, height: 3)
+
                                                 RoundedRectangle(cornerRadius: 1)
                                                     .fill(Color.gray.opacity(0.3))
                                                     .frame(width: 24, height: 3)
-                                                
+
                                                 Spacer()
                                             }
                                             .padding(8)
                                         }
-                                        
-                                        // Info
+
                                         VStack(alignment: .leading, spacing: 6) {
                                             Text(file.displayName)
                                                 .font(.headline)
@@ -1090,10 +1107,14 @@ struct ReaderHomeView: View {
                                                 .foregroundColor(AppTheme.Colors.primaryText)
                                                 .lineLimit(1)
                                                 .truncationMode(.middle)
-                                            
-                                            Text("Last opened: \(file.date.formatted(date: .abbreviated, time: .shortened))")
+
+                                            Text(file.date.formatted(date: .abbreviated, time: .shortened))
                                                 .font(.caption)
                                                 .foregroundColor(AppTheme.Colors.secondaryText)
+
+                                            Text("Reopen from the private cleanup desk")
+                                                .font(.caption2)
+                                                .foregroundColor(AppTheme.Colors.accent)
                                         }
                                         Spacer()
                                     }

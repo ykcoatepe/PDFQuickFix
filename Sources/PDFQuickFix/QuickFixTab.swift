@@ -33,7 +33,7 @@ struct QuickFixTab: View {
             aiToolsPane
                 .frame(minHeight: 240)
         }
-        .background(AppColors.background)
+        .background(AppTheme.Colors.background)
         .onChange(of: inputURL) { _ in
             if let cached = aiImageOCRURL {
                 try? FileManager.default.removeItem(at: cached)
@@ -63,11 +63,14 @@ struct QuickFixTab: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("AI Tools")
+                    Text("Cleanup Workbench")
                         .appFont(.largeTitle, weight: .bold)
-                    Text("Redaction, Find→Replace, OCR repair, and local AI — all on your Mac.")
+                    Text("Repair, redact, replace, OCR, and local AI workflows for outbound PDFs that stay on your Mac.")
                         .appFont(.body)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(AppTheme.Colors.secondaryText)
+                    Text("Need to sanitize a folder instead of one file? Use Sanitize Folder for a batch receipt-driven run.")
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.Colors.support)
                 }
 
                 VStack(spacing: 16) {
@@ -80,18 +83,18 @@ struct QuickFixTab: View {
                         if let inputURL {
                             HStack {
                                 Image(systemName: "doc.fill")
-                                    .foregroundStyle(AppColors.primary)
+                                    .foregroundStyle(AppTheme.Colors.accent)
                                 Text(inputURL.lastPathComponent)
                                     .lineLimit(1)
                                     .truncationMode(.middle)
                             }
                             .padding(.horizontal, 12)
                             .padding(.vertical, 8)
-                            .background(AppColors.surface)
-                            .cornerRadius(8)
+                            .background(AppTheme.Colors.cardBackground)
+                            .cornerRadius(AppTheme.Metrics.smallCornerRadius)
                         } else {
                             Text("No file selected")
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(AppTheme.Colors.secondaryText)
                                 .padding(.horizontal, 8)
                         }
 
@@ -113,13 +116,16 @@ struct QuickFixTab: View {
                 }
                 .cardStyle()
 
-                GroupBox {
-                    QuickFixOptionsForm(model: optionsModel)
-                        .padding(8)
-                } label: {
+                VStack(alignment: .leading, spacing: 12) {
                     Label("Options", systemImage: "slider.horizontal.3")
                         .appFont(.headline)
+                        .foregroundStyle(AppTheme.Colors.primaryText)
+                    Text("Control OCR, redaction, search-replace, and image cleanup before generating the outbound copy.")
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.Colors.secondaryText)
+                    QuickFixOptionsForm(model: optionsModel)
                 }
+                .cardStyle()
 
                 if !log.isEmpty {
                     ScrollView {
@@ -129,44 +135,45 @@ struct QuickFixTab: View {
                             .padding()
                     }
                     .frame(height: 120)
-                    .background(AppColors.surface)
-                    .cornerRadius(AppLayout.smallCornerRadius)
+                    .background(AppTheme.Colors.cardBackground)
+                    .cornerRadius(AppTheme.Metrics.smallCornerRadius)
                     .overlay(
-                        RoundedRectangle(cornerRadius: AppLayout.smallCornerRadius)
-                            .stroke(AppColors.border, lineWidth: 0.5)
+                        RoundedRectangle(cornerRadius: AppTheme.Metrics.smallCornerRadius)
+                            .stroke(AppTheme.Colors.cardBorder, lineWidth: 0.5)
                     )
                 }
 
                 if let quickFixResult {
                     let outputURL = quickFixResult.outputURL
-                    HStack {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(AppColors.success)
-                            .font(.title2)
+                    VStack(alignment: .leading, spacing: 12) {
+                        sectionHeader("Output packet", detail: "Inspect the generated file and review attached evidence before handoff.")
 
-                        VStack(alignment: .leading) {
-                            Text("Processing Complete")
-                                .appFont(.headline)
-                            Text(outputURL.lastPathComponent)
+                        VStack(alignment: .leading, spacing: 10) {
+                            evidenceRow("Output", value: outputURL.lastPathComponent)
+                            evidenceRow("Folder", value: outputURL.deletingLastPathComponent().path)
+                            evidenceRow("Reports", value: availableReportsSummary(for: quickFixResult))
+                        }
+                        .paperPanelStyle()
+
+                        HStack {
+                            Button("Open Result") {
+                                NSWorkspace.shared.open(outputURL)
+                            }
+                            .buttonStyle(SecondaryButtonStyle())
+
+                            Button("Reveal in Finder") {
+                                NSWorkspace.shared.activateFileViewerSelecting([outputURL])
+                            }
+                            .buttonStyle(SecondaryButtonStyle())
+
+                            Spacer()
+
+                            Label("Ready to review", systemImage: "checkmark.circle.fill")
                                 .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(AppTheme.Colors.support)
                         }
-
-                        Spacer()
-
-                        Button("Open Result") {
-                            NSWorkspace.shared.open(outputURL)
-                        }
-                        .buttonStyle(SecondaryButtonStyle())
-
-                        Button("Reveal in Finder") {
-                            NSWorkspace.shared.activateFileViewerSelecting([outputURL])
-                        }
-                        .buttonStyle(SecondaryButtonStyle())
                     }
-                    .padding()
-                    .background(AppColors.success.opacity(0.1))
-                    .cornerRadius(AppLayout.cornerRadius)
+                    .cardStyle()
                 }
 
                 if let report = quickFixResult?.redactionReport {
@@ -183,118 +190,121 @@ struct QuickFixTab: View {
 
     private var aiToolsPane: some View {
         ScrollView {
-            GroupBox {
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
                         Label("Local AI Tools", systemImage: "bolt.circle")
                             .appFont(.headline)
-                        Spacer()
-                        Button("AI Activity") {
-                            openWindow(id: "ai-activity")
-                        }
-                        .buttonStyle(GhostButtonStyle())
+                            .foregroundStyle(AppTheme.Colors.primaryText)
+                        Text("Run local summary, extraction, OCR, and translation tasks, then inspect the evidence log.")
+                            .font(.caption)
+                            .foregroundStyle(AppTheme.Colors.secondaryText)
                     }
+                    Spacer()
+                    Button("AI Activity") {
+                        openWindow(id: "ai-activity")
+                    }
+                    .buttonStyle(GhostButtonStyle())
+                }
 
-                    Picker("Task", selection: $aiTask) {
-                        ForEach(LocalAITask.allCases) { task in
-                            Text(task.displayName).tag(task)
+                Picker("Task", selection: $aiTask) {
+                    ForEach(LocalAITask.allCases) { task in
+                        Text(task.displayName).tag(task)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                if aiSettings.availableModels.isEmpty {
+                    Text("No local model available. Refresh in Settings.")
+                        .foregroundStyle(AppTheme.Colors.secondaryText)
+                        .font(.caption)
+                } else {
+                    Picker("Model", selection: overrideBinding(for: aiTask)) {
+                        Text(defaultModelLabel).tag(autoTag)
+                        ForEach(aiSettings.availableModels) { model in
+                            Text(aiSettings.displayName(for: model.name)).tag(model.name)
                         }
                     }
-                    .pickerStyle(.segmented)
+                    .pickerStyle(.menu)
+                    .frame(maxWidth: 320, alignment: .leading)
+                }
 
-                    if aiSettings.availableModels.isEmpty {
-                        Text("No local model available. Refresh in Settings.")
-                            .foregroundStyle(.secondary)
+                if aiTask.requiresTargetLanguage {
+                    HStack {
+                        Text("Target language")
+                        TextField("English", text: $aiTargetLanguage)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(maxWidth: 220)
+                            .accessibilityLabel("Target language")
+                    }
+                }
+
+                if aiTask == .summarize {
+                    HStack {
+                        Text("Pages")
+                        TextField("All (e.g. 1-3, 6)", text: $aiPageSelection)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(maxWidth: 220)
+                            .accessibilityLabel("Pages")
+                    }
+                }
+
+                if aiTask.requiresFieldList {
+                    HStack {
+                        Text("Fields (comma-separated)")
+                        TextField("invoice_number,total,invoice_date", text: $aiFieldList)
+                            .textFieldStyle(.roundedBorder)
+                            .accessibilityLabel("Fields")
+                    }
+                }
+
+                HStack(spacing: 12) {
+                    Button(isAIRunning ? "Running…" : "Run \(aiTask.displayName)") {
+                        runAITask()
+                    }
+                    .buttonStyle(PrimaryButtonStyle(isDisabled: !canRunAITask))
+                    .disabled(!canRunAITask)
+
+                    if let modelName = aiSettings.modelFor(task: aiTask) {
+                        Text("Model: \(aiSettings.displayName(for: modelName))")
+                            .foregroundStyle(AppTheme.Colors.secondaryText)
                             .font(.caption)
                     } else {
-                        Picker("Model", selection: overrideBinding(for: aiTask)) {
-                            Text(defaultModelLabel).tag(autoTag)
-                            ForEach(aiSettings.availableModels) { model in
-                                Text(aiSettings.displayName(for: model.name)).tag(model.name)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .frame(maxWidth: 320, alignment: .leading)
-                    }
-
-                    if aiTask.requiresTargetLanguage {
-                        HStack {
-                            Text("Target language")
-                            TextField("English", text: $aiTargetLanguage)
-                                .textFieldStyle(.roundedBorder)
-                                .frame(maxWidth: 220)
-                        }
-                    }
-
-                    if aiTask == .summarize {
-                        HStack {
-                            Text("Pages")
-                            TextField("All (e.g. 1-3, 6)", text: $aiPageSelection)
-                                .textFieldStyle(.roundedBorder)
-                                .frame(maxWidth: 220)
-                        }
-                    }
-
-                    if aiTask.requiresFieldList {
-                        HStack {
-                            Text("Fields (comma-separated)")
-                            TextField("invoice_number,total,invoice_date", text: $aiFieldList)
-                                .textFieldStyle(.roundedBorder)
-                        }
-                    }
-
-                    HStack(spacing: 12) {
-                        Button(isAIRunning ? "Running…" : "Run \(aiTask.displayName)") {
-                            runAITask()
-                        }
-                        .buttonStyle(PrimaryButtonStyle(isDisabled: !canRunAITask))
-                        .disabled(!canRunAITask)
-
-                        if let modelName = aiSettings.modelFor(task: aiTask) {
-                            Text("Model: \(aiSettings.displayName(for: modelName))")
-                                .foregroundStyle(.secondary)
-                                .font(.caption)
-                        } else {
-                            Text("No local model available. Refresh in Settings.")
-                                .foregroundStyle(.secondary)
-                                .font(.caption)
-                        }
-                    }
-
-                    if !aiStatus.isEmpty {
-                        Text(aiStatus)
+                        Text("No local model available. Refresh in Settings.")
+                            .foregroundStyle(AppTheme.Colors.secondaryText)
                             .font(.caption)
-                            .foregroundStyle(.secondary)
                     }
+                }
 
-                    if let aiError {
-                        Text(aiError)
-                            .font(.caption)
-                            .foregroundStyle(AppColors.error)
-                    }
+                if !aiStatus.isEmpty {
+                    Text(aiStatus)
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.Colors.secondaryText)
+                }
 
-                    if !aiOutput.isEmpty {
+                if let aiError {
+                    Text(aiError)
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.Colors.error)
+                }
+
+                if !aiOutput.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("AI Output")
+                            .appFont(.headline)
+                            .foregroundStyle(AppTheme.Colors.paperText)
                         ScrollView {
                             Text(aiOutput)
                                 .font(.caption.monospaced())
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .textSelection(.enabled)
-                                .padding(8)
                         }
                         .frame(minHeight: 160, maxHeight: 280)
-                        .background(AppColors.surface)
-                        .cornerRadius(AppLayout.smallCornerRadius)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: AppLayout.smallCornerRadius)
-                                .stroke(AppColors.border, lineWidth: 0.5)
-                        )
                     }
+                    .paperPanelStyle()
                 }
-                .padding(8)
-            } label: {
-                Label("AI Tools", systemImage: "sparkles")
-                    .appFont(.headline)
             }
+            .cardStyle()
             .padding(24)
         }
     }
@@ -470,6 +480,36 @@ struct QuickFixTab: View {
                 aiSettings.setOverride(task: task, model: value)
             }
         )
+    }
+
+    private func sectionHeader(_ title: String, detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .appFont(.headline)
+                .foregroundStyle(AppTheme.Colors.primaryText)
+            Text(detail)
+                .font(.caption)
+                .foregroundStyle(AppTheme.Colors.secondaryText)
+        }
+    }
+
+    private func evidenceRow(_ label: String, value: String) -> some View {
+        HStack(alignment: .top) {
+            Text(label)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(AppTheme.Colors.paperText.opacity(0.72))
+                .frame(width: 72, alignment: .leading)
+            Text(value)
+                .font(.caption)
+                .foregroundStyle(AppTheme.Colors.paperText)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
+        }
+    }
+
+    private func availableReportsSummary(for result: QuickFixResult) -> String {
+        let reports = ["Redaction", "OCR"]
+        return reports.joined(separator: ", ")
     }
 
     private nonisolated static func prepareQuickFixInput(for url: URL,
@@ -684,22 +724,22 @@ struct DropAreaView: View {
 
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: AppTheme.Metrics.cardCornerRadius)
                 .stroke(style: StrokeStyle(lineWidth: 2, dash: [6]))
-                .foregroundStyle(isDragging ? AppColors.primary : AppColors.border)
-                .background(isDragging ? AppColors.primary.opacity(0.05) : Color.clear)
+                .foregroundStyle(isDragging ? AppTheme.Colors.accent : AppTheme.Colors.cardBorder)
+                .background(isDragging ? AppTheme.Colors.accent.opacity(0.05) : Color.clear)
 
             VStack(spacing: 12) {
                 Image(systemName: "arrow.down.doc")
                     .font(.system(size: 32))
-                    .foregroundStyle(isDragging ? AppColors.primary : .secondary)
+                    .foregroundStyle(isDragging ? AppTheme.Colors.accent : AppTheme.Colors.secondaryText)
 
                 VStack(spacing: 4) {
                     Text("Drop a PDF or image here")
                         .appFont(.headline)
                     Text("or click “Choose PDF or Image…” above")
                         .appFont(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(AppTheme.Colors.secondaryText)
                 }
             }
         }

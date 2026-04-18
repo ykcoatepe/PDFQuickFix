@@ -270,12 +270,12 @@ struct QuickFixOptionsForm: View {
 
     private var localOCRStatusColor: Color {
         guard let localOCRAvailable else { return .secondary }
-        return localOCRAvailable ? AppColors.success : AppColors.warning
+        return localOCRAvailable ? AppTheme.Colors.success : AppTheme.Colors.warning
     }
 
     private var quickVerifyStatusColor: Color {
         guard let quickVerifySucceeded else { return .secondary }
-        return quickVerifySucceeded ? AppColors.success : AppColors.error
+        return quickVerifySucceeded ? AppTheme.Colors.success : AppTheme.Colors.error
     }
 
     private func refreshLocalOCRStatus() {

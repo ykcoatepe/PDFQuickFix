@@ -7,109 +7,207 @@ struct AIActivityView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider()
+            Divider().overlay(AppTheme.Colors.cardBorder.opacity(0.6))
             HSplitView {
-                listView
+                activityList
                 detailView
             }
         }
-        .frame(minWidth: 760, minHeight: 480)
+        .frame(minWidth: 820, minHeight: 520)
+        .background(AppTheme.Colors.background)
     }
 
     private var header: some View {
-        HStack {
-            Text("AI Activity")
-                .font(.title2)
-                .bold()
-            Spacer()
-            Button("Clear") {
-                aiInteractions.clear()
+        HStack(spacing: 16) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("AI evidence log")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(AppTheme.Colors.support)
+                Text("Review local prompts, responses, and model routing")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(AppTheme.Colors.primaryText)
+                Text("Inspect how OCR, summary, extraction, and translation tasks were handled before trusting the output.")
+                    .font(.subheadline)
+                    .foregroundStyle(AppTheme.Colors.secondaryText)
             }
+
+            Spacer()
+
+            Button("Clear Log") {
+                aiInteractions.clear()
+                selection = nil
+            }
+            .buttonStyle(SecondaryButtonStyle())
             .disabled(aiInteractions.entries.isEmpty)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 18)
+        .background(AppTheme.Colors.sidebarBackground)
     }
 
-    private var listView: some View {
-        List(selection: $selection) {
-            ForEach(aiInteractions.entries) { entry in
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text(entry.task.displayName)
-                            .font(.headline)
-                        Spacer()
-                        Text(entry.timestamp, style: .time)
-                            .foregroundStyle(.secondary)
+    private var activityList: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                sectionHeader("Runs", detail: aiInteractions.entries.isEmpty ? "No local AI interactions captured yet." : "\(aiInteractions.entries.count) captured interactions.")
+
+                if aiInteractions.entries.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("No AI runs recorded yet")
+                            .appFont(.headline)
+                            .foregroundStyle(AppTheme.Colors.primaryText)
+                        Text("Run a local summarize, translate, extract, or OCR task from QuickFix to build an inspectable history here.")
                             .font(.caption)
+                            .foregroundStyle(AppTheme.Colors.secondaryText)
                     }
-                    Text(entry.model)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    if let source = entry.sourceName {
-                        Text(source)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                    .cardStyle()
+                } else {
+                    ForEach(aiInteractions.entries) { entry in
+                        Button {
+                            selection = entry.id
+                        } label: {
+                            activityRow(for: entry)
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
-                .padding(.vertical, 4)
-                .tag(entry.id)
+            }
+            .padding(20)
+        }
+        .frame(minWidth: 290)
+        .background(AppTheme.Colors.sidebarBackground)
+    }
+
+    private func activityRow(for entry: AIInteractionEntry) -> some View {
+        let isSelected = selection == entry.id
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 12) {
+                Label(entry.task.displayName, systemImage: entry.task.systemImage)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(AppTheme.Colors.primaryText)
+                Spacer()
+                Text(entry.timestamp, style: .time)
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.Colors.secondaryText)
+            }
+
+            Text(entry.model)
+                .font(.caption)
+                .foregroundStyle(AppTheme.Colors.support)
+
+            if let source = entry.sourceName {
+                Text(source)
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.Colors.secondaryText)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+
+            if entry.inputWasTrimmed {
+                Text("Prompt trimmed to fit local context window.")
+                    .font(.caption2)
+                    .foregroundStyle(AppTheme.Colors.secondaryText)
             }
         }
-        .frame(minWidth: 260)
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: AppTheme.Metrics.cardCornerRadius, style: .continuous)
+                .fill(isSelected ? AppTheme.Colors.accentSoft : AppTheme.Colors.cardBackground)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: AppTheme.Metrics.cardCornerRadius, style: .continuous)
+                .stroke(isSelected ? AppTheme.Colors.accent.opacity(0.55) : AppTheme.Colors.cardBorder, lineWidth: 1)
+        )
     }
 
     private var detailView: some View {
-        let entry = aiInteractions.entries.first { $0.id == selection }
-        return VStack(alignment: .leading, spacing: 12) {
-            if let entry {
-                HStack {
-                    Label(entry.task.displayName, systemImage: entry.task.systemImage)
-                        .font(.headline)
-                    Spacer()
-                    Text(entry.timestamp, style: .date)
-                        .foregroundStyle(.secondary)
-                }
-                Text("Model: \(entry.model)")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                if let source = entry.sourceName {
-                    Text("Source: \(source)")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                if entry.inputWasTrimmed {
-                    Text("Input trimmed from \(entry.inputCharacterCount) characters.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                if let entry = aiInteractions.entries.first(where: { $0.id == selection }) {
+                    sectionHeader("Inspection", detail: "Prompt, response, and source details for the selected run.")
 
-                GroupBox("Prompt") {
-                    Text(entry.prompt)
-                        .font(.caption.monospaced())
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .textSelection(.enabled)
-                        .padding(4)
-                }
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Label(entry.task.displayName, systemImage: entry.task.systemImage)
+                                .font(.headline)
+                                .foregroundStyle(AppTheme.Colors.primaryText)
+                            Spacer()
+                            Text(entry.timestamp, style: .date)
+                                .font(.caption)
+                                .foregroundStyle(AppTheme.Colors.secondaryText)
+                        }
 
-                GroupBox("Response") {
-                    ScrollView {
-                        Text(entry.response)
+                        keyValueRow("Model", value: entry.model)
+                        if let source = entry.sourceName {
+                            keyValueRow("Source", value: source)
+                        }
+                        if entry.inputWasTrimmed {
+                            keyValueRow("Input", value: "Trimmed from \(entry.inputCharacterCount) characters")
+                        }
+                    }
+                    .cardStyle()
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Prompt")
+                            .appFont(.headline)
+                            .foregroundStyle(AppTheme.Colors.paperText)
+                        Text(entry.prompt)
                             .font(.caption.monospaced())
+                            .foregroundStyle(AppTheme.Colors.paperText)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .textSelection(.enabled)
-                            .padding(4)
                     }
-                    .frame(minHeight: 200)
-                }
+                    .paperPanelStyle()
 
-                Spacer()
-            } else {
-                Text("Select an interaction to inspect details.")
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Response")
+                            .appFont(.headline)
+                            .foregroundStyle(AppTheme.Colors.paperText)
+                        Text(entry.response)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(AppTheme.Colors.paperText)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                    }
+                    .paperPanelStyle()
+                } else {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Select a run to inspect")
+                            .appFont(.headline)
+                            .foregroundStyle(AppTheme.Colors.primaryText)
+                        Text("Use the left column to review the prompt, response, and model details for a local AI task.")
+                            .font(.caption)
+                            .foregroundStyle(AppTheme.Colors.secondaryText)
+                    }
+                    .cardStyle()
+                }
             }
+            .padding(20)
         }
-        .padding(16)
+        .background(AppTheme.Colors.background)
+    }
+
+    private func sectionHeader(_ title: String, detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .appFont(.headline)
+                .foregroundStyle(AppTheme.Colors.primaryText)
+            Text(detail)
+                .font(.caption)
+                .foregroundStyle(AppTheme.Colors.secondaryText)
+        }
+    }
+
+    private func keyValueRow(_ label: String, value: String) -> some View {
+        HStack(alignment: .top) {
+            Text(label)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(AppTheme.Colors.secondaryText)
+                .frame(width: 72, alignment: .leading)
+            Text(value)
+                .font(.caption)
+                .foregroundStyle(AppTheme.Colors.primaryText)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
+        }
     }
 }

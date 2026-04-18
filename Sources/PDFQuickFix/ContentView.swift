@@ -81,13 +81,38 @@ struct AppModeSwitcher: View {
     var modes: [AppMode] = AppMode.switcherModes
     
     var body: some View {
-        Picker("", selection: $currentMode) {
+        HStack(spacing: 6) {
             ForEach(modes) { mode in
-                Text(mode.rawValue).tag(mode)
+                Button {
+                    currentMode = mode
+                } label: {
+                    Text(mode.rawValue)
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundColor(currentMode == mode ? AppTheme.Colors.primaryText : AppTheme.Colors.secondaryText)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .frame(minWidth: 84)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(currentMode == mode ? AppTheme.Colors.accentSoft : Color.clear)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .stroke(currentMode == mode ? AppTheme.Colors.accent.opacity(0.55) : Color.clear, lineWidth: 1)
+                        )
+                }
+                .buttonStyle(.plain)
             }
         }
-        .pickerStyle(.segmented)
-        .frame(minWidth: 260)
+        .padding(4)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(AppTheme.Colors.elevatedBackground)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(AppTheme.Colors.cardBorder, lineWidth: 1)
+        )
     }
 }
 
@@ -156,9 +181,14 @@ struct UnifiedToolbar: View {
             .frame(maxWidth: .infinity)
             .padding(.trailing, 16)
         }
-        .frame(height: 52)
-        .background(AppTheme.Colors.cardBackground.ignoresSafeArea())
-        .overlay(Divider(), alignment: .bottom)
+        .frame(height: 56)
+        .background(AppTheme.Colors.sidebarBackground.ignoresSafeArea())
+        .overlay(
+            Rectangle()
+                .fill(AppTheme.Colors.cardBorder)
+                .frame(height: 1),
+            alignment: .bottom
+        )
     }
     
     // MARK: - Left Content
@@ -184,7 +214,7 @@ struct UnifiedToolbar: View {
                 }
             }) {
                 Image(systemName: "sidebar.left")
-                    .foregroundColor(readerController.isSidebarVisible ? .accentColor : AppTheme.Colors.primaryText)
+                    .foregroundColor(readerController.isSidebarVisible ? AppTheme.Colors.accent : AppTheme.Colors.primaryText)
             }
             .buttonStyle(.plain)
             .disabled(readerController.document == nil)
@@ -431,7 +461,7 @@ struct UnifiedToolbar: View {
                 }
             }) {
                 Image(systemName: "sidebar.right")
-                    .foregroundColor(readerController.isRightPanelVisible ? .accentColor : AppTheme.Colors.primaryText)
+                    .foregroundColor(readerController.isRightPanelVisible ? AppTheme.Colors.accent : AppTheme.Colors.primaryText)
             }
             .buttonStyle(.plain)
             .disabled(readerController.document == nil)

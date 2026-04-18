@@ -195,40 +195,33 @@ struct PageProcessResult {
 
 // MARK: - Design System
 
-enum AppColors {
-    static let primary = Color.accentColor
-    static let secondary = Color.secondary
-    static let background = Color(NSColor.windowBackgroundColor)
-    static let surface = Color(NSColor.controlBackgroundColor)
-    static let surfaceSecondary = Color(NSColor.controlBackgroundColor).opacity(0.5)
-    static let border = Color(NSColor.separatorColor)
-    
-    static let success = Color.green
-    static let warning = Color.orange
-    static let error = Color.red
-    
-    static let gradientStart = Color.accentColor.opacity(0.1)
-    static let gradientEnd = Color.accentColor.opacity(0.05)
-}
-
-enum AppLayout {
-    static let padding: CGFloat = 16
-    static let cornerRadius: CGFloat = 12
-    static let smallCornerRadius: CGFloat = 8
-}
-
 // MARK: - View Modifiers
 
 struct CardModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
-            .padding(AppLayout.padding)
-            .background(AppColors.surface)
-            .cornerRadius(AppLayout.cornerRadius)
-            .shadow(color: Color.black.opacity(0.05), radius: 4, x: 0, y: 2)
+            .padding(AppTheme.Metrics.panelPadding)
+            .background(AppTheme.Colors.cardBackground)
+            .cornerRadius(AppTheme.Metrics.cardCornerRadius)
+            .shadow(color: AppTheme.Shadows.card.opacity(0.7), radius: 6, x: 0, y: 3)
             .overlay(
-                RoundedRectangle(cornerRadius: AppLayout.cornerRadius)
-                    .stroke(AppColors.border, lineWidth: 0.5)
+                RoundedRectangle(cornerRadius: AppTheme.Metrics.cardCornerRadius)
+                    .stroke(AppTheme.Colors.cardBorder, lineWidth: 0.5)
+            )
+    }
+}
+
+struct PaperPanelModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .padding(AppTheme.Metrics.panelPadding)
+            .background(
+                RoundedRectangle(cornerRadius: AppTheme.Metrics.paperPanelCornerRadius, style: .continuous)
+                    .fill(AppTheme.Colors.paperBackground)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: AppTheme.Metrics.paperPanelCornerRadius, style: .continuous)
+                    .stroke(AppTheme.Colors.paperBorder, lineWidth: 1)
             )
     }
 }
@@ -240,12 +233,12 @@ struct PrimaryButtonStyle: ButtonStyle {
         configuration.label
             .padding(.horizontal, 20)
             .padding(.vertical, 10)
-            .background(isDisabled ? Color.gray.opacity(0.3) : AppColors.primary)
+            .background(isDisabled ? Color.gray.opacity(0.3) : AppTheme.Colors.accent)
             .foregroundColor(.white)
-            .cornerRadius(AppLayout.smallCornerRadius)
+            .cornerRadius(AppTheme.Metrics.smallCornerRadius)
             .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
             .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
-            .shadow(color: AppColors.primary.opacity(0.3), radius: 4, x: 0, y: 2)
+            .shadow(color: AppTheme.Colors.accent.opacity(0.3), radius: 4, x: 0, y: 2)
     }
 }
 
@@ -254,12 +247,12 @@ struct SecondaryButtonStyle: ButtonStyle {
         configuration.label
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
-            .background(AppColors.surface)
-            .foregroundColor(.primary)
-            .cornerRadius(AppLayout.smallCornerRadius)
+            .background(AppTheme.Colors.cardBackground)
+            .foregroundColor(AppTheme.Colors.primaryText)
+            .cornerRadius(AppTheme.Metrics.smallCornerRadius)
             .overlay(
-                RoundedRectangle(cornerRadius: AppLayout.smallCornerRadius)
-                    .stroke(AppColors.border, lineWidth: 1)
+                RoundedRectangle(cornerRadius: AppTheme.Metrics.smallCornerRadius)
+                    .stroke(AppTheme.Colors.cardBorder, lineWidth: 1)
             )
             .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
             .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
@@ -271,9 +264,9 @@ struct GhostButtonStyle: ButtonStyle {
         configuration.label
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
-            .background(configuration.isPressed ? AppColors.surfaceSecondary : Color.clear)
-            .foregroundColor(.primary)
-            .cornerRadius(AppLayout.smallCornerRadius)
+            .background(configuration.isPressed ? AppTheme.Colors.elevatedBackground : Color.clear)
+            .foregroundColor(AppTheme.Colors.primaryText)
+            .cornerRadius(AppTheme.Metrics.smallCornerRadius)
             .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
     }
 }
@@ -283,6 +276,10 @@ struct GhostButtonStyle: ButtonStyle {
 extension View {
     func cardStyle() -> some View {
         modifier(CardModifier())
+    }
+
+    func paperPanelStyle() -> some View {
+        modifier(PaperPanelModifier())
     }
     
     func appFont(_ style: Font.TextStyle, weight: Font.Weight = .regular) -> some View {

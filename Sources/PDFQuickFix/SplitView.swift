@@ -46,12 +46,15 @@ struct SplitView: View {
     private var header: some View {
         HStack(alignment: .center) {
             VStack(alignment: .leading, spacing: 6) {
-                Text(workspaceMode == .split ? "Split PDF" : "Merge PDF")
+                Text("Output workbench")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(AppTheme.Colors.support)
+                Text(workspaceMode == .split ? "Split outbound copies" : "Assemble outbound packet")
                     .font(.title3.weight(.semibold))
                     .foregroundColor(AppTheme.Colors.primaryText)
                 Text(workspaceMode == .split
-                     ? "Split large PDFs into smaller parts, chapters, or batches."
-                     : "Merge multiple PDFs in a custom order with advanced options.")
+                     ? "Break a PDF into smaller, reviewable outputs for safer sharing."
+                     : "Merge multiple PDFs into one reviewable document with controlled ordering and fallback rules.")
                     .font(.subheadline)
                     .foregroundColor(AppTheme.Colors.secondaryText)
             }
@@ -62,13 +65,38 @@ struct SplitView: View {
 
     private var modeSelector: some View {
         HStack {
-            Picker("", selection: $workspaceMode) {
+            HStack(spacing: 6) {
                 ForEach(SplitWorkspaceMode.allCases) { mode in
-                    Text(mode.rawValue).tag(mode)
+                    Button {
+                        workspaceMode = mode
+                    } label: {
+                        Text(mode.rawValue)
+                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                            .foregroundColor(workspaceMode == mode ? AppTheme.Colors.primaryText : AppTheme.Colors.secondaryText)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .frame(minWidth: 88)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .fill(workspaceMode == mode ? AppTheme.Colors.accentSoft : Color.clear)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .stroke(workspaceMode == mode ? AppTheme.Colors.accent.opacity(0.55) : Color.clear, lineWidth: 1)
+                            )
+                    }
+                    .buttonStyle(.plain)
                 }
             }
-            .pickerStyle(.segmented)
-            .fixedSize()
+            .padding(4)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(AppTheme.Colors.elevatedBackground)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(AppTheme.Colors.cardBorder, lineWidth: 1)
+            )
             Spacer()
         }
     }
@@ -161,7 +189,7 @@ struct SplitView: View {
         .padding(.vertical, 12)
         .background(
             RoundedRectangle(cornerRadius: AppTheme.Metrics.cardCornerRadius, style: .continuous)
-                .fill(AppTheme.Colors.cardBackground)
+                .fill(AppTheme.Colors.elevatedBackground)
                 .overlay(
                     RoundedRectangle(cornerRadius: AppTheme.Metrics.cardCornerRadius, style: .continuous)
                         .stroke(AppTheme.Colors.cardBorder, lineWidth: AppTheme.Metrics.cardBorderWidth)
@@ -186,11 +214,11 @@ struct SplitView: View {
                     if let value = splitController.progressValue {
                         ProgressView(value: value)
                             .progressViewStyle(.linear)
-                            .tint(.accentColor)
+                            .tint(AppTheme.Colors.accent)
                     } else {
                         ProgressView()
                             .progressViewStyle(.linear)
-                            .tint(.accentColor)
+                            .tint(AppTheme.Colors.accent)
                     }
                 }
             }
@@ -219,7 +247,7 @@ struct SplitView: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(.accentColor)
+                .tint(AppTheme.Colors.accent)
                 .disabled(!splitController.canSplit || splitController.isWorking)
             }
         }
@@ -237,7 +265,7 @@ struct SplitView: View {
                     ForEach(Array(mergeController.warnings.enumerated()), id: \.offset) { _, warning in
                         Text(warning)
                             .font(.caption)
-                            .foregroundColor(.orange)
+                            .foregroundColor(AppTheme.Colors.warning)
                             .lineLimit(1)
                             .truncationMode(.middle)
                     }
@@ -268,7 +296,7 @@ struct SplitView: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(.accentColor)
+                .tint(AppTheme.Colors.accent)
                 .disabled(!mergeController.canMerge || mergeController.isWorking)
             }
         }
