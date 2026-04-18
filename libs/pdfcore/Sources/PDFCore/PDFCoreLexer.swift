@@ -129,15 +129,34 @@ public class PDFCoreLexer {
         // Hex string <...>
         if data[cursor] == 0x3C {
             cursor += 1
-            let start = cursor
+            var bytes = Data()
+            var highNibble: UInt8?
             while cursor < data.count {
-                if data[cursor] == 0x3E { break }
+                let byte = data[cursor]
+                if byte == 0x3E { break }
+                if isWhitespace(byte) {
+                    cursor += 1
+                    continue
+                }
+                guard let nibble = hexValue(byte) else {
+                    cursor += 1
+                    continue
+                }
+                if let high = highNibble {
+                    bytes.append((high << 4) | nibble)
+                    highNibble = nil
+                } else {
+                    highNibble = nibble
+                }
                 cursor += 1
             }
-            let range = start..<cursor
             cursor += 1 // Skip >
-            // TODO: Decode hex
-            let str = String(data: data.subdata(in: range), encoding: .utf8) ?? ""
+            if let high = highNibble {
+                bytes.append(high << 4)
+            }
+            let str = String(data: bytes, encoding: .utf8)
+                ?? String(data: bytes, encoding: .isoLatin1)
+                ?? ""
             return .string(str)
         }
         return .string("")
@@ -187,6 +206,19 @@ public class PDFCoreLexer {
     
     private func isAlpha(_ byte: UInt8) -> Bool {
         return (byte >= 0x41 && byte <= 0x5A) || (byte >= 0x61 && byte <= 0x7A)
+    }
+
+    private func hexValue(_ byte: UInt8) -> UInt8? {
+        switch byte {
+        case 0x30...0x39:
+            return byte - 0x30
+        case 0x41...0x46:
+            return byte - 0x41 + 10
+        case 0x61...0x66:
+            return byte - 0x61 + 10
+        default:
+            return nil
+        }
     }
     
     // Helper to peek/seek for parser

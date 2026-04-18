@@ -1,6 +1,6 @@
 # PDFQuickFix (macOS)
 
-A local, on‑device macOS app that **reads & annotates PDFs**, **redacts sensitive data**, performs **inline visual text edits**, and **repairs OCR** — a practical replacement for Adobe Acrobat *Reader* for personal use.
+A local, on‑device macOS app for **reading, repairing, redacting, organizing, splitting, and merging PDFs** — with optional local AI tools for OCR and document workflows.
 
 ## What you get
 
@@ -13,6 +13,17 @@ A local, on‑device macOS app that **reads & annotates PDFs**, **redacts sensit
 - **Sign**: create a reusable handwritten signature and **stamp** it anywhere
 - **Manual redaction boxes**: place black boxes, then *Apply Permanent Redactions* (burned into the page bitmap)
 - **OCR Repair**: one-click to add an invisible searchable text layer
+
+**Studio tab**
+- Visual page organizer with **insert / delete / duplicate / reorder / rotate**
+- Page thumbnails, drag-and-drop ordering, and quick actions
+- Shared document handoff from Reader for edit/organize flows
+- Large-document guards and background validation during open
+
+**Split tab**
+- Split PDFs by **max pages**, **number of parts**, **explicit page breaks**, **target size**, or **outline chapters**
+- Merge multiple PDFs with source reordering, deduplication, blank-page insertion, and safe fallback policies
+- Recent split/merge job history plus Finder reveal actions
 
 **AI Tools tab**
 - **Secure redaction** by patterns (IBAN, TCKN, PNR, TC- tail) + your own regex
@@ -122,7 +133,7 @@ Use this checklist to validate the new OCR/AI features end-to-end.
 ## Notes & limitations
 - Supports standard **AcroForm** fields; **dynamic XFA** forms are not supported by PDFKit.
 - Certificate-based digital signatures (PKCS#7/PAdES) are not included in this starter (visual signing only). Can be added later using SecKey + CMS.
-- Page organize (merge/split/reorder) and export to PDF/A are possible next steps.
+- Export to PDF/A, batch workflows, and stronger signing/validation are still future work.
 
 ## Architecture updates
 - Shared `QuickFixOptionsModel` / `QuickFixOptionsForm` now centralize the QuickFix tab and sheet option UI + regex/find/replace parsing so logging, validation, and manual redaction handling stay in sync.
@@ -130,9 +141,9 @@ Use this checklist to validate the new OCR/AI features end-to-end.
 - Tests now include `ReaderLoadingTests` that open a simple PDF through the reader/studio controllers and guard the runner, helping trace the freeze you saw when loading documents.
 
 ## Roadmap (optional)
-- Page organizer (insert/delete/move/rotate, merge/split)
 - Batch actions + Finder Quick Action
 - Digital ID signing (PAdES-Basic) + validation UI
+- Export to PDF/A
 - Compress/optimize (image downsampling, grayscale, metadata scrub)
 - Template packs for aviation and finance docs
 

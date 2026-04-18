@@ -922,7 +922,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     @discardableResult
     func duplicateSelectedPages() -> Bool {
         guard let doc = document else { return false }
-        let targets = selectedPageIDs.sorted()
+        let targets = selectedPageIDs.sorted(by: >)
         guard !targets.isEmpty else { return false }
         for index in targets {
             guard let page = doc.page(at: index),

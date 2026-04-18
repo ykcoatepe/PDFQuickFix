@@ -38,9 +38,6 @@ struct SplitView: View {
             .background(AppTheme.Colors.background)
         }
         .background(AppTheme.Colors.background.ignoresSafeArea())
-        .onAppear {
-            workspaceMode = .split
-        }
         .onChange(of: selectedTab) { _ in
             // Keep local segmented mode within Split workspace only.
         }
