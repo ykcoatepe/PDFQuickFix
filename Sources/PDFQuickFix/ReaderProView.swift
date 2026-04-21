@@ -1007,7 +1007,7 @@ struct ReaderHomeView: View {
                                     .font(.system(size: 12, weight: .semibold))
                                     .tracking(1.6)
                                     .foregroundColor(AppTheme.Colors.accent)
-                                Text("Open a PDF to inspect, repair, or prepare it for sharing")
+                                Text("Open a PDF to inspect it privately and prepare a safer outbound copy")
                                     .font(.system(size: 24, weight: .bold))
                                     .foregroundColor(AppTheme.Colors.primaryText)
                                     .multilineTextAlignment(.center)
@@ -1015,7 +1015,7 @@ struct ReaderHomeView: View {
                                     .font(.body)
                                     .foregroundColor(AppTheme.Colors.secondaryText)
                                     .multilineTextAlignment(.center)
-                                Text("For folder-wide cleanup, use Sanitize Folder to generate a batch receipt.")
+                                Text("For folder-wide cleanup, use Sanitize Folder to create reviewed outbound copies and capture a handoff receipt.")
                                     .font(.caption)
                                     .foregroundColor(AppTheme.Colors.accent)
                                     .multilineTextAlignment(.center)
@@ -1369,7 +1369,7 @@ struct ReaderSidebarLeft: View {
                     Image(systemName: "doc.on.doc")
                         .font(.system(size: 24))
                         .foregroundColor(AppTheme.Colors.secondaryText)
-                    Text("No pages yet")
+                    Text("Open a document to review pages")
                         .font(.caption)
                         .foregroundColor(AppTheme.Colors.secondaryText)
                 }
@@ -1389,8 +1389,14 @@ struct ReaderSidebarLeft: View {
                     } else {
                         VStack {
                             Spacer()
-                            Text("No Outline Available")
-                                .foregroundColor(AppTheme.Colors.secondaryText)
+                            VStack(spacing: 6) {
+                                Text("No outline on this file")
+                                    .foregroundColor(AppTheme.Colors.secondaryText)
+                                Text("Chapter navigation will appear here when the PDF includes bookmarks.")
+                                    .font(.caption)
+                                    .foregroundColor(AppTheme.Colors.secondaryText)
+                                    .multilineTextAlignment(.center)
+                            }
                             Spacer()
                         }
                     }
@@ -1442,9 +1448,15 @@ struct ReaderSidebarRight: View {
                     .padding()
                 }
             } else {
-                Text("No Comments")
-                    .foregroundColor(AppTheme.Colors.secondaryText)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                VStack(spacing: 6) {
+                    Text("No comments captured")
+                        .foregroundColor(AppTheme.Colors.secondaryText)
+                    Text("Comments or note annotations on the current PDF will appear here for review.")
+                        .font(.caption)
+                        .foregroundColor(AppTheme.Colors.secondaryText)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .background(AppTheme.Colors.sidebarBackground)
@@ -1571,7 +1583,7 @@ struct ReaderCanvas: View {
                     }
                 }
             } else {
-                Text("Open a PDF")
+                Text("Open a PDF from the cleanup desk")
                     .foregroundColor(AppTheme.Colors.secondaryText)
             }
             

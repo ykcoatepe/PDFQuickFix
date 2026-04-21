@@ -384,7 +384,7 @@ struct UnifiedToolbar: View {
         case .studio:
             studioRightControls
         case .split, .quickFix:
-            EmptyView()
+            BatchSanitizeLaunchButton(tone: .ghost)
         }
     }
     
@@ -465,6 +465,10 @@ struct UnifiedToolbar: View {
             }
             .buttonStyle(.plain)
             .disabled(readerController.document == nil)
+
+            Divider().frame(height: 16)
+
+            BatchSanitizeLaunchButton(tone: .ghost)
         }
     }
     
@@ -519,6 +523,10 @@ struct UnifiedToolbar: View {
             }
             .buttonStyle(GhostButtonStyle())
             .disabled(studioController.document == nil || studioController.isFullValidationRunning)
+
+            Divider().frame(height: 16)
+
+            BatchSanitizeLaunchButton(tone: .ghost)
         }
     }
     

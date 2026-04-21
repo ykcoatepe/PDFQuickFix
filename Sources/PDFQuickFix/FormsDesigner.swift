@@ -36,7 +36,7 @@ struct FormsDesigner: View {
 
             Spacer()
 
-            Text("Fields are placed at the center of the visible page. Adjust position inside the PDF reader after insertion.")
+            Text("Fields are placed at the center of the visible page. Fine-tune placement in the PDF before you export or hand the file off.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }

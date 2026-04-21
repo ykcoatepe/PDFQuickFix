@@ -22,7 +22,7 @@ struct CommentsPanel: View {
 
             if controller.isMassiveDocument && controller.annotationRows.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Annotations load on demand for very large documents.")
+                    Text("Annotation evidence loads on demand for very large documents.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                     Button("Load annotations") {
@@ -35,11 +35,25 @@ struct CommentsPanel: View {
             TextField("Filter comments", text: $filterText)
                 .textFieldStyle(.roundedBorder)
 
-            List {
-                ForEach(filteredAnnotations) { row in
-                    CommentRow(row: row,
-                               focus: controller.focus,
-                               delete: controller.delete)
+            if filteredAnnotations.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(controller.annotationRows.isEmpty ? "No annotations on this file" : "No annotations match this filter")
+                        .font(.subheadline.weight(.semibold))
+                    Text(controller.annotationRows.isEmpty
+                         ? "Comments, highlights, and note annotations will appear here when the PDF contains them."
+                         : "Try a broader search to review the notes already captured in this document.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .padding(.top, 8)
+            } else {
+                List {
+                    ForEach(filteredAnnotations) { row in
+                        CommentRow(row: row,
+                                   focus: controller.focus,
+                                   delete: controller.delete)
+                    }
                 }
             }
         }

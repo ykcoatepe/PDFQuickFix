@@ -130,8 +130,8 @@ final class BatchSanitizeViewModel: ObservableObject {
         panel.canChooseDirectories = true
         panel.canCreateDirectories = false
         panel.allowsMultipleSelection = false
-        panel.message = "Choose the folder containing PDFs to sanitize"
-        panel.prompt = "Select Input Folder"
+        panel.message = "Choose the folder containing PDFs you want to inspect and sanitize"
+        panel.prompt = "Select Source Folder"
         
         if panel.runModal() == .OK, let url = panel.url {
             inputFolderURL = url
@@ -144,8 +144,8 @@ final class BatchSanitizeViewModel: ObservableObject {
         panel.canChooseDirectories = true
         panel.canCreateDirectories = true
         panel.allowsMultipleSelection = false
-        panel.message = "Choose where to save sanitized PDFs"
-        panel.prompt = "Select Output Folder"
+        panel.message = "Choose where to save the reviewed outbound copies"
+        panel.prompt = "Select Outbound Folder"
         
         if panel.runModal() == .OK, let url = panel.url {
             outputFolderURL = url
@@ -276,7 +276,7 @@ struct BatchSanitizeSheet: View {
             Text("Sanitize a folder into a safer outbound set")
                 .font(.title3.weight(.semibold))
                 .foregroundStyle(AppTheme.Colors.primaryText)
-            Text("Choose the source, destination, and profile, then review a clear processed/skipped/failed receipt when the run completes.")
+            Text("Choose the source, destination, and profile, then review a clear processed/skipped/failed receipt before handoff.")
                 .font(.subheadline)
                 .foregroundStyle(AppTheme.Colors.secondaryText)
         }
@@ -284,11 +284,11 @@ struct BatchSanitizeSheet: View {
     
     private var configurationSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionHeader("Configuration", detail: "Select source, destination, and cleanup profile.")
+            sectionHeader("Configuration", detail: "Select the source, outbound folder, and cleanup profile for this run.")
             
             // Input Folder
             HStack {
-                Text("Input Folder")
+                Text("Source Folder")
                     .foregroundStyle(AppTheme.Colors.secondaryText)
                     .frame(width: 100, alignment: .trailing)
                 
@@ -306,7 +306,7 @@ struct BatchSanitizeSheet: View {
             
             // Output Folder
             HStack {
-                Text("Output Folder")
+                Text("Outbound Folder")
                     .foregroundStyle(AppTheme.Colors.secondaryText)
                     .frame(width: 100, alignment: .trailing)
                 
@@ -367,7 +367,7 @@ struct BatchSanitizeSheet: View {
     
     private var progressSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionHeader("Processing", detail: "The current batch run is preparing sanitized outbound copies.")
+            sectionHeader("Processing", detail: "The current batch run is preparing reviewed outbound copies.")
             
             if let progress = viewModel.progress {
                 ProgressView(value: progress.fraction) {
@@ -380,7 +380,7 @@ struct BatchSanitizeSheet: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
 
-                Text(progress.isSkipping ? "This file is being skipped because an output already exists." : "This file is being sanitized now.")
+                Text(progress.isSkipping ? "This file is being skipped because an outbound copy already exists." : "This file is being sanitized into the outbound set now.")
                     .font(.caption)
                     .foregroundStyle(AppTheme.Colors.secondaryText)
             } else {
@@ -393,7 +393,7 @@ struct BatchSanitizeSheet: View {
     
     private func resultsSection(report: BatchSanitizeReport) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionHeader("Run Receipt", detail: "Review the outcome before handing the folder off.")
+            sectionHeader("Run Receipt", detail: "Review the outcome before handing the outbound folder off.")
 
             HStack(spacing: 12) {
                 statCard(value: "\(report.processed)", label: "Processed", color: AppTheme.Colors.success)
@@ -429,7 +429,7 @@ struct BatchSanitizeSheet: View {
             .paperPanelStyle()
 
             HStack(spacing: 12) {
-                Button("Open Output Folder") {
+                Button("Open Outbound Folder") {
                     if let url = viewModel.outputFolderURL {
                         NSWorkspace.shared.open(url)
                     }
@@ -455,9 +455,9 @@ struct BatchSanitizeSheet: View {
             HStack {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundColor(AppTheme.Colors.error)
-                Text("Error")
-                    .font(.headline)
-                    .foregroundStyle(AppTheme.Colors.primaryText)
+                    Text("Run issue")
+                        .font(.headline)
+                        .foregroundStyle(AppTheme.Colors.primaryText)
             }
             Text(error)
                 .foregroundColor(AppTheme.Colors.secondaryText)
@@ -482,7 +482,7 @@ struct BatchSanitizeSheet: View {
                 .buttonStyle(PrimaryButtonStyle())
                 .keyboardShortcut(.defaultAction)
             } else {
-                Button("Start") {
+                Button("Start Run") {
                     viewModel.startBatch()
                 }
                 .buttonStyle(PrimaryButtonStyle(isDisabled: !viewModel.canStart))

@@ -68,10 +68,13 @@ struct QuickFixTab: View {
                     Text("Repair, redact, replace, OCR, and local AI workflows for outbound PDFs that stay on your Mac.")
                         .appFont(.body)
                         .foregroundStyle(AppTheme.Colors.secondaryText)
-                    Text("Need to sanitize a folder instead of one file? Use Sanitize Folder for a batch receipt-driven run.")
-                        .font(.caption)
-                        .foregroundStyle(AppTheme.Colors.support)
                 }
+
+                BatchSanitizeWorkbenchCallout(
+                    eyebrow: "Folder lane",
+                    title: "Use Sanitize Folder… when the outbound job is larger than one file",
+                    detail: "Batch runs write reviewed outbound copies to a separate folder and end with a processed/skipped/failed receipt."
+                )
 
                 VStack(spacing: 16) {
                     HStack(spacing: 12) {
@@ -93,7 +96,7 @@ struct QuickFixTab: View {
                             .background(AppTheme.Colors.cardBackground)
                             .cornerRadius(AppTheme.Metrics.smallCornerRadius)
                         } else {
-                            Text("No file selected")
+                            Text("Choose one file to start a private cleanup pass")
                                 .foregroundStyle(AppTheme.Colors.secondaryText)
                                 .padding(.horizontal, 8)
                         }
@@ -120,7 +123,7 @@ struct QuickFixTab: View {
                     Label("Options", systemImage: "slider.horizontal.3")
                         .appFont(.headline)
                         .foregroundStyle(AppTheme.Colors.primaryText)
-                    Text("Control OCR, redaction, search-replace, and image cleanup before generating the outbound copy.")
+                    Text("Control OCR, redaction, search-replace, and image cleanup before generating the reviewed outbound copy.")
                         .font(.caption)
                         .foregroundStyle(AppTheme.Colors.secondaryText)
                     QuickFixOptionsForm(model: optionsModel)
@@ -735,9 +738,9 @@ struct DropAreaView: View {
                     .foregroundStyle(isDragging ? AppTheme.Colors.accent : AppTheme.Colors.secondaryText)
 
                 VStack(spacing: 4) {
-                    Text("Drop a PDF or image here")
+                    Text("Drop one PDF or image here")
                         .appFont(.headline)
-                    Text("or click “Choose PDF or Image…” above")
+                    Text("or click “Choose PDF or Image…” above to start the desk")
                         .appFont(.subheadline)
                         .foregroundStyle(AppTheme.Colors.secondaryText)
                 }

@@ -45,7 +45,7 @@ struct QuickFixSheet: View {
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(AppTheme.Colors.secondaryText)
                             .frame(width: 72, alignment: .leading)
-                        Text(inputURL?.lastPathComponent ?? "No file selected")
+                        Text(inputURL?.lastPathComponent ?? "Choose a file to start the cleanup review")
                             .lineLimit(1)
                             .truncationMode(.middle)
                             .foregroundStyle(AppTheme.Colors.primaryText)

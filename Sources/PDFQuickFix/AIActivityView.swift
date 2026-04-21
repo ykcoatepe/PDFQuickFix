@@ -26,7 +26,7 @@ struct AIActivityView: View {
                 Text("Review local prompts, responses, and model routing")
                     .font(.title3.weight(.semibold))
                     .foregroundStyle(AppTheme.Colors.primaryText)
-                Text("Inspect how OCR, summary, extraction, and translation tasks were handled before trusting the output.")
+                Text("Inspect how OCR, summary, extraction, and translation runs were handled before trusting AI-assisted cleanup output.")
                     .font(.subheadline)
                     .foregroundStyle(AppTheme.Colors.secondaryText)
             }
@@ -48,14 +48,14 @@ struct AIActivityView: View {
     private var activityList: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                sectionHeader("Runs", detail: aiInteractions.entries.isEmpty ? "No local AI interactions captured yet." : "\(aiInteractions.entries.count) captured interactions.")
+                sectionHeader("Runs", detail: aiInteractions.entries.isEmpty ? "No local AI evidence runs captured yet." : "\(aiInteractions.entries.count) captured runs.")
 
                 if aiInteractions.entries.isEmpty {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("No AI runs recorded yet")
+                        Text("No AI evidence runs yet")
                             .appFont(.headline)
                             .foregroundStyle(AppTheme.Colors.primaryText)
-                        Text("Run a local summarize, translate, extract, or OCR task from QuickFix to build an inspectable history here.")
+                        Text("Run a local summarize, translate, extract, or OCR task from QuickFix to build an inspectable on-device history here.")
                             .font(.caption)
                             .foregroundStyle(AppTheme.Colors.secondaryText)
                     }
@@ -123,7 +123,7 @@ struct AIActivityView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 if let entry = aiInteractions.entries.first(where: { $0.id == selection }) {
-                    sectionHeader("Inspection", detail: "Prompt, response, and source details for the selected run.")
+                    sectionHeader("Inspection", detail: "Prompt, response, and source details for the selected local run.")
 
                     VStack(alignment: .leading, spacing: 10) {
                         HStack {
@@ -174,7 +174,7 @@ struct AIActivityView: View {
                         Text("Select a run to inspect")
                             .appFont(.headline)
                             .foregroundStyle(AppTheme.Colors.primaryText)
-                        Text("Use the left column to review the prompt, response, and model details for a local AI task.")
+                        Text("Use the left column to review the prompt, response, and routing details for a local AI cleanup task.")
                             .font(.caption)
                             .foregroundStyle(AppTheme.Colors.secondaryText)
                     }

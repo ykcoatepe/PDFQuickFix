@@ -218,18 +218,29 @@ struct StudioView: View, Equatable {
     }
 
     private var workbenchHeader: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Studio workbench")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(AppTheme.Colors.support)
-            Text("Organize pages and prepare a controlled outbound copy")
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(AppTheme.Colors.primaryText)
-            Text(controller.document == nil
-                 ? "Open a PDF to reorder, annotate, and hand it off to cleanup or export."
-                 : "Duplicate, rotate, reorder, inspect annotations, and keep page operations in one focused station.")
-                .font(.subheadline)
-                .foregroundStyle(AppTheme.Colors.secondaryText)
+        HStack(alignment: .top, spacing: 20) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Studio workbench")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(AppTheme.Colors.support)
+                Text("Organize pages and prepare a controlled outbound copy")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(AppTheme.Colors.primaryText)
+                Text(controller.document == nil
+                     ? "Open a PDF to reorder, annotate, and hand it off to cleanup, export, or folder-wide outbound prep."
+                     : "Duplicate, rotate, reorder, inspect annotations, and keep page operations in one focused station before cleanup or export.")
+                    .font(.subheadline)
+                    .foregroundStyle(AppTheme.Colors.secondaryText)
+            }
+
+            Spacer(minLength: 0)
+
+            BatchSanitizeWorkbenchCallout(
+                eyebrow: "Outbound desk",
+                title: "Need a full-folder pass instead of one edited file?",
+                detail: "Launch Sanitize Folder… to create reviewed outbound copies in a separate destination and capture the handoff receipt."
+            )
+            .frame(maxWidth: 360)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 20)
@@ -406,17 +417,30 @@ struct StudioView: View, Equatable {
             }
 
             if controller.isLargeDocument {
-                Text("Annotation listing disabled for large documents. Navigate to pages to inspect.")
+                Text("Annotation listing is deferred for large documents. Use page review first, then inspect notes when needed.")
                     .font(.caption)
                     .foregroundColor(AppTheme.Colors.secondaryText)
             } else {
-                ScrollView {
+                if controller.annotationRows.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
-                        ForEach(controller.annotationRows) { row in
-                            annotationRow(row)
-                        }
+                        Text("No annotation evidence yet")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundColor(AppTheme.Colors.primaryText)
+                        Text("Comments, highlights, and note annotations from the current PDF will appear here while you prepare the outbound copy.")
+                            .font(.caption)
+                            .foregroundColor(AppTheme.Colors.secondaryText)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 4)
+                } else {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(controller.annotationRows) { row in
+                                annotationRow(row)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
                 }
             }
         }
@@ -620,14 +644,18 @@ struct StudioView: View, Equatable {
             Text("Studio Station")
                 .font(.caption.weight(.semibold))
                 .foregroundColor(AppTheme.Colors.support)
-            Text("Open a PDF to inspect, reorder, and prepare it for export")
+            Text("Open a PDF to inspect, reorder, and prepare a safer outbound copy")
                 .font(.headline)
                 .foregroundColor(AppTheme.Colors.primaryText)
-            Text("Studio keeps page operations, annotations, and cleanup handoff in one place.")
+            Text("Studio keeps page operations, annotations, and cleanup handoff in one controlled station.")
                 .font(.subheadline)
                 .foregroundStyle(AppTheme.Colors.secondaryText)
-            Button("Open File", action: openFile)
-                .buttonStyle(PrimaryButtonStyle())
+            HStack(spacing: 12) {
+                Button("Open PDF", action: openFile)
+                    .buttonStyle(PrimaryButtonStyle())
+
+                BatchSanitizeLaunchButton()
+            }
         }
         .padding(28)
         .background(

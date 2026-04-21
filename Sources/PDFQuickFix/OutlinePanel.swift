@@ -11,7 +11,7 @@ struct OutlinePanel: View {
                 .font(.headline)
 
             HStack(spacing: 8) {
-                TextField("New bookmark title", text: $newBookmarkTitle)
+                TextField("Bookmark label", text: $newBookmarkTitle)
                 Button("Add") {
                     controller.addOutline(title: newBookmarkTitle)
                     newBookmarkTitle = ""
@@ -20,16 +20,28 @@ struct OutlinePanel: View {
             }
 
             if controller.isMassiveDocument && controller.outlineRows.isEmpty {
-                Text("Outline loads when opened for very large documents.")
+                Text("Bookmark outline loads on demand for very large documents.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
 
-            List {
-                ForEach(controller.outlineRows) { row in
-                    OutlineRowView(row: row,
-                                   rename: controller.renameOutline,
-                                   delete: controller.deleteOutline)
+            if controller.outlineRows.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("No bookmarks on this file")
+                        .font(.subheadline.weight(.semibold))
+                    Text("Add bookmarks here to mark sections before cleanup, export, or handoff.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .padding(.top, 8)
+            } else {
+                List {
+                    ForEach(controller.outlineRows) { row in
+                        OutlineRowView(row: row,
+                                       rename: controller.renameOutline,
+                                       delete: controller.deleteOutline)
+                    }
                 }
             }
         }
