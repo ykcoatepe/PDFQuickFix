@@ -1,7 +1,9 @@
 import SwiftUI
+import AppKit
 
 @main
 struct PDFQuickFixApp: App {
+    @NSApplicationDelegateAdaptor(PDFQuickFixAppDelegate.self) private var appDelegate
     @StateObject private var aiSettings = LocalAISettings()
     @StateObject private var aiInteractions = AIInteractionStore()
 
@@ -30,6 +32,33 @@ struct PDFQuickFixApp: App {
             AIActivityView()
                 .environmentObject(aiSettings)
                 .environmentObject(aiInteractions)
+        }
+    }
+}
+
+final class PDFQuickFixAppDelegate: NSObject, NSApplicationDelegate {
+    private let finderQuickActionService = FinderQuickActionService()
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.servicesProvider = finderQuickActionService
+        NSUpdateDynamicServices()
+    }
+}
+
+final class FinderQuickActionService: NSObject {
+    @objc(sanitizeSelectedPDFs:userData:error:)
+    func sanitizeSelectedPDFs(_ pasteboard: NSPasteboard,
+                              userData: String?,
+                              error: AutoreleasingUnsafeMutablePointer<NSString?>) {
+        let urls = FinderQuickActionSanitizer.pdfFileURLs(from: pasteboard)
+
+        guard !urls.isEmpty else {
+            error.pointee = "Select one or more PDF files in Finder."
+            return
+        }
+
+        Task { @MainActor in
+            FinderQuickActionCoordinator.shared.run(urls: urls)
         }
     }
 }
