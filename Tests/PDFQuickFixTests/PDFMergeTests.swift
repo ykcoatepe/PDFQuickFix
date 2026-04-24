@@ -3,6 +3,18 @@ import PDFKit
 @testable import PDFQuickFix
 
 final class PDFMergeTests: XCTestCase {
+    var tempDir: URL!
+
+    override func setUp() {
+        super.setUp()
+        tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    }
+
+    override func tearDown() {
+        try? FileManager.default.removeItem(at: tempDir)
+        super.tearDown()
+    }
 
     func testMergeDefault() throws {
         let url1 = try TestPDFBuilder.makeMultipagePDF(pageCount: 3, textPrefix: "Doc1")
@@ -122,6 +134,38 @@ final class PDFMergeTests: XCTestCase {
         let merged = try XCTUnwrap(PDFDocument(url: outputURL))
         let root = try XCTUnwrap(merged.outlineRoot)
         XCTAssertEqual(root.numberOfChildren, result.mergedDocumentCount)
+    }
+
+    func testMergeCancellationBeforeLoad() throws {
+        let url1 = try TestPDFBuilder.makeMultipagePDF(pageCount: 2, textPrefix: "A")
+        let outputURL = tempPDFURL()
+        defer { try? FileManager.default.removeItem(at: outputURL) }
+
+        XCTAssertThrowsError(
+            try PDFMerge.merge(urls: [url1], outputURL: outputURL, shouldCancel: { true })
+        ) { error in
+            guard case PDFMergeError.cancelled = error else {
+                XCTFail("Unexpected error: \(error)")
+                return
+            }
+        }
+    }
+
+    @MainActor
+    func testMergeHistorySettingsUsesSelectedOutputFolder() throws {
+        let controller = MergeController()
+        controller.addSourceURLs([
+            URL(fileURLWithPath: "/tmp/a.pdf"),
+            URL(fileURLWithPath: "/tmp/b.pdf")
+        ])
+        controller.destinationFolderURL = tempDir.appendingPathComponent("selected", isDirectory: true)
+        controller.outputFileName = "Merged.pdf"
+
+        let actualOutputURL = tempDir.appendingPathComponent("chosen", isDirectory: true)
+            .appendingPathComponent("Result.pdf")
+        let settings = controller.currentSettings(with: actualOutputURL)
+
+        XCTAssertEqual(settings.destinationFolderURLString, actualOutputURL.deletingLastPathComponent().standardizedFileURL.path)
     }
 
     private func tempPDFURL() -> URL {

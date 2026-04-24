@@ -81,7 +81,7 @@ struct AIActivityView: View {
         let isSelected = selection == entry.id
         return VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 12) {
-                Label(entry.task.displayName, systemImage: entry.task.systemImage)
+                Label(entry.kind.displayName, systemImage: entry.kind.systemImage)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(AppTheme.Colors.primaryText)
                 Spacer()
@@ -127,7 +127,7 @@ struct AIActivityView: View {
 
                     VStack(alignment: .leading, spacing: 10) {
                         HStack {
-                            Label(entry.task.displayName, systemImage: entry.task.systemImage)
+                            Label(entry.kind.displayName, systemImage: entry.kind.systemImage)
                                 .font(.headline)
                                 .foregroundStyle(AppTheme.Colors.primaryText)
                             Spacer()

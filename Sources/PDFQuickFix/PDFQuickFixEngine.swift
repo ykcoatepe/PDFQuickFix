@@ -41,6 +41,7 @@ final class PDFQuickFixEngine {
 
     func processResult(inputURL: URL,
                        outputURL: URL? = nil,
+                       isTemporaryOutput: Bool? = nil,
                        redactionPatterns: [RedactionPattern] = DefaultPatterns.defaults(),
                        customRegexes: [NSRegularExpression] = [],
                        findReplace: [FindReplaceRule] = [],
@@ -76,6 +77,7 @@ final class PDFQuickFixEngine {
         var visionOCRPages = 0
         var ocrDisabledPages = 0
         var emptyOCRPages = 0
+        var emptyOCRPageIndices: [Int] = []
         var localOCRFallbackCount = 0
         let localOCRProvider = options.ocrProvider == .autoLocalOCR
             ? (localOCRProviderOverride ?? selectLocalOCRProvider(preferredModel: options.localOCRModel))
@@ -116,6 +118,7 @@ final class PDFQuickFixEngine {
             }
             if options.doOCR, result.ocrRunCount == 0 {
                 emptyOCRPages += 1
+                emptyOCRPageIndices.append(i)
             }
             if result.localOCREligible && !result.localOCRSucceeded {
                 localOCRFallbackCount += 1
@@ -137,13 +140,21 @@ final class PDFQuickFixEngine {
             visionOCRPages: visionOCRPages,
             ocrDisabledPages: ocrDisabledPages,
             emptyOCRPages: emptyOCRPages,
+            emptyOCRPageIndices: emptyOCRPageIndices,
             localOCRFallbackCount: localOCRFallbackCount
         )
-        return QuickFixResult(outputURL: outURL, redactionReport: report, ocrReport: ocrReport)
+        return QuickFixResult(
+            outputURL: outURL,
+            isTemporaryOutput: isTemporaryOutput ?? (outputURL == nil),
+            previewPageIndex: pagesWithRedactions.first ?? emptyOCRPageIndices.first,
+            redactionReport: report,
+            ocrReport: ocrReport
+        )
     }
 
     func process(inputURL: URL,
                  outputURL: URL? = nil,
+                 isTemporaryOutput: Bool? = nil,
                  redactionPatterns: [RedactionPattern] = DefaultPatterns.defaults(),
                  customRegexes: [NSRegularExpression] = [],
                  findReplace: [FindReplaceRule] = [],
@@ -152,6 +163,7 @@ final class PDFQuickFixEngine {
                  progress: ((Int, Int) -> Void)? = nil) throws -> URL {
         try processResult(inputURL: inputURL,
                           outputURL: outputURL,
+                          isTemporaryOutput: isTemporaryOutput,
                           redactionPatterns: redactionPatterns,
                           customRegexes: customRegexes,
                           findReplace: findReplace,

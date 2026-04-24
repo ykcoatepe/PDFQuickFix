@@ -13,6 +13,8 @@ struct SplitView: View {
     @StateObject private var splitController = SplitController()
     @StateObject private var mergeController = MergeController()
     @State private var workspaceMode: SplitWorkspaceMode = .split
+    @State private var showingSplitBatchConfirmation = false
+    @State private var pendingSplitBatchSummary: String = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -40,6 +42,14 @@ struct SplitView: View {
         .background(AppTheme.Colors.background.ignoresSafeArea())
         .onChange(of: selectedTab) { _ in
             // Keep local segmented mode within Split workspace only.
+        }
+        .alert("Split all PDFs in folder?", isPresented: $showingSplitBatchConfirmation) {
+            Button("Split", role: .destructive) {
+                applySplitBatchConfirmation()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This will process \(pendingSplitBatchSummary).")
         }
     }
 
@@ -143,7 +153,10 @@ struct SplitView: View {
                 onChooseDestination: chooseSplitDestination
             )
 
-            SplitHistoryCard(history: Array(splitController.history.suffix(6)))
+            SplitHistoryCard(
+                history: Array(splitController.history.suffix(6)),
+                onApplySettings: splitController.applyHistory
+            )
         }
     }
 
@@ -173,7 +186,10 @@ struct SplitView: View {
                 onChooseDestination: mergeController.chooseDestination
             )
 
-            MergeHistoryCard(history: Array(mergeController.history.suffix(6)))
+            MergeHistoryCard(
+                history: Array(mergeController.history.suffix(6)),
+                onApplySettings: mergeController.applyHistory
+            )
         }
     }
 
@@ -233,9 +249,35 @@ struct SplitView: View {
                     .buttonStyle(.bordered)
                 }
 
+                Menu("Presets") {
+                    Button("Save Current as Preset…") {
+                        splitController.savePresetFromPrompt()
+                    }
+                    Button("Duplicate Current Settings…") {
+                        splitController.duplicateCurrentSettings()
+                    }
+                    if !splitController.presets.isEmpty {
+                        Divider()
+                        Menu("Apply Preset") {
+                            ForEach(splitController.presets) { preset in
+                                Button(preset.name) {
+                                    splitController.applyPreset(preset)
+                                }
+                            }
+                        }
+                    }
+                }
+
                 Spacer()
 
-                Button(action: splitController.split) {
+                if splitController.isWorking {
+                    Button("Cancel") {
+                        splitController.cancel()
+                    }
+                    .buttonStyle(.bordered)
+                }
+
+                Button(action: splitSplitAction) {
                     if splitController.isWorking {
                         HStack(spacing: 8) {
                             ProgressView()
@@ -282,7 +324,33 @@ struct SplitView: View {
                     .buttonStyle(.bordered)
                 }
 
+                Menu("Presets") {
+                    Button("Save Current as Preset…") {
+                        mergeController.savePresetFromPrompt()
+                    }
+                    Button("Duplicate Current Settings…") {
+                        mergeController.duplicateCurrentSettings()
+                    }
+                    if !mergeController.presets.isEmpty {
+                        Divider()
+                        Menu("Apply Preset") {
+                            ForEach(mergeController.presets) { preset in
+                                Button(preset.name) {
+                                    mergeController.applyPreset(preset)
+                                }
+                            }
+                        }
+                    }
+                }
+
                 Spacer()
+
+                if mergeController.isWorking {
+                    Button("Cancel") {
+                        mergeController.cancel()
+                    }
+                    .buttonStyle(.bordered)
+                }
 
                 Button(action: mergeController.merge) {
                     if mergeController.isWorking {
@@ -330,4 +398,25 @@ struct SplitView: View {
         NSWorkspace.shared.activateFileViewerSelecting(splitController.lastOutputFiles)
     }
 
+    private func splitSplitAction() {
+        guard splitController.applyToAllPDFsInFolder,
+              let sourceURL = splitController.sourceURL else {
+            splitController.split()
+            return
+        }
+
+        let folder = sourceURL.deletingLastPathComponent()
+        let pdfCount = (try? FileManager.default.contentsOfDirectory(at: folder,
+                                                                     includingPropertiesForKeys: nil,
+                                                                     options: [.skipsHiddenFiles]))?
+            .filter { $0.pathExtension.lowercased() == "pdf" }
+            .count ?? 0
+
+        pendingSplitBatchSummary = "\(pdfCount) PDF file(s) in \(folder.lastPathComponent)"
+        showingSplitBatchConfirmation = true
+    }
+
+    private func applySplitBatchConfirmation() {
+        splitController.split()
+    }
 }

@@ -24,6 +24,7 @@ struct QuickFixTab: View {
     @State private var aiFieldList: String = ""
     @State private var aiPageSelection: String = ""
     @State private var aiImageOCRURL: URL?
+    @State private var isSavingQuickFixResult: Bool = false
     @StateObject private var printCoordinator = QuickFixPrintCoordinator()
 
     var body: some View {
@@ -35,9 +36,7 @@ struct QuickFixTab: View {
         }
         .background(AppTheme.Colors.background)
         .onChange(of: inputURL) { _ in
-            if let cached = aiImageOCRURL {
-                try? FileManager.default.removeItem(at: cached)
-            }
+            cleanupTransientOutputs()
             quickFixResult = nil
             aiOutput = ""
             aiStatus = ""
@@ -147,7 +146,7 @@ struct QuickFixTab: View {
                 }
 
                 if let quickFixResult {
-                    let outputURL = quickFixResult.outputURL
+                    let outputURL = quickFixResult.displayOutputURL
                     VStack(alignment: .leading, spacing: 12) {
                         sectionHeader("Output packet", detail: "Inspect the generated file and review attached evidence before handoff.")
 
@@ -155,23 +154,36 @@ struct QuickFixTab: View {
                             evidenceRow("Output", value: outputURL.lastPathComponent)
                             evidenceRow("Folder", value: outputURL.deletingLastPathComponent().path)
                             evidenceRow("Reports", value: availableReportsSummary(for: quickFixResult))
+                            if quickFixResult.isTemporaryOutput {
+                                evidenceRow("State", value: "Temporary until saved")
+                            }
                         }
                         .paperPanelStyle()
 
                         HStack {
                             Button("Open Result") {
-                                NSWorkspace.shared.open(outputURL)
+                                openQuickFixResult()
                             }
                             .buttonStyle(SecondaryButtonStyle())
+                            .disabled(isSavingQuickFixResult)
 
                             Button("Reveal in Finder") {
                                 NSWorkspace.shared.activateFileViewerSelecting([outputURL])
                             }
                             .buttonStyle(SecondaryButtonStyle())
+                            .disabled(isSavingQuickFixResult)
+
+                            if quickFixResult.isTemporaryOutput {
+                                Button(isSavingQuickFixResult ? "Saving..." : "Save Result...") {
+                                    saveQuickFixResult()
+                                }
+                                .buttonStyle(SecondaryButtonStyle())
+                                .disabled(isSavingQuickFixResult)
+                            }
 
                             Spacer()
 
-                            Label("Ready to review", systemImage: "checkmark.circle.fill")
+                            Label(quickFixResult.isTemporaryOutput ? "Save before handoff" : "Ready to review", systemImage: "checkmark.circle.fill")
                                 .font(.caption)
                                 .foregroundStyle(AppTheme.Colors.support)
                         }
@@ -325,6 +337,8 @@ struct QuickFixTab: View {
 
     private func runProcess() {
         guard !isProcessing, let inputURL else { return }
+        cleanupTransientOutputs()
+        quickFixResult = nil
         isProcessing = true
         log = "Processing \(inputURL.lastPathComponent)…\n"
 
@@ -332,18 +346,17 @@ struct QuickFixTab: View {
         let preprocessImages = optionsModel.preprocessImages
         let targetDPI = CGFloat(optionsModel.dpi)
         Task.detached(priority: .userInitiated) {
+            let temporaryOutputURL = Self.temporaryFileURL(prefix: "quickfix-output-", extension: "pdf")
             do {
                 let prepared = try Self.prepareQuickFixInput(
                     for: inputURL,
                     preprocessImages: preprocessImages,
                     targetDPI: targetDPI
                 )
-                let defaultOutput = prepared.outputURL ?? inputURL.deletingPathExtension().appendingPathExtension("fixed.pdf")
-                let outputSelection = try await MainActor.run {
-                    try resolveQuickFixOutputSelection(
-                        defaultOutputURL: defaultOutput,
-                        preferredOutputURL: prepared.outputURL
-                    )
+                defer {
+                    if let cleanupURL = prepared.cleanupURL {
+                        try? FileManager.default.removeItem(at: cleanupURL)
+                    }
                 }
                 if prepared.wasConverted {
                     await MainActor.run {
@@ -358,33 +371,26 @@ struct QuickFixTab: View {
                         self.log += "📄 Pages: \(document.pageCount)\n"
                     }
                 }
-                let result = try withExtendedLifetime(outputSelection.access) {
-                    try model.runQuickFixResult(
-                        inputURL: prepared.sourceURL,
-                        outputURL: outputSelection.url,
-                        shouldCancel: { Task.isCancelled },
-                        progress: { current, total in
-                            DispatchQueue.main.async {
-                                self.log += "Progress: \(current)/\(total)\n"
-                            }
+                let result = try model.runQuickFixResult(
+                    inputURL: prepared.sourceURL,
+                    outputURL: temporaryOutputURL,
+                    isTemporaryOutput: true,
+                    shouldCancel: { Task.isCancelled },
+                    progress: { current, total in
+                        DispatchQueue.main.async {
+                            self.log += "Progress: \(current)/\(total)\n"
                         }
-                    )
-                }
-                if let cleanupURL = prepared.cleanupURL {
-                    try? FileManager.default.removeItem(at: cleanupURL)
-                }
+                    }
+                )
                 await MainActor.run {
                     self.quickFixResult = result
-                    QuickFixResultStore.shared.set(result)
-                    self.log += "✅ Done → \(result.outputURL.path)\n"
-                    self.isProcessing = false
-                }
-            } catch QuickFixOutputSelectionError.cancelled {
-                await MainActor.run {
-                    self.log += "⚠️ Cancelled: output location not selected.\n"
+                    QuickFixResultStore.shared.set(result, sourceURL: inputURL)
+                    self.printCoordinator.outputURL = result.displayOutputURL
+                    self.log += "✅ Done → temporary result at \(result.outputURL.path)\n"
                     self.isProcessing = false
                 }
             } catch {
+                try? FileManager.default.removeItem(at: temporaryOutputURL)
                 await MainActor.run {
                     self.log += "❌ Error: \(error.localizedDescription)\n"
                     self.isProcessing = false
@@ -425,7 +431,7 @@ struct QuickFixTab: View {
                 let sourceURL = try await resolveAITaskSourceURL()
                 let selection = task == .summarize ? aiPageSelection : ""
                 let text = try await Task.detached(priority: .userInitiated) {
-                    try PDFTextExtractor.extractText(from: sourceURL, pageSelection: selection)
+                    try DocumentTextSession(documentURL: sourceURL).extractText(pageSelection: selection)
                 }.value
                 if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     updateAIState(error: "No text found. Run OCR first, then try again.")
@@ -471,6 +477,126 @@ struct QuickFixTab: View {
             return "Request timed out. Try a smaller document or a faster model, then retry."
         }
         return error.localizedDescription
+    }
+
+    private func copyAIOutput() {
+        guard !aiOutput.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(aiOutput, forType: .string)
+        aiError = nil
+        aiStatus = "Copied AI output to clipboard."
+    }
+
+    private func saveAIOutput() {
+        guard !aiOutput.isEmpty else { return }
+        let format = Self.inferAIOutputFormat(from: aiOutput)
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [format == .json ? .json : .plainText]
+        panel.canCreateDirectories = true
+        panel.nameFieldStringValue = Self.aiOutputFileName(task: aiTask, format: format)
+        panel.directoryURL = inputURL?.deletingLastPathComponent() ?? FileManager.default.temporaryDirectory
+        if panel.runModal() == .OK, let url = panel.url {
+            do {
+                try Self.writeAIOutput(aiOutput, to: url, format: format)
+                aiError = nil
+                aiStatus = "Saved AI output to \(url.lastPathComponent)."
+            } catch {
+                aiError = error.localizedDescription
+            }
+        }
+    }
+
+    private static func aiOutputFileName(task: LocalAITask, format: AIOutputFormat) -> String {
+        "\(task.rawValue)-output.\(format.fileExtension)"
+    }
+
+    private static func inferAIOutputFormat(from text: String) -> AIOutputFormat {
+        guard let data = text.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data),
+              JSONSerialization.isValidJSONObject(object) else {
+            return .txt
+        }
+        return .json
+    }
+
+    private static func writeAIOutput(_ text: String, to url: URL, format: AIOutputFormat) throws {
+        switch format {
+        case .txt:
+            guard let data = text.data(using: .utf8) else {
+                throw CocoaError(.fileWriteUnknown)
+            }
+            try data.write(to: url, options: [.atomic])
+        case .json:
+            guard let data = text.data(using: .utf8) else {
+                throw CocoaError(.fileWriteUnknown)
+            }
+            let object = try JSONSerialization.jsonObject(with: data)
+            let pretty = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
+            try pretty.write(to: url, options: [.atomic])
+        }
+    }
+
+    private func saveQuickFixResult() {
+        guard let result = quickFixResult else { return }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.pdf]
+        panel.canCreateDirectories = true
+        let suggestedName = Self.quickFixSuggestedFileName(inputURL: inputURL)
+        panel.nameFieldStringValue = suggestedName
+        panel.directoryURL = inputURL?.deletingLastPathComponent() ?? result.outputURL.deletingLastPathComponent()
+
+        isSavingQuickFixResult = true
+        defer { isSavingQuickFixResult = false }
+
+        if panel.runModal() == .OK, let destination = panel.url {
+            do {
+                if destination.standardizedFileURL == result.outputURL.standardizedFileURL {
+                    log += "ℹ️ Result already points to \(destination.path)\n"
+                    return
+                }
+                try Self.copyResultPreservingExistingFile(
+                    from: result.outputURL,
+                    to: destination
+                )
+                OutputDirectoryAccessStore.shared.store(directory: destination.deletingLastPathComponent())
+                let savedResult = result.savedCopy(outputURL: destination)
+                let previousOutputURL = result.outputURL
+                quickFixResult = savedResult
+                QuickFixResultStore.shared.set(savedResult, previousOutputURL: previousOutputURL, sourceURL: inputURL)
+                printCoordinator.outputURL = savedResult.displayOutputURL
+                log += "💾 Saved result → \(destination.path)\n"
+                if result.isTemporaryOutput {
+                    try? FileManager.default.removeItem(at: previousOutputURL)
+                }
+            } catch {
+                log += "❌ Save failed: \(error.localizedDescription)\n"
+            }
+        }
+    }
+
+    private func openQuickFixInput() {
+        guard let inputURL else { return }
+        NSWorkspace.shared.open(inputURL)
+    }
+
+    private func openQuickFixResult() {
+        guard let quickFixResult else { return }
+        NSWorkspace.shared.open(quickFixResult.displayOutputURL)
+    }
+
+    private static func quickFixSuggestedFileName(inputURL: URL?) -> String {
+        let base = inputURL?.deletingPathExtension().lastPathComponent ?? "QuickFix"
+        return "\(base)-fixed.pdf"
+    }
+
+    private func cleanupTransientOutputs() {
+        if let cached = aiImageOCRURL {
+            try? FileManager.default.removeItem(at: cached)
+            aiImageOCRURL = nil
+        }
+        if let result = quickFixResult, result.isTemporaryOutput {
+            try? FileManager.default.removeItem(at: result.outputURL)
+        }
     }
 
     private func overrideBinding(for task: LocalAITask) -> Binding<String> {
@@ -544,7 +670,7 @@ struct QuickFixTab: View {
             throw PDFTextExtractorError.missingInput
         }
         if documentInputKind(for: inputURL) == .image {
-            if let cached = aiImageOCRURL {
+            if let cached = Self.existingCachedOCRURL(aiImageOCRURL) {
                 return cached
             }
             await MainActor.run {
@@ -559,10 +685,15 @@ struct QuickFixTab: View {
         return inputURL
     }
 
+    static func existingCachedOCRURL(_ url: URL?) -> URL? {
+        guard let url else { return nil }
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
     private func generateImageOCRTextSource(from imageURL: URL) async throws -> URL {
-        let (parameters, preprocessImages, targetDPI) = await MainActor.run {
-            (optionsModel.makeParameters(), optionsModel.preprocessImages, CGFloat(optionsModel.dpi))
-        }
+        let parameters = await MainActor.run { optionsModel.makeAIImageOCRParameters() }
+        let preprocessImages = await MainActor.run { optionsModel.preprocessImages }
+        let targetDPI = await MainActor.run { CGFloat(optionsModel.dpi) }
         return try await Task.detached(priority: .userInitiated) {
             let conversion = try ImagePDFConverter.convertImageToPDF(
                 at: imageURL,
@@ -588,12 +719,151 @@ struct QuickFixTab: View {
         }.value
     }
 
+    static func copyResultPreservingExistingFile(from sourceURL: URL,
+                                                 to destinationURL: URL,
+                                                 fileManager: FileManager = .default) throws {
+        let tempCopyURL = temporaryFileURL(prefix: "quickfix-save-", extension: destinationURL.pathExtension.isEmpty ? "pdf" : destinationURL.pathExtension)
+        do {
+            try fileManager.copyItem(at: sourceURL, to: tempCopyURL)
+            if fileManager.fileExists(atPath: destinationURL.path) {
+                _ = try fileManager.replaceItemAt(destinationURL, withItemAt: tempCopyURL)
+            } else {
+                try fileManager.moveItem(at: tempCopyURL, to: destinationURL)
+            }
+        } catch {
+            if fileManager.fileExists(atPath: tempCopyURL.path) {
+                try? fileManager.removeItem(at: tempCopyURL)
+            }
+            throw error
+        }
+    }
+
     private nonisolated static func temporaryFileURL(prefix: String, extension ext: String) -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("\(prefix)\(UUID().uuidString)")
             .appendingPathExtension(ext)
     }
 
+}
+
+private enum AIOutputFormat {
+    case txt
+    case json
+
+    var fileExtension: String {
+        switch self {
+        case .txt:
+            return "txt"
+        case .json:
+            return "json"
+        }
+    }
+}
+
+private struct QuickFixPreviewCard: View {
+    let inputURL: URL?
+    let result: QuickFixResult
+    let isSaving: Bool
+    let onOpenBefore: () -> Void
+    let onOpenAfter: () -> Void
+    let onSaveResult: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(AppTheme.Colors.support)
+                    .font(.title2)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("QuickFix Result")
+                        .appFont(.headline)
+                    Text(result.isTemporaryOutput ? "Temporary output ready for review." : "Saved output selected.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if let pageIndex = result.previewPageIndex {
+                    Text("Preview page \(pageIndex + 1)")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            HStack(spacing: 12) {
+                previewColumn(
+                    title: "Before",
+                    fileName: inputURL?.lastPathComponent ?? "No source selected",
+                    systemImage: "doc",
+                    actionTitle: "Open Before",
+                    action: onOpenBefore,
+                    enabled: inputURL != nil
+                )
+
+                Image(systemName: "arrow.right")
+                    .foregroundStyle(.secondary)
+
+                previewColumn(
+                    title: "After",
+                    fileName: result.displayOutputURL.lastPathComponent,
+                    systemImage: "doc.text.fill",
+                    actionTitle: isSaving ? "Saving…" : "Open After",
+                    action: onOpenAfter,
+                    enabled: !isSaving
+                )
+            }
+
+            HStack {
+                if result.isTemporaryOutput {
+                    Text("The output is temporary until you save it.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("The output has been saved.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button(isSaving ? "Saving…" : "Save Result…") {
+                    onSaveResult()
+                }
+                .buttonStyle(SecondaryButtonStyle())
+                .disabled(isSaving)
+            }
+        }
+        .padding()
+        .background(AppTheme.Colors.support.opacity(0.08))
+        .cornerRadius(AppTheme.Metrics.cardCornerRadius)
+    }
+
+    @ViewBuilder
+    private func previewColumn(title: String,
+                               fileName: String,
+                               systemImage: String,
+                               actionTitle: String,
+                               action: @escaping () -> Void,
+                               enabled: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(title, systemImage: systemImage)
+                .font(.subheadline.weight(.semibold))
+            Text(fileName)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+            Button(actionTitle) {
+                action()
+            }
+            .buttonStyle(SecondaryButtonStyle())
+            .disabled(!enabled)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AppTheme.Colors.cardBackground)
+        .cornerRadius(AppTheme.Metrics.smallCornerRadius)
+        .overlay(
+            RoundedRectangle(cornerRadius: AppTheme.Metrics.smallCornerRadius)
+                .stroke(AppTheme.Colors.cardBorder, lineWidth: 0.5)
+        )
+    }
 }
 
 @MainActor
@@ -632,92 +902,6 @@ final class QuickFixPrintCoordinator: ObservableObject, DocumentPrintable {
 
     private func isPDF(_ url: URL) -> Bool {
         url.pathExtension.lowercased() == "pdf"
-    }
-}
-
-enum PDFTextExtractor {
-    static func extractText(from url: URL, pageSelection: String? = nil) throws -> String {
-        let data = try Data(contentsOf: url)
-        guard let document = PDFDocument(data: data) else {
-            return ""
-        }
-        let pageCount = document.pageCount
-        guard pageCount > 0 else { return "" }
-        let pages = try parsePageSelection(pageSelection, pageCount: pageCount)
-        var combined = ""
-        for index in pages {
-            guard let page = document.page(at: index), let text = page.string else { continue }
-            combined.append("--- Page \(index + 1) ---\n")
-            combined.append(text)
-            combined.append("\n\n")
-        }
-        return combined
-    }
-
-    private static func parsePageSelection(_ selection: String?, pageCount: Int) throws -> [Int] {
-        guard let selection = selection?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !selection.isEmpty else {
-            return Array(0..<pageCount)
-        }
-        var selected = Set<Int>()
-        for token in selection.split(separator: ",") {
-            let trimmed = String(token).trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { continue }
-            let parts = trimmed.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false)
-            if parts.count == 1 {
-                let value = String(parts[0]).trimmingCharacters(in: .whitespacesAndNewlines)
-                guard let page = Int(value) else {
-                    throw PDFTextExtractorError.invalidPageSelection(String(trimmed))
-                }
-                try validatePage(page, pageCount: pageCount)
-                selected.insert(page - 1)
-            } else if parts.count == 2 {
-                let startString = String(parts[0]).trimmingCharacters(in: .whitespacesAndNewlines)
-                let endString = String(parts[1]).trimmingCharacters(in: .whitespacesAndNewlines)
-                guard let start = Int(startString), let end = Int(endString), start <= end else {
-                    throw PDFTextExtractorError.invalidPageSelection(String(trimmed))
-                }
-                try validatePage(start, pageCount: pageCount)
-                try validatePage(end, pageCount: pageCount)
-                for page in start...end {
-                    selected.insert(page - 1)
-                }
-            } else {
-                throw PDFTextExtractorError.invalidPageSelection(String(trimmed))
-            }
-        }
-
-        let sorted = selected.sorted()
-        if sorted.isEmpty {
-            throw PDFTextExtractorError.emptyPageSelection
-        }
-        return sorted
-    }
-
-    private static func validatePage(_ page: Int, pageCount: Int) throws {
-        guard page >= 1 && page <= pageCount else {
-            throw PDFTextExtractorError.pageOutOfRange(page, pageCount)
-        }
-    }
-}
-
-enum PDFTextExtractorError: LocalizedError {
-    case invalidPageSelection(String)
-    case pageOutOfRange(Int, Int)
-    case emptyPageSelection
-    case missingInput
-
-    var errorDescription: String? {
-        switch self {
-        case .invalidPageSelection(let token):
-            return "Invalid page selection: \"\(token)\". Use formats like 1-3, 6."
-        case .pageOutOfRange(let page, let total):
-            return "Page \(page) is out of range. This PDF has \(total) pages."
-        case .emptyPageSelection:
-            return "No pages selected. Enter a page range like 1-3."
-        case .missingInput:
-            return "Select a PDF or image first."
-        }
     }
 }
 

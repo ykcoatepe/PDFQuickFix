@@ -19,20 +19,12 @@ security-check:
 	./scripts/security_check.sh
 
 build: generate security-check
-	if command -v xcpretty >/dev/null 2>&1; then \
-		set -o pipefail && xcodebuild -project $(PROJECT) -scheme $(SCHEME) -configuration Release -derivedDataPath $(DERIVED) build | xcpretty; \
-	else \
-		xcodebuild -project $(PROJECT) -scheme $(SCHEME) -configuration Release -derivedDataPath $(DERIVED) build; \
-	fi
+	./scripts/run_xcodebuild.sh -project $(PROJECT) -scheme $(SCHEME) -configuration Release -derivedDataPath $(DERIVED) build
 	@echo "✅ Build done"
 	@ls -1 $(DERIVED)/Build/Products/Release/$(APP).app >/dev/null && echo "Artifact: $(DERIVED)/Build/Products/Release/$(APP).app"
 
 debug: generate security-check
-	if command -v xcpretty >/dev/null 2>&1; then \
-		set -o pipefail && xcodebuild -project $(PROJECT) -scheme $(SCHEME) -configuration Debug -derivedDataPath $(DERIVED) build | xcpretty; \
-	else \
-		xcodebuild -project $(PROJECT) -scheme $(SCHEME) -configuration Debug -derivedDataPath $(DERIVED) build; \
-	fi
+	./scripts/run_xcodebuild.sh -project $(PROJECT) -scheme $(SCHEME) -configuration Debug -derivedDataPath $(DERIVED) build
 	open $(DERIVED)/Build/Products/Debug/$(APP).app || true
 
 run:

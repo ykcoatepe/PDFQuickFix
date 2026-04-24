@@ -114,6 +114,11 @@ extension FocusedValues {
         get { self[DocumentClosableKey.self] }
         set { self[DocumentClosableKey.self] = newValue }
     }
+
+    var documentHealthPresentable: DocumentHealthPresentable? {
+        get { self[DocumentHealthPresentableKey.self] }
+        set { self[DocumentHealthPresentableKey.self] = newValue }
+    }
 }
 
 // MARK: - New Protocols
@@ -148,6 +153,16 @@ struct DocumentClosableKey: FocusedValueKey {
     typealias Value = DocumentClosable
 }
 
+@MainActor
+protocol DocumentHealthPresentable: AnyObject {
+    var canShowDocumentHealth: Bool { get }
+    func showDocumentHealth()
+}
+
+struct DocumentHealthPresentableKey: FocusedValueKey {
+    typealias Value = DocumentHealthPresentable
+}
+
 // MARK: - Commands
 
 struct AppCommands: Commands {
@@ -156,6 +171,7 @@ struct AppCommands: Commands {
     @FocusedValue(\.pdfActionable) var pdfActionable
     @FocusedValue(\.studioToolSwitchable) var studioToolSwitchable
     @FocusedValue(\.documentClosable) var documentClosable
+    @FocusedValue(\.documentHealthPresentable) var documentHealthPresentable
     @Environment(\.openWindow) private var openWindow
     
     var body: some Commands {
@@ -171,7 +187,6 @@ struct AppCommands: Commands {
             Button("Save As…") {
                 fileExportable?.saveAs()
             }
-            .keyboardShortcut("s", modifiers: [.command, .shift])
             .keyboardShortcut("s", modifiers: [.command, .shift])
             .disabled(fileExportable == nil)
             
@@ -219,6 +234,14 @@ struct AppCommands: Commands {
         }
         
         CommandMenu("View") {
+            Button("Document Health…") {
+                documentHealthPresentable?.showDocumentHealth()
+            }
+            .keyboardShortcut("i", modifiers: [.command, .option])
+            .disabled(documentHealthPresentable?.canShowDocumentHealth != true)
+
+            Divider()
+
             Button("Zoom In") {
                 pdfActionable?.zoomIn()
             }

@@ -26,6 +26,8 @@ PDFQuickFix is best thought of as a **privacy-first PDF cleanup workstation** fo
 - Open / Save As / Print
 - Search inside PDF
 - Thumbnails sidebar, continuous scroll, zoom
+- **Copilot side panel** for quick summary, ask-this-document, explain-selection, and current-page digest flows
+- **Citation jump buttons** that take answers back to the source page
 - Annotations: **highlight selection**, **notes**, **rectangles**
 - **Form filling** (AcroForm) directly in the viewer
 - **Sign**: create a reusable handwritten signature and **stamp** it anywhere
@@ -46,6 +48,7 @@ PDFQuickFix is best thought of as a **privacy-first PDF cleanup workstation** fo
 **AI Tools tab**
 - **OCR repair** (Local OCR by default, Vision fallback) adds invisible text layer
 - **Local AI tools** (summary, translation, PII scan, field extraction)
+- **Heavy AI workflows** stay here for OCR, extraction, redaction, and longer-running document jobs
 - **Accepts PDF, PNG, and JPEG inputs** (images are converted to searchable PDFs during OCR)
 - **Optional AI auto-crop, deskew, and enhancement** for image inputs (toggle in Options)
 - **Progress updates** during QuickFix runs (pages processed)

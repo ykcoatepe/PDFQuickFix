@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 
 struct ContentView: View {
+    @EnvironmentObject private var aiInteractions: AIInteractionStore
     @State private var currentMode: AppMode = .reader
     @StateObject private var documentHub = SharedDocumentHub()
     @StateObject private var readerController = ReaderControllerPro()
@@ -60,6 +61,9 @@ struct ContentView: View {
         }
         .frame(minWidth: 960, minHeight: 640)
         .environmentObject(documentHub)
+        .task {
+            readerController.configureCopilotInteractionStore(aiInteractions)
+        }
         .onOpenURL { url in
             // When launched via "Open With" or file double-click
             readerController.open(url: url)
@@ -453,6 +457,14 @@ struct UnifiedToolbar: View {
             .cornerRadius(6)
             
             Divider().frame(height: 16)
+
+            Button(action: { readerController.showDocumentHealth() }) {
+                Image(systemName: "cross.case")
+                    .foregroundColor(AppTheme.Colors.primaryText)
+            }
+            .buttonStyle(.plain)
+            .help("Document Health")
+            .disabled(readerController.document == nil)
             
             // Right Panel Toggle
             Button(action: {
@@ -474,6 +486,12 @@ struct UnifiedToolbar: View {
     
     private var studioRightControls: some View {
         HStack(spacing: 12) {
+            Button(action: { studioController.showDocumentHealth() }) {
+                Label("Health", systemImage: "cross.case")
+            }
+            .buttonStyle(GhostButtonStyle())
+            .disabled(studioController.document == nil)
+
             // Tools Menu
             Menu {
                 Button("Watermark…") { showingWatermarkSheet = true }

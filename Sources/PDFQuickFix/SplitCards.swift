@@ -257,6 +257,7 @@ struct SplitDestinationCard: View {
 
 struct SplitHistoryCard: View {
     let history: [SplitJobRecord]
+    let onApplySettings: (SplitJobRecord) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -304,6 +305,11 @@ struct SplitHistoryCard: View {
                                 .font(.caption)
                                 .foregroundColor(AppTheme.Colors.error)
                         }
+                        Spacer()
+                        Button("Apply Settings") {
+                            onApplySettings(job)
+                        }
+                        .buttonStyle(.bordered)
                     }
                     .padding(.vertical, 2)
                 }
@@ -478,6 +484,7 @@ struct MergeDestinationCard: View {
 
 struct MergeHistoryCard: View {
     let history: [MergeJobRecord]
+    let onApplySettings: (MergeJobRecord) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -515,6 +522,11 @@ struct MergeHistoryCard: View {
                                         .font(.caption)
                                         .foregroundColor(AppTheme.Colors.warning)
                                 }
+                                Spacer()
+                                Button("Apply Settings") {
+                                    onApplySettings(job)
+                                }
+                                .buttonStyle(.bordered)
                             }
                             .padding(.vertical, 2)
                         }

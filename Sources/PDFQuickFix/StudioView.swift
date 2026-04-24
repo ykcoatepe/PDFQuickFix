@@ -215,6 +215,20 @@ struct StudioView: View, Equatable {
         .focusedSceneValue(\.pdfActionable, controller)
         .focusedSceneValue(\.studioToolSwitchable, controller)
         .focusedSceneValue(\.documentClosable, controller)
+        .focusedSceneValue(\.documentHealthPresentable, controller)
+        .sheet(isPresented: $controller.isDocumentHealthPresented) {
+            if let summary = controller.documentHealthSummary {
+                DocumentHealthSheet(
+                    summary: summary,
+                    onRepairAndSaveAs: { controller.repairAndSaveAs() },
+                    onExportSanitized: { controller.exportSanitized() },
+                    onOpenQuickFix: { selectedTab = .quickFix }
+                )
+            } else {
+                Text("No active document.")
+                    .padding(24)
+            }
+        }
     }
 
     private var workbenchHeader: some View {

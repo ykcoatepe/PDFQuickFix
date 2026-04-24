@@ -38,3 +38,4 @@ dist/
 
 # Temporary
 .tmp/
+*.profraw
