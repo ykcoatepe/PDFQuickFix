@@ -25,7 +25,7 @@ fi
 # Run tests
 echo "🧪 Running tests..."
 XCODEBUILD_CMD=(
-    xcodebuild -project PDFQuickFix.xcodeproj
+    ./scripts/run_xcodebuild.sh -project PDFQuickFix.xcodeproj
     -scheme PDFQuickFix
     -destination 'platform=macOS'
     -configuration Debug
@@ -39,10 +39,6 @@ case "${CI_CODE_SIGNING:-1}" in
         ;;
 esac
 
-if command -v xcpretty &> /dev/null; then
-    "${XCODEBUILD_CMD[@]}" | xcpretty
-else
-    "${XCODEBUILD_CMD[@]}"
-fi
+"${XCODEBUILD_CMD[@]}"
 
 echo "✅ CI Run Complete."

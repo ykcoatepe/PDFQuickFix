@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 
 struct ContentView: View {
+    @EnvironmentObject private var aiInteractions: AIInteractionStore
     @State private var currentMode: AppMode = .reader
     @StateObject private var documentHub = SharedDocumentHub()
     @StateObject private var readerController = ReaderControllerPro()
@@ -60,6 +61,9 @@ struct ContentView: View {
         }
         .frame(minWidth: 960, minHeight: 640)
         .environmentObject(documentHub)
+        .task {
+            readerController.configureCopilotInteractionStore(aiInteractions)
+        }
         .onOpenURL { url in
             // When launched via "Open With" or file double-click
             readerController.open(url: url)

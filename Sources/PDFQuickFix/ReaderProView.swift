@@ -15,7 +15,12 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
     @Published var currentMatchIndex: Int? = nil
     @Published var isSidebarVisible: Bool = true
     @Published var isRightPanelVisible: Bool = false
+    @Published var selectedRightPanelTab: ReaderRightPanelTab = .info
     @Published var isProcessing: Bool = false
+    @Published var copilotQuery: String = ""
+    @Published var copilotResponse: DocumentCopilotResponse?
+    @Published var copilotError: String?
+    @Published var isCopilotRunning: Bool = false
     
     func toggleRightPanel() {
         isRightPanelVisible.toggle()
@@ -34,18 +39,40 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
     @Published var isRepaired: Bool = false
     @Published var skippedQuickValidation: Bool = false
     @Published var isDocumentHealthPresented: Bool = false
+    @Published private(set) var currentSelectionTextState: String?
 
-    weak var pdfView: PDFView?
+    weak var pdfView: PDFView? {
+        didSet {
+            rebindPDFViewObservers(from: oldValue, to: pdfView)
+            refreshSelectionState()
+        }
+    }
+    var currentSelectionText: String? {
+        currentSelectionTextState ?? normalizedSelectionText(from: pdfView?.currentSelection)
+    }
 
     private var findObserver: NSObjectProtocol?
+    private var selectionObserver: NSObjectProtocol?
     private let validationRunner = DocumentValidationRunner()
+    private var copilotService: any DocumentCopilotServicing
+    private let usesCustomCopilotService: Bool
     private var searchDebounceWorkItem: DispatchWorkItem?
+    private var activeCopilotRequestID: UInt64 = 0
     private enum ValidationMode { case idle, quick, full }
     private var validationMode: ValidationMode = .idle
     private let largeDocumentPageThreshold = DocumentValidationRunner.largeDocumentPageThreshold
 
+    init(copilotService: (any DocumentCopilotServicing)? = nil) {
+        self.copilotService = copilotService ?? DocumentCopilotService(interactionStore: AIInteractionStore())
+        self.usesCustomCopilotService = copilotService != nil
+        super.init()
+    }
+
     deinit {
         if let observer = findObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        if let observer = selectionObserver {
             NotificationCenter.default.removeObserver(observer)
         }
         validationRunner.cancelAll()
@@ -164,6 +191,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
             pdfView?.displayMode = .singlePage
             pdfView?.displaysPageBreaks = false
             pdfView?.autoScales = true
+            refreshSelectionState()
         }
         currentPageIndex = 0
         searchMatches.removeAll()
@@ -172,6 +200,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         isFullValidationRunning = false
         isPartialLoad = false
         self.isRepaired = isRepaired
+        clearCopilotOutput()
 
         let shouldSkipAutoValidation = DocumentValidationRunner.shouldSkipQuickValidation(
             estimatedPages: nil,
@@ -203,6 +232,8 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         isFullValidationRunning = false
         validationMode = .idle
         log = "❌ \(error.localizedDescription)"
+        currentSelectionTextState = nil
+        clearCopilotOutput()
         present(error)
     }
 
@@ -233,6 +264,8 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         isFullValidationRunning = false
         validationMode = .idle
         log = ""
+        currentSelectionTextState = nil
+        clearCopilotOutput()
     }
 
     
@@ -618,6 +651,70 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         view.zoomOut(nil)
         zoomScale = view.scaleFactor
     }
+
+    func runCopilotQuery() async {
+        let query = copilotQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else {
+            copilotError = "Enter a question first."
+            return
+        }
+        await runCopilotRequest(.ask(question: query, scope: .document))
+    }
+
+    func runCopilotRequest(_ request: DocumentCopilotRequest) async {
+        guard let session = makeCopilotSession() else {
+            copilotError = PDFTextExtractorError.missingInput.localizedDescription
+            return
+        }
+
+        let modelName = currentCopilotModelName()
+        activeCopilotRequestID &+= 1
+        let requestID = activeCopilotRequestID
+        isCopilotRunning = true
+        copilotError = nil
+        copilotResponse = nil
+
+        do {
+            let response = try await copilotService.respond(
+                to: request,
+                using: session,
+                sourceName: currentURL?.lastPathComponent ?? document?.documentURL?.lastPathComponent,
+                modelName: modelName
+            )
+            guard requestID == activeCopilotRequestID else { return }
+            copilotResponse = response
+        } catch {
+            guard requestID == activeCopilotRequestID else { return }
+            copilotError = error.localizedDescription
+        }
+
+        guard requestID == activeCopilotRequestID else { return }
+        isCopilotRunning = false
+    }
+
+    func explainCurrentSelection() async {
+        guard let selectionText = currentSelectionText else {
+            copilotError = "Select text first."
+            return
+        }
+        await runCopilotRequest(.explainSelection(selection: selectionText, scope: .selection(selectionText)))
+    }
+
+    func runCurrentPageDigest() async {
+        let pageIndex = currentDisplayedPageIndex() ?? currentPageIndex
+        await runCopilotRequest(.currentPageDigest(scope: .currentPage(index: pageIndex)))
+    }
+
+    func jumpToCitationPage(_ citation: DocumentCopilotCitation) {
+        guard let document, citation.pageIndex >= 0, let page = document.page(at: citation.pageIndex) else { return }
+        pdfView?.go(to: page)
+        currentPageIndex = citation.pageIndex
+    }
+
+    func configureCopilotInteractionStore(_ interactionStore: AIInteractionStore) {
+        guard !usesCustomCopilotService else { return }
+        copilotService = DocumentCopilotService(interactionStore: interactionStore)
+    }
     
     // MARK: - Helpers
     
@@ -628,6 +725,63 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
                                     resetScale: true)
         view.delegate = self
         zoomScale = view.scaleFactor
+        refreshSelectionState()
+    }
+
+    private func makeCopilotSession() -> DocumentTextSession? {
+        if let document {
+            return DocumentTextSession(document: document)
+        }
+        guard let url = currentURL else { return nil }
+        return try? DocumentTextSession(documentURL: url)
+    }
+
+    private func currentCopilotModelName() -> String? {
+        let modelName = LocalAISettings().defaultModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        return modelName.isEmpty ? nil : modelName
+    }
+
+    private func clearCopilotOutput() {
+        activeCopilotRequestID &+= 1
+        copilotResponse = nil
+        copilotError = nil
+        isCopilotRunning = false
+    }
+
+    private func normalizedSelectionText(from selection: PDFSelection?) -> String? {
+        guard let value = selection?.string?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty else {
+            return nil
+        }
+        return value
+    }
+
+    private func refreshSelectionState() {
+        let selectionText = normalizedSelectionText(from: pdfView?.currentSelection)
+        guard currentSelectionTextState != selectionText else { return }
+        currentSelectionTextState = selectionText
+    }
+
+    fileprivate func handlePDFSelectionChange() {
+        refreshSelectionState()
+    }
+
+    private func rebindPDFViewObservers(from oldValue: PDFView?, to newValue: PDFView?) {
+        if let observer = selectionObserver {
+            NotificationCenter.default.removeObserver(observer)
+            selectionObserver = nil
+        }
+
+        guard let newValue else { return }
+        selectionObserver = NotificationCenter.default.addObserver(
+            forName: .PDFViewSelectionChanged,
+            object: newValue,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.refreshSelectionState()
+            }
+        }
     }
 
     private func annotationRects(for selection: PDFSelection, on page: PDFPage) -> [CGRect] {
@@ -729,6 +883,36 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
             validationStatus: validationStatus,
             quickFixResult: quickFixResult
         )
+    }
+}
+
+enum ReaderRightPanelTab: String, CaseIterable, Identifiable {
+    case info
+    case comments
+    case copilot
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .info:
+            return "Info"
+        case .comments:
+            return "Comments"
+        case .copilot:
+            return "Copilot"
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .info:
+            return "info.circle"
+        case .comments:
+            return "text.bubble"
+        case .copilot:
+            return "sparkles"
+        }
     }
 }
 
@@ -1439,22 +1623,22 @@ struct ReaderSidebarLeft: View {
 struct ReaderSidebarRight: View {
     @ObservedObject var controller: ReaderControllerPro
     let profile: DocumentProfile
-    @State private var selectedTab: RightTab = .info
-    
-    enum RightTab { case info, comments }
     
     var body: some View {
         VStack(spacing: 0) {
-            Picker("", selection: $selectedTab) {
-                Image(systemName: "info.circle").tag(RightTab.info)
-                Image(systemName: "text.bubble").tag(RightTab.comments)
+            Picker("", selection: $controller.selectedRightPanelTab) {
+                ForEach(ReaderRightPanelTab.allCases) { tab in
+                    Label(tab.displayName, systemImage: tab.symbolName)
+                        .tag(tab)
+                }
             }
             .pickerStyle(.segmented)
             .padding(8)
             
             Divider()
             
-            if selectedTab == .info {
+            switch controller.selectedRightPanelTab {
+            case .info:
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
                         InfoRow(label: "File", value: controller.currentURL?.lastPathComponent ?? "-")
@@ -1467,10 +1651,12 @@ struct ReaderSidebarRight: View {
                     }
                     .padding()
                 }
-            } else {
+            case .comments:
                 Text("No Comments")
                     .foregroundColor(AppTheme.Colors.secondaryText)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+            case .copilot:
+                ReaderCopilotView(controller: controller)
             }
         }
         .background(AppTheme.Colors.sidebarBackground)
@@ -1644,6 +1830,11 @@ struct PDFViewProRepresented: NSViewRepresentable {
 
 class ReaderPDFView: PDFView {
     weak var controller: ReaderControllerPro?
+
+    override func setCurrentSelection(_ selection: PDFSelection?, animate: Bool) {
+        super.setCurrentSelection(selection, animate: animate)
+        controller?.handlePDFSelectionChange()
+    }
     
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = super.menu(for: event) ?? NSMenu()
