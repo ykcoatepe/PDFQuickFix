@@ -9,6 +9,8 @@ When touching existing UI, prefer converging toward the shared design system ove
 
 ## Project docs
 
+- `README.md` for the user-facing feature map and documentation index
+- `CHANGELOG.md` for release notes and user-visible changes
 - `agent.md` for repo structure, commands, and release expectations
 - `PRODUCT_THESIS.md` for product positioning and scope decisions
 - `TODOS.md` for the active backlog

@@ -37,6 +37,7 @@ This review consolidates the strategy, design, and engineering work completed so
 ## What Already Exists
 
 - Privacy and sanitization workflows in Reader/Studio export and batch sanitize flows
+- Finder Quick Action support for creating sanitized outbound copies from selected PDFs
 - Local OCR and local AI support with opt-in fallback behavior
 - Split/Merge workbench with real operational capabilities
 - A dark-shell UI direction already present in Reader and Split surfaces
@@ -58,7 +59,6 @@ Target files:
 
 - Unify `AppTheme` and `AppColors` into one token source instead of two compatibility layers
 - Add cleanup evidence surfaces, before/after summaries, and audit-style result bundles
-- Add Finder Quick Action support for sanitize/export flows
 - Carry the new product thesis into app copy, onboarding, and empty states more broadly
 - Review the repo's remaining tracked artifact history and keep it clean going forward
 

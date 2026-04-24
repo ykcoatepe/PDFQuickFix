@@ -14,6 +14,7 @@ PDFQuickFix is best thought of as a **privacy-first PDF cleanup workstation** fo
 
 **Privacy-first cleanup workflows**
 - **Sanitize for Sharing** export for safer one-off outbound copies
+- **Finder Quick Action**: right-click PDFs in Finder and choose **Quick Actions → PDFQuickFix/Sanitize PDF for Sharing**
 - **Sanitize Folder** batch workflow for processing a full directory from the app
 - **Privacy / Light / Keep Editable** sanitize profiles for different output goals
 - **Secure redaction** by patterns (IBAN, TCKN, PNR, TC- tail) + your own regex
@@ -54,12 +55,13 @@ PDFQuickFix is best thought of as a **privacy-first PDF cleanup workstation** fo
 
 ## Batch and automation
 
+- Finder Quick Action: **Quick Actions → PDFQuickFix/Sanitize PDF for Sharing**
 - App menu: **File → Sanitize Folder…**
 - App menu: **File → Export → Sanitize for Sharing…**
 - CLI: `pdfquickfix-cli sanitize <input.pdf> <output.pdf>`
 - CLI: `pdfquickfix-cli sanitize-batch <inputDir> <outputDir>`
 
-The batch and CLI surfaces use the same sanitize core so you can apply the same privacy workflow interactively or in repeatable local automation.
+The Finder service accepts one or more selected PDFs, writes side-by-side `-sanitized.pdf` outbound copies, leaves originals untouched, and shows a receipt window before revealing the first output in Finder. The Finder, batch, export, and CLI surfaces use the same sanitize core so you can apply the same privacy workflow interactively or in repeatable local automation.
 
 ## Build (XcodeGen)
 1. Install Xcode 15+ and Command Line Tools.
@@ -164,7 +166,6 @@ Use this checklist to validate the new OCR/AI features end-to-end.
 - Tests now include `ReaderLoadingTests` that open a simple PDF through the reader/studio controllers and guard the runner, helping trace the freeze you saw when loading documents.
 
 ## Roadmap (optional)
-- Finder Quick Action for sanitize/export flows
 - Before/after cleanup report bundle with clearer audit trail
 - Digital ID signing (PAdES-Basic) + validation UI
 - Export to PDF/A
@@ -205,12 +206,16 @@ In Debug builds the app emits signposts and basic performance metrics.
 Use this to compare branches and track regressions when working on large-document performance.
 
 ## Documentation map
+- [CHANGELOG.md](CHANGELOG.md) for release notes and user-visible changes
+- [CLAUDE.md](CLAUDE.md) for repo-specific agent and design-system routing
 - [CONTRIBUTING.md](CONTRIBUTING.md) for local setup, checks, and PR expectations
 - [agent.md](agent.md) for repo structure, build commands, and operational notes
 - [DESIGN.md](DESIGN.md) for the shared visual system and UI direction
 - [PRODUCT_THESIS.md](PRODUCT_THESIS.md) for the product wedge and positioning
 - [TODOS.md](TODOS.md) for the active product, design, workflow, and repo backlog
 - [AUTOPLAN_REVIEW.md](AUTOPLAN_REVIEW.md) for the current branch review summary and applied design/product decisions
+- [LOGBOOK.md](LOGBOOK.md) for historical task notes
+- [implementation-plan-ollama-deepseek-ocr-fallback-2026-01-18.md](implementation-plan-ollama-deepseek-ocr-fallback-2026-01-18.md) for the archived OCR implementation plan
 
 ## Development
 For detailed development instructions, architecture notes, and workflows, please refer to [agent.md](agent.md).

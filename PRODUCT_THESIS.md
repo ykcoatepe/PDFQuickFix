@@ -44,6 +44,7 @@ Reader, Studio, Split/Merge, and AI Tools should support that workflow, not comp
 
 The repo already has real leverage:
 - app-level sanitize export,
+- Finder Quick Action sanitize from selected PDFs,
 - folder-level batch sanitize,
 - CLI sanitize and sanitize-batch commands,
 - local-first OCR and AI integration,
@@ -82,7 +83,7 @@ Avoid:
 - Move sanitize/privacy messaging to the front of the README, landing copy, and release notes
 - Make batch sanitize and CLI workflows impossible to miss
 - Add clearer cleanup evidence: before/after summaries, report bundles, or export receipts
-- Add Finder Quick Action support for common sanitize/export flows
+- Tighten the Finder Quick Action receipt into clearer cleanup evidence
 - Add vertical presets where they improve speed without fragmenting the product
 
 ## Success test
