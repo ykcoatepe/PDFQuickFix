@@ -32,11 +32,13 @@
 			</dict>
 			<key>NSMessage</key>
 			<string>sanitizeSelectedPDFs</string>
+			<key>NSRequiredContext</key>
+			<dict/>
 			<key>NSPortName</key>
 			<string>PDFQuickFix</string>
 			<key>NSSendFileTypes</key>
 			<array>
-				<string>pdf</string>
+				<string>public.item</string>
 			</array>
 			<key>NSSendTypes</key>
 			<array>

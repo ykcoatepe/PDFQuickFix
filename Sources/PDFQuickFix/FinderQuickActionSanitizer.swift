@@ -170,9 +170,10 @@ final class FinderQuickActionCoordinator: ObservableObject {
                     )
                 }
 
+                let snapshot = completed
                 DispatchQueue.main.async {
-                    self.processedCount = completed.count
-                    self.results = completed
+                    self.processedCount = snapshot.count
+                    self.results = snapshot
                 }
             }
 
@@ -180,8 +181,15 @@ final class FinderQuickActionCoordinator: ObservableObject {
                 self.isRunning = false
                 self.currentFileName = nil
                 self.results = completed
-                if let firstOutput = completed.compactMap(\.outputURL).first {
-                    NSWorkspace.shared.activateFileViewerSelecting([firstOutput])
+                let outputURLs = completed.compactMap(\.outputURL)
+                if !outputURLs.isEmpty {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                        NSWorkspace.shared.activateFileViewerSelecting(outputURLs)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                            self.windowController?.window?.makeKeyAndOrderFront(nil)
+                            NSApp.activate(ignoringOtherApps: true)
+                        }
+                    }
                 }
             }
         }
