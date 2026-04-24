@@ -110,12 +110,20 @@ final class FinderQuickActionCoordinator: ObservableObject {
     private init() {}
 
     func run(urls: [URL]) {
+        if isRunning {
+            showReceipt()
+            return
+        }
+
         let pdfURLs = urls
             .filter { $0.pathExtension.caseInsensitiveCompare("pdf") == .orderedSame }
             .map { $0.standardizedFileURL }
 
         guard !pdfURLs.isEmpty else {
-            showReceipt()
+            isRunning = false
+            processedCount = 0
+            totalCount = 0
+            currentFileName = nil
             results = [
                 FinderQuickActionResult(
                     sourceURL: URL(fileURLWithPath: "/"),
@@ -123,6 +131,7 @@ final class FinderQuickActionCoordinator: ObservableObject {
                     errorDescription: "Select one or more PDF files in Finder."
                 )
             ]
+            showReceipt()
             return
         }
 
