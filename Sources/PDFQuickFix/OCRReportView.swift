@@ -23,7 +23,6 @@ struct OCRReportView: View {
         .cardStyle()
     }
 
-    @ViewBuilder
     private func metricRow(label: String, value: String) -> some View {
         HStack {
             Text(label)

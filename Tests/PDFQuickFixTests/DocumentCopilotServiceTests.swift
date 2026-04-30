@@ -1,8 +1,8 @@
-import XCTest
 import CoreGraphics
 import CoreText
 import PDFKit
 @testable import PDFQuickFix
+import XCTest
 
 @MainActor
 final class DocumentCopilotServiceTests: XCTestCase {
@@ -14,7 +14,7 @@ final class DocumentCopilotServiceTests: XCTestCase {
             self.response = response
         }
 
-        func generateText(model: String, prompt: String, format: String?) async throws -> String {
+        func generateText(model _: String, prompt: String, format _: String?) async throws -> String {
             prompts.append(prompt)
             return response
         }
@@ -33,7 +33,7 @@ final class DocumentCopilotServiceTests: XCTestCase {
         let service = DocumentCopilotService(
             interactionStore: store,
             client: generator,
-            maxPromptCharacters: 1_500,
+            maxPromptCharacters: 1500,
             maxChunkCharacters: 180
         )
 
@@ -104,7 +104,7 @@ final class DocumentCopilotServiceTests: XCTestCase {
     func testAskWithStopwordHeavyPromptFallsBackToGroundedContext() async throws {
         let url = try makeTextPDF(pages: [
             "Quarterly revenue increased because enterprise renewals expanded in EMEA.",
-            "Appendix"
+            "Appendix",
         ])
         defer { try? FileManager.default.removeItem(at: url) }
 
@@ -146,7 +146,7 @@ final class DocumentCopilotServiceTests: XCTestCase {
             .ask(question: "What is on page one?", scope: .document),
             .explainSelection(selection: "Page one content.", scope: .document),
             .currentPageDigest(scope: .currentPage(index: 1)),
-            .keySections(scope: .pageRange("1-2"))
+            .keySections(scope: .pageRange("1-2")),
         ]
 
         for request in requests {
@@ -166,7 +166,7 @@ final class DocumentCopilotServiceTests: XCTestCase {
                 .readerCopilot(action: .currentPageDigest),
                 .readerCopilot(action: .selectionExplanation),
                 .readerCopilot(action: .documentQuestion),
-                .readerCopilot(action: .quickSummary)
+                .readerCopilot(action: .quickSummary),
             ]
         )
     }
@@ -182,7 +182,7 @@ final class DocumentCopilotServiceTests: XCTestCase {
         let service = DocumentCopilotService(
             interactionStore: AIInteractionStore(persistToDisk: false),
             client: generator,
-            maxPromptCharacters: 1_100,
+            maxPromptCharacters: 1100,
             maxChunkCharacters: 150
         )
 
@@ -196,7 +196,7 @@ final class DocumentCopilotServiceTests: XCTestCase {
         XCTAssertTrue(result.requestWasTrimmed)
         XCTAssertFalse(result.contextWasTrimmed)
         XCTAssertTrue(result.inputWasTrimmed)
-        XCTAssertLessThanOrEqual(result.promptCharacterCount, 1_100)
+        XCTAssertLessThanOrEqual(result.promptCharacterCount, 1100)
     }
 
     private func makeTextPDF(pages: [String]) throws -> URL {

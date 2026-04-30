@@ -2,8 +2,8 @@ import Foundation
 import PDFKit
 import PDFQuickFixKit
 
-extension PDFDocumentSanitizer {
-    public final class Job {
+public extension PDFDocumentSanitizer {
+    final class Job {
         private let lock = NSLock()
         private var _isCancelled = false
 
@@ -16,17 +16,18 @@ extension PDFDocumentSanitizer {
             lock.lock(); defer { lock.unlock() }
             _isCancelled = true
         }
-        
+
         public init() {}
     }
 
-    // Async helpers
-    // Note: Re-implementing high level async flow here for the App module
+    /// Async helpers
+    /// Note: Re-implementing high level async flow here for the App module
     private static let sanitizerQueue = DispatchQueue(label: "com.pdfquickfix.sanitizer", qos: .userInitiated)
 
-    public static func loadDocument(at url: URL,
-                                    options: Options = .full,
-                                    progress: ProgressHandler? = nil) throws -> PDFDocument {
+    static func loadDocument(at url: URL,
+                             options: Options = .full,
+                             progress: ProgressHandler? = nil) throws -> PDFDocument
+    {
         guard let original = PDFDocument(url: url) else {
             throw PDFDocumentSanitizerError.unableToOpen(url)
         }
@@ -37,10 +38,11 @@ extension PDFDocumentSanitizer {
     }
 
     @discardableResult
-    public static func loadDocumentAsync(at url: URL,
-                                         options: Options = .full, // Changed default to verify
-                                         progress: ProgressHandler? = nil,
-                                         completion: @escaping (Result<PDFDocument, Error>) -> Void) -> Job {
+    static func loadDocumentAsync(at url: URL,
+                                  options: Options = .full, // Changed default to verify
+                                  progress: ProgressHandler? = nil,
+                                  completion: @escaping (Result<PDFDocument, Error>) -> Void) -> Job
+    {
         let job = Job()
         sanitizerQueue.async {
             let sp = PerfLog.begin("SanitizerOpen")
@@ -83,8 +85,8 @@ extension PDFDocumentSanitizer {
     }
 }
 
-extension PDFDocumentSanitizer.Options {
-    public static func quickOpen(limit: Int = 10) -> PDFDocumentSanitizer.Options {
+public extension PDFDocumentSanitizer.Options {
+    static func quickOpen(limit: Int = 10) -> PDFDocumentSanitizer.Options {
         PDFDocumentSanitizer.Options(rebuildMode: .never,
                                      validationPageLimit: limit,
                                      sanitizeAnnotations: false,

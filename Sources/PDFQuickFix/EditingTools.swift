@@ -1,5 +1,5 @@
-import PDFKit
 import AppKit
+import PDFKit
 
 enum EditingTools {
     static func addFreeText(in view: PDFView?, text: String = "Text") {

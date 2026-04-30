@@ -1,8 +1,8 @@
 import AppKit
 import PDFKit
-import XCTest
 @testable import PDFQuickFix
 @testable import PDFQuickFixKit
+import XCTest
 
 final class FinderQuickActionSanitizerTests: XCTestCase {
     func testPasteboardExtractsOnlyUniquePDFFileURLs() throws {

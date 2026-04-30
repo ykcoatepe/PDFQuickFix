@@ -1,6 +1,6 @@
-import XCTest
 import Combine
 @testable import PDFQuickFix
+import XCTest
 
 @MainActor
 final class DocumentHealthAndValidationTests: XCTestCase {
@@ -59,7 +59,7 @@ final class DocumentHealthAndValidationTests: XCTestCase {
         let expectation = expectation(description: "Massive reader open completes")
 
         controller.$document
-            .compactMap { $0 }
+            .compactMap(\.self)
             .first()
             .sink { _ in expectation.fulfill() }
             .store(in: &cancellables)

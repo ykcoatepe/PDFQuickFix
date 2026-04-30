@@ -10,7 +10,6 @@ struct BatchSanitizeLaunchButton: View {
     var title: String = "Sanitize Folder…"
     var tone: BatchSanitizeButtonTone = .secondary
 
-    @ViewBuilder
     var body: some View {
         switch tone {
         case .primary:

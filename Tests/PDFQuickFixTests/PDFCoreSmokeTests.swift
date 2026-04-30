@@ -1,5 +1,5 @@
-import XCTest
 import PDFCore
+import XCTest
 
 final class PDFCoreSmokeTests: XCTestCase {
     func testPDFCoreDocumentInit() {
@@ -8,17 +8,17 @@ final class PDFCoreSmokeTests: XCTestCase {
         XCTAssertNil(doc.rootRef)
         XCTAssertNil(doc.infoRef)
     }
-    
+
     func testPDFCoreObjectEnum() {
         let boolObj = PDFCoreObject.bool(true)
-        if case .bool(let value) = boolObj {
+        if case let .bool(value) = boolObj {
             XCTAssertTrue(value)
         } else {
             XCTFail("Expected bool")
         }
-        
+
         let intObj = PDFCoreObject.int(42)
-        if case .int(let value) = intObj {
+        if case let .int(value) = intObj {
             XCTAssertEqual(value, 42)
         } else {
             XCTFail("Expected int")

@@ -2,7 +2,9 @@ import SwiftUI
 
 struct ReaderCopilotView: View {
     @ObservedObject var controller: ReaderControllerPro
-    private var hasDocument: Bool { controller.document != nil }
+    private var hasDocument: Bool {
+        controller.document != nil
+    }
 
     var body: some View {
         ScrollView {

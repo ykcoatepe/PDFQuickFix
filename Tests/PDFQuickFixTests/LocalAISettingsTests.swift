@@ -1,14 +1,14 @@
-import XCTest
 @testable import PDFQuickFix
+import XCTest
 
 final class LocalAISettingsTests: XCTestCase {
     @MainActor
-    func testRefreshFailurePreservesSelections() async {
+    func testRefreshFailurePreservesSelections() async throws {
         let suiteName = "LocalAISettingsTests.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suiteName)!
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defaults.removePersistentDomain(forName: suiteName)
 
-        let client = OllamaClient(hostURL: URL(string: "http://example.com")!)
+        let client = try OllamaClient(hostURL: XCTUnwrap(URL(string: "http://example.com")))
         let settings = LocalAISettings(client: client, defaults: defaults)
         settings.defaultModel = "gpt-oss:20b"
         settings.setOverride(task: .summarize, model: "deepseek-r1:8b")

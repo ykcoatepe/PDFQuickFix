@@ -9,8 +9,7 @@ import PDFQuickFixKit
 ///   --recursive               Process subdirectories
 ///   --dry-run                 Plan only, don't write files
 ///   --overwrite               Overwrite existing output files
-struct SanitizeBatchCommand {
-    
+enum SanitizeBatchCommand {
     static func run(args: [String]) throws {
         // Parse arguments
         var inputPath: String?
@@ -20,11 +19,11 @@ struct SanitizeBatchCommand {
         var recursive = false
         var dryRun = false
         var overwrite = false
-        
+
         var i = 0
         while i < args.count {
             let arg = args[i]
-            
+
             switch arg {
             case "--profile":
                 i += 1
@@ -38,7 +37,7 @@ struct SanitizeBatchCommand {
                     printError("Unknown profile '\(args[i])'. Available: privacy-clean, light-clean, keep-editable")
                     exit(1)
                 }
-                
+
             case "--preset":
                 i += 1
                 guard i < args.count else {
@@ -46,20 +45,20 @@ struct SanitizeBatchCommand {
                     exit(1)
                 }
                 presetPath = args[i]
-                
+
             case "--recursive":
                 recursive = true
-                
+
             case "--dry-run":
                 dryRun = true
-                
+
             case "--overwrite":
                 overwrite = true
-                
+
             case "--help", "-h":
                 printUsage()
                 exit(0)
-                
+
             default:
                 if arg.hasPrefix("-") {
                     printError("Unknown option: \(arg)")
@@ -78,7 +77,7 @@ struct SanitizeBatchCommand {
             }
             i += 1
         }
-        
+
         // Validate required arguments
         guard let input = inputPath else {
             printError("Missing required argument: <inputDir>")
@@ -90,9 +89,9 @@ struct SanitizeBatchCommand {
             printUsage()
             exit(1)
         }
-        
+
         // Load preset if specified (overrides --profile)
-        if let presetPath = presetPath {
+        if let presetPath {
             let presetURL = URL(fileURLWithPath: presetPath)
             guard FileManager.default.fileExists(atPath: presetURL.path) else {
                 printError("Preset file not found: \(presetPath)")
@@ -110,11 +109,11 @@ struct SanitizeBatchCommand {
                 exit(1)
             }
         }
-        
+
         // Create URLs
         let inputURL = URL(fileURLWithPath: input)
         let outputURL = URL(fileURLWithPath: output)
-        
+
         // Plan the batch
         let plan: BatchSanitizePlanner.Plan
         do {
@@ -128,7 +127,7 @@ struct SanitizeBatchCommand {
             printError(error.localizedDescription)
             exit(1)
         }
-        
+
         // Run the batch
         let report = BatchSanitizer.run(
             plan: plan,
@@ -141,11 +140,11 @@ struct SanitizeBatchCommand {
                 fflush(stderr)
             }
         )
-        
+
         // Clear progress line
         fputs("\r\u{1B}[K", stderr)
         fflush(stderr)
-        
+
         // Output JSON report
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -153,23 +152,23 @@ struct SanitizeBatchCommand {
         if let str = String(data: json, encoding: .utf8) {
             print(str)
         }
-        
+
         // Exit with error code if any failures
         if report.failed > 0 {
             exit(1)
         }
     }
-    
+
     static func printUsage() {
         let usage = """
         Usage: pdfquickfix-cli sanitize-batch <inputDir> <outputDir> [options]
-        
+
         Batch sanitize all PDFs in a directory.
-        
+
         Arguments:
           <inputDir>    Directory containing PDFs to process
           <outputDir>   Directory where sanitized PDFs will be written
-        
+
         Options:
           --profile <name>   Sanitization profile (default: privacy-clean)
                              Values: privacy-clean, light-clean, keep-editable
@@ -178,17 +177,17 @@ struct SanitizeBatchCommand {
           --dry-run          Plan only, don't write files
           --overwrite        Overwrite existing output files (default: skip)
           --help, -h         Show this help message
-        
+
         Output:
           JSON report is written to stdout.
           Progress is written to stderr.
-        
+
         Example:
           pdfquickfix-cli sanitize-batch ~/Documents/PDFs ~/Documents/Sanitized --profile light-clean --recursive
         """
         print(usage)
     }
-    
+
     private static func printError(_ message: String) {
         fputs("Error: \(message)\n", stderr)
     }

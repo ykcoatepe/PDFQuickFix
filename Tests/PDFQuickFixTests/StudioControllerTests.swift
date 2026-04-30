@@ -1,7 +1,7 @@
-import XCTest
 import AppKit
 import PDFKit
 @testable import PDFQuickFix
+import XCTest
 
 @MainActor
 final class StudioControllerTests: XCTestCase {
@@ -36,7 +36,8 @@ final class StudioControllerTests: XCTestCase {
         for (index, expectedColor) in expectedColors.enumerated() {
             guard let page = controller.document?.page(at: index),
                   let rendered = TestPDFRenderer.render(page, size: CGSize(width: 80, height: 80)),
-                  let sampled = rendered.color(at: CGPoint(x: 40, y: 40)) else {
+                  let sampled = rendered.color(at: CGPoint(x: 40, y: 40))
+            else {
                 XCTFail("Missing rendered page at index \(index)")
                 return
             }
@@ -50,7 +51,7 @@ private extension NSColor {
         let lhs = usingColorSpace(.sRGB) ?? self
         let rhs = other.usingColorSpace(.sRGB) ?? other
         return abs(lhs.redComponent - rhs.redComponent) <= tolerance &&
-               abs(lhs.greenComponent - rhs.greenComponent) <= tolerance &&
-               abs(lhs.blueComponent - rhs.blueComponent) <= tolerance
+            abs(lhs.greenComponent - rhs.greenComponent) <= tolerance &&
+            abs(lhs.blueComponent - rhs.blueComponent) <= tolerance
     }
 }

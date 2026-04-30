@@ -1,18 +1,18 @@
-import SwiftUI
 import AppKit
+import SwiftUI
 
 struct QuickFixSheet: View {
     @Environment(\.dismiss) private var dismiss
-    
+
     @Binding var inputURL: URL?
     var onDone: (URL?) -> Void
     var manualRedactions: [Int: [CGRect]] = [:]
-    
+
     @StateObject private var optionsModel = QuickFixOptionsModel()
     @State private var isProcessing: Bool = false
     @State private var log: String = ""
     @State private var quickFixResult: QuickFixResult?
-    
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
@@ -106,7 +106,8 @@ struct QuickFixSheet: View {
                 return
             }
             if let outputURL = quickFixResult?.outputURL,
-               inputURL.standardizedFileURL == outputURL.standardizedFileURL {
+               inputURL.standardizedFileURL == outputURL.standardizedFileURL
+            {
                 return
             }
             quickFixResult = nil
@@ -169,12 +170,12 @@ struct QuickFixSheet: View {
                 .textSelection(.enabled)
         }
     }
-    
+
     private func run() {
         guard !isProcessing, let inputURL else { return }
         isProcessing = true
         log = "Processing \(inputURL.lastPathComponent)…\n"
-        
+
         let model = optionsModel
         let manualRects = manualRedactions
         Task.detached(priority: .userInitiated) {
@@ -191,27 +192,27 @@ struct QuickFixSheet: View {
                         shouldCancel: { Task.isCancelled },
                         progress: { current, total in
                             DispatchQueue.main.async {
-                                self.log += "Progress: \(current)/\(total)\n"
+                                log += "Progress: \(current)/\(total)\n"
                             }
                         }
                     )
                 }
                 await MainActor.run {
-                    self.quickFixResult = result
+                    quickFixResult = result
                     QuickFixResultStore.shared.set(result, sourceURL: inputURL)
-                    self.log += "✅ Done → \(result.outputURL.path)\n"
-                    self.isProcessing = false
-                    self.onDone(result.outputURL)
+                    log += "✅ Done → \(result.outputURL.path)\n"
+                    isProcessing = false
+                    onDone(result.outputURL)
                 }
             } catch QuickFixOutputSelectionError.cancelled {
                 await MainActor.run {
-                    self.log += "⚠️ Cancelled: output location not selected.\n"
-                    self.isProcessing = false
+                    log += "⚠️ Cancelled: output location not selected.\n"
+                    isProcessing = false
                 }
             } catch {
                 await MainActor.run {
-                    self.log += "❌ Error: \(error.localizedDescription)\n"
-                    self.isProcessing = false
+                    log += "❌ Error: \(error.localizedDescription)\n"
+                    isProcessing = false
                 }
             }
         }

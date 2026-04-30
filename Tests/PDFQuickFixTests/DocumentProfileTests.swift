@@ -1,8 +1,7 @@
-import XCTest
 @testable import PDFQuickFix
+import XCTest
 
 final class DocumentProfileTests: XCTestCase {
-    
     func testNormalDocument() {
         let profile = DocumentProfile.from(pageCount: 100)
         XCTAssertFalse(profile.isLarge)
@@ -11,7 +10,7 @@ final class DocumentProfileTests: XCTestCase {
         XCTAssertTrue(profile.thumbnailsEnabled)
         XCTAssertTrue(profile.studioEnabled)
     }
-    
+
     func testLargeDocument() {
         let threshold = DocumentValidationRunner.largeDocumentPageThreshold
         let profile = DocumentProfile.from(pageCount: threshold + 1)
@@ -22,7 +21,7 @@ final class DocumentProfileTests: XCTestCase {
         XCTAssertTrue(profile.thumbnailsEnabled)
         XCTAssertTrue(profile.studioEnabled)
     }
-    
+
     func testMassiveDocument() {
         let threshold = DocumentValidationRunner.massiveDocumentPageThreshold
         let profile = DocumentProfile.from(pageCount: threshold)
@@ -36,7 +35,7 @@ final class DocumentProfileTests: XCTestCase {
         XCTAssertFalse(profile.globalAnnotationsEnabled)
         XCTAssertTrue(profile.outlineEnabled)
     }
-    
+
     func testMassiveFileSize() {
         // 201 MB
         let size: Int64 = 201 * 1024 * 1024
@@ -44,24 +43,24 @@ final class DocumentProfileTests: XCTestCase {
         XCTAssertTrue(profile.isMassive)
         XCTAssertTrue(profile.searchEnabled)
     }
-    
+
     func testMixedMassiveConditions() {
         // Small page count, massive size -> Massive
         let size: Int64 = 201 * 1024 * 1024
         let profile1 = DocumentProfile.from(pageCount: 50, fileSizeBytes: size)
         XCTAssertTrue(profile1.isMassive)
-        
+
         // Massive page count, small size -> Massive
         let threshold = DocumentValidationRunner.massiveDocumentPageThreshold
         let profile2 = DocumentProfile.from(pageCount: threshold, fileSizeBytes: 1024)
         XCTAssertTrue(profile2.isMassive)
-        
+
         // Boundary check: 199 MB -> Not Massive (if pages low)
         let sizeSmall: Int64 = 199 * 1024 * 1024
         let profile3 = DocumentProfile.from(pageCount: 100, fileSizeBytes: sizeSmall)
         XCTAssertFalse(profile3.isMassive)
     }
-    
+
     func testEmptyProfile() {
         let profile = DocumentProfile.empty
         XCTAssertFalse(profile.isLarge)

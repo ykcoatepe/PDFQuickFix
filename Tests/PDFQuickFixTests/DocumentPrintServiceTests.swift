@@ -1,6 +1,6 @@
-import XCTest
 import PDFKit
 @testable import PDFQuickFix
+import XCTest
 
 @MainActor
 final class DocumentPrintServiceTests: XCTestCase {
@@ -22,9 +22,9 @@ final class DocumentPrintServiceTests: XCTestCase {
 
     func testPrintReturnsFalseWhenDocumentMissingWithoutAlert() {
         let result = DocumentPrintService.print(document: nil,
-                                               jobTitle: "Missing",
-                                               source: "test",
-                                               showUnavailableAlert: false)
+                                                jobTitle: "Missing",
+                                                source: "test",
+                                                showUnavailableAlert: false)
         XCTAssertFalse(result)
     }
 }

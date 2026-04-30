@@ -1,9 +1,9 @@
 import AppKit
 import Foundation
 import PDFKit
+@preconcurrency import PDFQuickFixKit
 import SwiftUI
 import UniformTypeIdentifiers
-@preconcurrency import PDFQuickFixKit
 
 enum FinderQuickActionSanitizer {
     static let serviceMenuTitle = "PDFQuickFix/Sanitize PDF for Sharing"
@@ -16,7 +16,7 @@ enum FinderQuickActionSanitizer {
             forClasses: [NSURL.self],
             options: [
                 .urlReadingFileURLsOnly: true,
-                .urlReadingContentsConformToTypes: [UTType.pdf.identifier]
+                .urlReadingContentsConformToTypes: [UTType.pdf.identifier],
             ]
         ) as? [URL] {
             urls.append(contentsOf: readURLs)
@@ -27,7 +27,8 @@ enum FinderQuickActionSanitizer {
         }
 
         if let fileURLString = pasteboard.string(forType: .fileURL),
-           let url = URL(string: fileURLString) {
+           let url = URL(string: fileURLString)
+        {
             urls.append(url)
         }
 
@@ -63,7 +64,8 @@ enum FinderQuickActionSanitizer {
     static func sanitizeFile(sourceURL: URL,
                              outputURL: URL,
                              profile: SanitizeProfile,
-                             progress: PDFDocumentSanitizer.ProgressHandler? = nil) throws {
+                             progress: PDFDocumentSanitizer.ProgressHandler? = nil) throws
+    {
         guard let document = PDFDocument(url: sourceURL) else {
             throw PDFDocumentSanitizerError.unableToOpen(sourceURL)
         }
@@ -91,7 +93,9 @@ struct FinderQuickActionResult: Identifiable {
     let outputURL: URL?
     let errorDescription: String?
 
-    var succeeded: Bool { outputURL != nil && errorDescription == nil }
+    var succeeded: Bool {
+        outputURL != nil && errorDescription == nil
+    }
 }
 
 @MainActor
@@ -117,7 +121,7 @@ final class FinderQuickActionCoordinator: ObservableObject {
 
         let pdfURLs = urls
             .filter { $0.pathExtension.caseInsensitiveCompare("pdf") == .orderedSame }
-            .map { $0.standardizedFileURL }
+            .map(\.standardizedFileURL)
 
         guard !pdfURLs.isEmpty else {
             isRunning = false
@@ -129,7 +133,7 @@ final class FinderQuickActionCoordinator: ObservableObject {
                     sourceURL: URL(fileURLWithPath: "/"),
                     outputURL: nil,
                     errorDescription: "Select one or more PDF files in Finder."
-                )
+                ),
             ]
             showReceipt()
             return
@@ -341,11 +345,11 @@ struct FinderQuickActionReceiptView: View {
     private func profileLabel(_ profile: SanitizeProfile) -> String {
         switch profile {
         case .privacyClean:
-            return "Privacy Clean"
+            "Privacy Clean"
         case .lightClean:
-            return "Light Clean"
+            "Light Clean"
         case .keepEditable:
-            return "Keep Editable"
+            "Keep Editable"
         }
     }
 }

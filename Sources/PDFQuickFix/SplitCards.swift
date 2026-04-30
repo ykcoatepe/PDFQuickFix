@@ -74,7 +74,8 @@ struct SplitSourceCard: View {
         provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
             guard let data = item as? Data,
                   let url = URL(dataRepresentation: data, relativeTo: nil),
-                  url.pathExtension.lowercased() == "pdf" else {
+                  url.pathExtension.lowercased() == "pdf"
+            else {
                 return
             }
             DispatchQueue.main.async {
@@ -125,7 +126,7 @@ struct SplitModeCard: View {
                     .pickerStyle(.segmented)
                     .labelsHidden()
                     .fixedSize()
-                    
+
                     Spacer()
                 }
 
@@ -157,7 +158,7 @@ struct SplitModeCard: View {
                         }
                         Spacer()
                         HStack(spacing: 6) {
-                            Stepper(value: $numberOfParts, in: 2...500, step: 1) {
+                            Stepper(value: $numberOfParts, in: 2 ... 500, step: 1) {
                                 EmptyView()
                             }
                             .labelsHidden()
@@ -248,9 +249,9 @@ struct SplitDestinationCard: View {
 
     private var destinationLabel: String {
         if let dest = destinationURL {
-            return dest.path
+            dest.path
         } else {
-            return "Same folder as source"
+            "Same folder as source"
         }
     }
 }
@@ -378,8 +379,8 @@ struct MergeSourceListCard: View {
                 }
 
                 Text(deduplicateSources
-                     ? "Duplicate file paths are automatically removed."
-                     : "Order controls merge order. Drag rows to reorder.")
+                    ? "Duplicate file paths are automatically removed."
+                    : "Order controls merge order. Drag rows to reorder.")
                     .font(.caption)
                     .foregroundColor(AppTheme.Colors.secondaryText)
             }
@@ -560,7 +561,8 @@ private func handleDroppedFileProviders(_ providers: [NSItemProvider], onResolve
         provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
             guard let data = item as? Data,
                   let url = URL(dataRepresentation: data, relativeTo: nil),
-                  url.pathExtension.lowercased() == "pdf" else {
+                  url.pathExtension.lowercased() == "pdf"
+            else {
                 return
             }
             DispatchQueue.main.async {

@@ -7,20 +7,22 @@ enum AIReaderCopilotAction: String, Codable, CaseIterable, Identifiable, Hashabl
     case currentPageDigest = "current-page-digest"
     case keySections = "key-sections"
 
-    var id: String { rawValue }
+    var id: String {
+        rawValue
+    }
 
     var displayName: String {
         switch self {
         case .quickSummary:
-            return "Quick Summary"
+            "Quick Summary"
         case .documentQuestion:
-            return "Document Question"
+            "Document Question"
         case .selectionExplanation:
-            return "Selection Explanation"
+            "Selection Explanation"
         case .currentPageDigest:
-            return "Current Page Digest"
+            "Current Page Digest"
         case .keySections:
-            return "Key Sections"
+            "Key Sections"
         }
     }
 }
@@ -43,34 +45,34 @@ enum AIInteractionKind: Codable, Hashable {
 
     var displayName: String {
         switch self {
-        case .quickFix(let task):
-            return task.displayName
-        case .readerCopilot(let action):
-            return action.displayName
-        case .unknown(let family, let value):
-            return "\(family): \(value)"
+        case let .quickFix(task):
+            task.displayName
+        case let .readerCopilot(action):
+            action.displayName
+        case let .unknown(family, value):
+            "\(family): \(value)"
         }
     }
 
     var systemImage: String {
         switch self {
-        case .quickFix(let task):
-            return task.systemImage
+        case let .quickFix(task):
+            task.systemImage
         case .readerCopilot:
-            return "questionmark.circle"
+            "questionmark.circle"
         case .unknown:
-            return "questionmark.circle"
+            "questionmark.circle"
         }
     }
 
     var exportSlug: String {
         switch self {
-        case .quickFix(let task):
-            return task.rawValue
-        case .readerCopilot(let action):
-            return action.rawValue
-        case .unknown(let family, let value):
-            return Self.makeFilenameSafeSlug("\(family)-\(value)")
+        case let .quickFix(task):
+            task.rawValue
+        case let .readerCopilot(action):
+            action.rawValue
+        case let .unknown(family, value):
+            Self.makeFilenameSafeSlug("\(family)-\(value)")
         }
     }
 
@@ -105,7 +107,8 @@ enum AIInteractionKind: Codable, Hashable {
             }
 
             if let taskRaw = try container.decodeIfPresent(String.self, forKey: .task),
-               let task = LocalAITask(rawValue: taskRaw) {
+               let task = LocalAITask(rawValue: taskRaw)
+            {
                 self = .quickFix(task: task)
                 return
             }
@@ -125,13 +128,13 @@ enum AIInteractionKind: Codable, Hashable {
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         switch self {
-        case .quickFix(let task):
+        case let .quickFix(task):
             try container.encode(Family.quickFix, forKey: .family)
             try container.encode(task.rawValue, forKey: .value)
-        case .readerCopilot(let action):
+        case let .readerCopilot(action):
             try container.encode(Family.readerCopilot, forKey: .family)
             try container.encode(action.rawValue, forKey: .value)
-        case .unknown(let family, let value):
+        case let .unknown(family, value):
             try container.encode(family, forKey: .family)
             try container.encode(value, forKey: .value)
         }

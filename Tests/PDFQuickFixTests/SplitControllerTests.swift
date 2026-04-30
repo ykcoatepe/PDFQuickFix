@@ -1,5 +1,5 @@
-import XCTest
 @testable import PDFQuickFix
+import XCTest
 
 final class SplitControllerTests: XCTestCase {
     private var suiteName: String!
@@ -107,15 +107,15 @@ final class SplitControllerTests: XCTestCase {
             try? FileManager.default.removeItem(at: destination)
         }
 
-        let preset = SplitJobPreset(
+        let preset = try SplitJobPreset(
             id: UUID(),
             name: "Bookmark Restore",
             createdAt: Date(),
             settings: SplitJobSettings(
                 sourceURLString: "/tmp/missing-source.pdf",
-                sourceBookmarkData: try bookmarking.bookmarkData(for: source, includingResourceValuesForKeys: nil, relativeTo: nil),
+                sourceBookmarkData: bookmarking.bookmarkData(for: source, includingResourceValuesForKeys: nil, relativeTo: nil),
                 destinationURLString: "/tmp/missing-destination",
-                destinationBookmarkData: try bookmarking.bookmarkData(for: destination, includingResourceValuesForKeys: nil, relativeTo: nil),
+                destinationBookmarkData: bookmarking.bookmarkData(for: destination, includingResourceValuesForKeys: nil, relativeTo: nil),
                 applyToAllPDFsInFolder: false,
                 mode: .maxPagesPerFile,
                 maxPagesPerFile: 2,
@@ -148,15 +148,15 @@ final class SplitControllerTests: XCTestCase {
             try? FileManager.default.removeItem(at: source)
         }
 
-        let preset = SplitJobPreset(
+        let preset = try SplitJobPreset(
             id: UUID(),
             name: "Folder Bookmark Restore",
             createdAt: Date(),
             settings: SplitJobSettings(
                 sourceURLString: "/tmp/missing-source-folder.pdf",
-                sourceBookmarkData: try bookmarking.bookmarkData(for: batchFolder, includingResourceValuesForKeys: nil, relativeTo: nil),
+                sourceBookmarkData: bookmarking.bookmarkData(for: batchFolder, includingResourceValuesForKeys: nil, relativeTo: nil),
                 destinationURLString: "/tmp/missing-destination",
-                destinationBookmarkData: try bookmarking.bookmarkData(for: destination, includingResourceValuesForKeys: nil, relativeTo: nil),
+                destinationBookmarkData: bookmarking.bookmarkData(for: destination, includingResourceValuesForKeys: nil, relativeTo: nil),
                 applyToAllPDFsInFolder: true,
                 mode: .maxPagesPerFile,
                 maxPagesPerFile: 1,
@@ -179,7 +179,7 @@ final class SplitControllerTests: XCTestCase {
     @MainActor
     private func waitForSplit(_ controller: SplitController, timeout: TimeInterval = 5) {
         let deadline = Date().addingTimeInterval(timeout)
-        while controller.isWorking && Date() < deadline {
+        while controller.isWorking, Date() < deadline {
             RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
         }
         XCTAssertFalse(controller.isWorking)

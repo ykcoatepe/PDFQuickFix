@@ -1,10 +1,10 @@
-import SwiftUI
-@preconcurrency import PDFKit
 import AppKit
-import UniformTypeIdentifiers
+@preconcurrency import PDFKit
 @preconcurrency import PDFQuickFixKit
+import SwiftUI
+import UniformTypeIdentifiers
 
-// Controller coordinating PDF viewing, search, and page operations.
+/// Controller coordinating PDF viewing, search, and page operations.
 @MainActor
 final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
     @Published var document: PDFDocument?
@@ -21,10 +21,11 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
     @Published var copilotResponse: DocumentCopilotResponse?
     @Published var copilotError: String?
     @Published var isCopilotRunning: Bool = false
-    
+
     func toggleRightPanel() {
         isRightPanelVisible.toggle()
     }
+
     @Published var log: String = ""
     @Published var validationStatus: String?
     @Published var isFullValidationRunning: Bool = false
@@ -47,6 +48,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
             refreshSelectionState()
         }
     }
+
     var currentSelectionText: String? {
         currentSelectionTextState ?? normalizedSelectionText(from: pdfView?.currentSelection)
     }
@@ -64,7 +66,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
 
     init(copilotService: (any DocumentCopilotServicing)? = nil) {
         self.copilotService = copilotService ?? DocumentCopilotService(interactionStore: AIInteractionStore())
-        self.usesCustomCopilotService = copilotService != nil
+        usesCustomCopilotService = copilotService != nil
         super.init()
     }
 
@@ -86,15 +88,14 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         loadingStatus = "Opening \(url.lastPathComponent)…"
         let readerOpenSP = PerfLog.begin("ReaderOpen")
         #if DEBUG
-        let openStart = Date()
+            let openStart = Date()
         #endif
-
 
         let massiveThreshold = DocumentValidationRunner.massiveDocumentPageThreshold
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
-            
+
             // Repair/Normalize if needed
             var finalURL = url
             var repaired = false
@@ -109,7 +110,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
                 // But repairIfNeeded is designed to not throw for fallback cases, so this catch might be rare
                 print("Reader repair failed: \(error)")
             }
-            
+
             guard let rawDoc = PDFDocument(url: finalURL) else {
                 DispatchQueue.main.async {
                     self.isLoadingDocument = false
@@ -129,38 +130,38 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
                     self.isLoadingDocument = false
                     self.finishOpen(document: rawDoc, sourceURL: url, workingURL: finalURL, access: effectiveAccess, isRepaired: repaired)
                     #if DEBUG
-                    let duration = Date().timeIntervalSince(openStart)
-                    PerfMetrics.shared.recordReaderOpen(duration: duration)
+                        let duration = Date().timeIntervalSince(openStart)
+                        PerfMetrics.shared.recordReaderOpen(duration: duration)
                     #endif
                     PerfLog.end("ReaderOpen", readerOpenSP)
                 }
             } else {
                 DispatchQueue.main.async {
                     self.validationRunner.openDocument(at: finalURL,
-                                                      quickValidationPageLimit: 0,
-                                                      progress: { [weak self] processed, total in
-                                                          guard let self = self else { return }
-                                                          guard total > 0 else { return }
-                                                          let clamped = min(processed, total)
-                                                          self.loadingStatus = "Validating \(clamped)/\(total)"
-                                                      },
-                                                      completion: { [weak self] result in
-                                                          guard let self = self else { return }
-                                                          self.isLoadingDocument = false
-                                                          self.loadingStatus = nil
-                                                          switch result {
-                                                          case .success(let doc):
-                                                              self.finishOpen(document: doc, sourceURL: url, workingURL: finalURL, access: effectiveAccess, isRepaired: repaired)
-                                                              #if DEBUG
-                                                              let duration = Date().timeIntervalSince(openStart)
-                                                              PerfMetrics.shared.recordReaderOpen(duration: duration)
-                                                              #endif
-                                                              PerfLog.end("ReaderOpen", readerOpenSP)
-                                                          case .failure(let error):
-                                                              self.handleOpenError(error)
-                                                              PerfLog.end("ReaderOpen", readerOpenSP)
-                                                          }
-                                                      })
+                                                       quickValidationPageLimit: 0,
+                                                       progress: { [weak self] processed, total in
+                                                           guard let self else { return }
+                                                           guard total > 0 else { return }
+                                                           let clamped = min(processed, total)
+                                                           loadingStatus = "Validating \(clamped)/\(total)"
+                                                       },
+                                                       completion: { [weak self] result in
+                                                           guard let self else { return }
+                                                           isLoadingDocument = false
+                                                           loadingStatus = nil
+                                                           switch result {
+                                                           case let .success(doc):
+                                                               finishOpen(document: doc, sourceURL: url, workingURL: finalURL, access: effectiveAccess, isRepaired: repaired)
+                                                               #if DEBUG
+                                                                   let duration = Date().timeIntervalSince(openStart)
+                                                                   PerfMetrics.shared.recordReaderOpen(duration: duration)
+                                                               #endif
+                                                               PerfLog.end("ReaderOpen", readerOpenSP)
+                                                           case let .failure(error):
+                                                               handleOpenError(error)
+                                                               PerfLog.end("ReaderOpen", readerOpenSP)
+                                                           }
+                                                       })
                 }
             }
         }
@@ -169,11 +170,11 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
     private func finishOpen(document newDocument: PDFDocument, sourceURL: URL, workingURL: URL, access: SecurityScopedAccess?, isRepaired: Bool = false) {
         let sp = PerfLog.begin("ReaderApplyDocument")
         defer { PerfLog.end("ReaderApplyDocument", sp) }
-        self.currentURL = workingURL
+        currentURL = workingURL
         self.sourceURL = sourceURL
-        self.activeSecurityScope = access
+        activeSecurityScope = access
         document = newDocument
-        
+
         let fileSize = (try? FileManager.default.attributesOfItem(atPath: workingURL.path)[.size] as? Int64) ?? 0
         let profile = DocumentProfile.from(pageCount: newDocument.pageCount, fileSizeBytes: fileSize)
         isLargeDocument = profile.isLarge
@@ -208,10 +209,10 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         )
         skippedQuickValidation = shouldSkipAutoValidation
         let isMassive = profile.isMassive
-        if !isMassive && !shouldSkipAutoValidation {
+        if !isMassive, !shouldSkipAutoValidation {
             scheduleValidation(for: workingURL, pageLimit: 10, mode: .quick)
         }
-        
+
         // Add to Recent Files
         DispatchQueue.main.async {
             RecentFilesManager.shared.add(url: sourceURL, pageCount: newDocument.pageCount)
@@ -268,7 +269,6 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         clearCopilotOutput()
     }
 
-    
     func saveAs() {
         guard let doc = document else { return }
         let panel = NSSavePanel()
@@ -278,27 +278,27 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
             doc.write(to: url)
         }
     }
-    
+
     func repairAndSaveAs() {
         guard let url = currentURL else { return }
-        
+
         isProcessing = true
         loadingStatus = "Normalizing document..."
-        
+
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
             do {
                 let service = PDFRepairService()
                 let repairedURL = try service.repairForExport(inputURL: url)
-                
+
                 DispatchQueue.main.async {
                     self.isProcessing = false
                     self.loadingStatus = nil
-                    
+
                     let panel = NSSavePanel()
                     panel.allowedContentTypes = [.pdf]
                     panel.nameFieldStringValue = (url.deletingPathExtension().lastPathComponent) + "-repaired.pdf"
-                    
+
                     if panel.runModal() == .OK, let destination = panel.url {
                         do {
                             if FileManager.default.fileExists(atPath: destination.path) {
@@ -325,7 +325,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
             }
         }
     }
-    
+
     func exportToImages(format: NSBitmapImageRep.FileType) {
         guard let doc = document, let snapshot = doc.dataRepresentation() else {
             log = "Export failed: couldn't read current document state"
@@ -338,16 +338,15 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         panel.prompt = "Export"
         panel.message = "Choose a folder to save images"
         panel.directoryURL = doc.documentURL?.deletingLastPathComponent()
-        
+
         if panel.runModal() == .OK, let outputDir = panel.url {
-            let fileExtension: String
-            switch format {
-            case .jpeg: fileExtension = "jpg"
-            case .png: fileExtension = "png"
-            case .tiff: fileExtension = "tiff"
-            default: fileExtension = "img"
+            let fileExtension = switch format {
+            case .jpeg: "jpg"
+            case .png: "png"
+            case .tiff: "tiff"
+            default: "img"
             }
-            
+
             isProcessing = true
 
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -359,24 +358,23 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
                     }
                     return
                 }
-                
-                for i in 0..<backgroundDoc.pageCount {
+
+                for i in 0 ..< backgroundDoc.pageCount {
                     guard let page = backgroundDoc.page(at: i) else { continue }
                     let pageRect = page.bounds(for: .mediaBox)
                     // Use PDFPage.thumbnail to generate image
 
-                    
                     let image = page.thumbnail(of: pageRect.size, for: .mediaBox)
                     if let tiffData = image.tiffRepresentation,
                        let bitmap = NSBitmapImageRep(data: tiffData),
-                       let data = bitmap.representation(using: format, properties: [:]) {
-                        
+                       let data = bitmap.representation(using: format, properties: [:])
+                    {
                         let filename = "Page_\(i + 1).\(fileExtension)"
                         let fileURL = outputDir.appendingPathComponent(filename)
                         try? data.write(to: fileURL)
                     }
                 }
-                
+
                 Task { @MainActor [weak self] in
                     self?.isProcessing = false
                     NSWorkspace.shared.activateFileViewerSelecting([outputDir])
@@ -384,7 +382,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
             }
         }
     }
-    
+
     func exportToText() {
         guard let doc = document, let snapshot = doc.dataRepresentation() else {
             log = "Export failed: couldn't read current document state"
@@ -393,7 +391,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.plainText]
         panel.nameFieldStringValue = (doc.documentURL?.deletingPathExtension().lastPathComponent ?? "Document") + ".txt"
-        
+
         if panel.runModal() == .OK, let url = panel.url {
             isProcessing = true
 
@@ -406,18 +404,18 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
                     }
                     return
                 }
-                
+
                 var fullText = ""
-                for i in 0..<backgroundDoc.pageCount {
+                for i in 0 ..< backgroundDoc.pageCount {
                     if let page = backgroundDoc.page(at: i), let text = page.string {
                         fullText += "--- Page \(i + 1) ---\n\n"
                         fullText += text
                         fullText += "\n\n"
                     }
                 }
-                
+
                 try? fullText.write(to: url, atomically: true, encoding: .utf8)
-                
+
                 Task { @MainActor [weak self] in
                     self?.isProcessing = false
                     NSWorkspace.shared.activateFileViewerSelecting([url])
@@ -425,7 +423,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
             }
         }
     }
-    
+
     var hasPrintableDocument: Bool {
         document != nil
     }
@@ -435,16 +433,16 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
                                        jobTitle: document?.documentURL?.lastPathComponent ?? "PDFQuickFix",
                                        source: "reader")
     }
-    
+
     // MARK: - Search
-    
+
     func find(_ text: String) {
         searchMatches.removeAll()
         currentMatchIndex = nil
         guard let doc = document, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         // PDFKit's beginFindString is asynchronous and fires per-match notifications,
         // so it's safe to run on massive documents without freezing the UI.
-        
+
         findObserver.flatMap { NotificationCenter.default.removeObserver($0) }
         findObserver = NotificationCenter.default.addObserver(
             forName: .PDFDocumentDidFindMatch,
@@ -454,13 +452,13 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
             guard let selection = note.userInfo?["PDFDocumentFoundSelection"] as? PDFSelection else { return }
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                self.searchMatches.append(selection)
-                if let idx = self.searchMatches.indices.last, self.currentMatchIndex == nil {
-                    self.focusSelection(selection, at: idx)
+                searchMatches.append(selection)
+                if let idx = searchMatches.indices.last, currentMatchIndex == nil {
+                    focusSelection(selection, at: idx)
                 }
             }
         }
-        
+
         doc.cancelFindString()
         doc.beginFindString(text, withOptions: [.caseInsensitive])
     }
@@ -473,38 +471,36 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         searchDebounceWorkItem = item
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: item)
     }
-    
+
     func focusSelection(_ selection: PDFSelection, at index: Int? = nil) {
         selection.color = .yellow.withAlphaComponent(0.35)
         pdfView?.setCurrentSelection(selection, animate: true)
         pdfView?.go(to: selection)
         currentMatchIndex = index ?? searchMatches.firstIndex(of: selection)
     }
-    
+
     func findNext() {
         guard !searchMatches.isEmpty else { return }
-        let nextIndex: Int
-        if let current = currentMatchIndex {
-            nextIndex = (current + 1) % searchMatches.count
+        let nextIndex: Int = if let current = currentMatchIndex {
+            (current + 1) % searchMatches.count
         } else {
-            nextIndex = 0
+            0
         }
         focusSelection(searchMatches[nextIndex], at: nextIndex)
     }
 
     func findPrev() {
         guard !searchMatches.isEmpty else { return }
-        let prevIndex: Int
-        if let current = currentMatchIndex {
-            prevIndex = (current - 1 + searchMatches.count) % searchMatches.count
+        let prevIndex: Int = if let current = currentMatchIndex {
+            (current - 1 + searchMatches.count) % searchMatches.count
         } else {
-            prevIndex = max(searchMatches.count - 1, 0)
+            max(searchMatches.count - 1, 0)
         }
         focusSelection(searchMatches[prevIndex], at: prevIndex)
     }
-    
+
     // MARK: - Annotations
-    
+
     func applyMark(_ subtype: PDFAnnotationSubtype, color: NSColor) {
         guard let view = pdfView, let selection = view.currentSelection else { return }
         for page in selection.pages {
@@ -516,7 +512,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
             }
         }
     }
-    
+
     func addStickyNote() {
         guard let page = pdfView?.currentPage else { return }
         let bounds = page.bounds(for: .mediaBox)
@@ -526,62 +522,62 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         note.contents = "Note"
         page.addAnnotation(note)
     }
-    
+
     func loadPartialDocument(pageLimit: Int = 50) {
         guard let originalDoc = document else { return }
         let partialDoc = PDFDocument()
         let count = min(originalDoc.pageCount, pageLimit)
-        
-        for i in 0..<count {
+
+        for i in 0 ..< count {
             guard let page = originalDoc.page(at: i),
                   let copy = page.copy() as? PDFPage else { continue }
             partialDoc.insert(copy, at: i)
         }
-        
-        self.pdfView?.document = partialDoc
-        self.configurePDFView()
-        self.isMassiveDocument = false // Temporarily treat as normal for viewing
-        self.isPartialLoad = true
-        
+
+        pdfView?.document = partialDoc
+        configurePDFView()
+        isMassiveDocument = false // Temporarily treat as normal for viewing
+        isPartialLoad = true
+
         // Notify user
         log = "Loaded first \(count) pages for preview."
     }
-    
+
     func loadFullDocument() {
         guard let originalDoc = document else { return }
-        
+
         // Re-evaluate profile to restore massive state if needed
         let profile = DocumentProfile.from(pageCount: originalDoc.pageCount)
-        self.isMassiveDocument = profile.isMassive
-        self.isPartialLoad = false
-        
+        isMassiveDocument = profile.isMassive
+        isPartialLoad = false
+
         // If it was massive, we are now "forcing" it to load fully?
         // Or should we just return to the massive placeholder?
         // The user clicked "Load All", so we should try to load it into the view.
         // We will set isMassiveDocument = false to allow the view to render it,
         // but we might want to warn or keep some flags.
         // For now, let's allow it but maybe keep isLargeDocument = true for tuning.
-        
+
         // Actually, if we set isMassiveDocument = false, the view will try to render.
         // Let's do that, assuming the user knows what they are doing.
-        self.isMassiveDocument = false
-        
-        self.pdfView?.document = originalDoc
-        self.configurePDFView()
-        
+        isMassiveDocument = false
+
+        pdfView?.document = originalDoc
+        configurePDFView()
+
         log = "Loaded full document (\(originalDoc.pageCount) pages)."
     }
-    
+
     // MARK: - Page operations
-    
+
     func rotateLeft() {
         rotateCurrentPageLeft()
     }
-    
+
     func rotateRight() {
         rotateCurrentPageRight()
     }
-    
+
     func rotateCurrentPageLeft() {
         guard let page = currentPDFPage else { return }
         let oldRotation = page.rotation
@@ -601,7 +597,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
     }
 
     private var currentPDFPage: PDFPage? {
-        if let pdfView = pdfView, let page = pdfView.currentPage {
+        if let pdfView, let page = pdfView.currentPage {
             return page
         }
         return nil
@@ -614,15 +610,15 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
 
     private func registerRotationUndo(page: PDFPage, oldRotation: Int, newRotation: Int) {
         guard let undoManager = pdfView?.undoManager else { return }
-        undoManager.registerUndo(withTarget: self) { [weak self] controller in
-            guard let self = self else { return }
+        undoManager.registerUndo(withTarget: self) { [weak self] _ in
+            guard let self else { return }
             page.rotation = oldRotation
-            self.notifyPageRotationChanged()
-            self.registerRotationUndo(page: page, oldRotation: newRotation, newRotation: oldRotation)
+            notifyPageRotationChanged()
+            registerRotationUndo(page: page, oldRotation: newRotation, newRotation: oldRotation)
         }
         undoManager.setActionName("Rotate Page")
     }
-    
+
     func deleteCurrentPage() {
         guard let doc = document, let page = pdfView?.currentPage else { return }
         let index = doc.index(for: page)
@@ -715,9 +711,9 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         guard !usesCustomCopilotService else { return }
         copilotService = DocumentCopilotService(interactionStore: interactionStore)
     }
-    
+
     // MARK: - Helpers
-    
+
     private func configurePDFView() {
         guard let view = pdfView else { return }
         view.applyPerformanceTuning(isLargeDocument: isLargeDocument,
@@ -750,7 +746,8 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
 
     private func normalizedSelectionText(from selection: PDFSelection?) -> String? {
         guard let value = selection?.string?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !value.isEmpty else {
+              !value.isEmpty
+        else {
             return nil
         }
         return value
@@ -766,7 +763,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         refreshSelectionState()
     }
 
-    private func rebindPDFViewObservers(from oldValue: PDFView?, to newValue: PDFView?) {
+    private func rebindPDFViewObservers(from _: PDFView?, to newValue: PDFView?) {
         if let observer = selectionObserver {
             NotificationCenter.default.removeObserver(observer)
             selectionObserver = nil
@@ -803,22 +800,22 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         validationRunner.validateDocument(at: url,
                                           pageLimit: pageLimit,
                                           progress: { [weak self] processed, total in
-                                              guard let self = self, self.currentURL == url else { return }
-                                              self.updateValidationStatus(processed: processed, total: total)
+                                              guard let self, currentURL == url else { return }
+                                              updateValidationStatus(processed: processed, total: total)
                                           },
                                           completion: { [weak self] result in
-                                              guard let self = self, self.currentURL == url else { return }
-                                              self.validationMode = .idle
-                                              self.isFullValidationRunning = false
-                                              self.validationStatus = nil
+                                              guard let self, currentURL == url else { return }
+                                              validationMode = .idle
+                                              isFullValidationRunning = false
+                                              validationStatus = nil
                                               switch result {
                                               case .success:
-                                                  self.currentPageIndex = self.currentDisplayedPageIndex() ?? self.currentPageIndex
-                                                  self.searchMatches.removeAll()
-                                              case .failure(let error):
+                                                  currentPageIndex = currentDisplayedPageIndex() ?? currentPageIndex
+                                                  searchMatches.removeAll()
+                                              case let .failure(error):
                                                   if case PDFDocumentSanitizerError.cancelled = error { return }
-                                                  self.log = "❌ \(error.localizedDescription)"
-                                                  self.present(error)
+                                                  log = "❌ \(error.localizedDescription)"
+                                                  present(error)
                                               }
                                           })
     }
@@ -891,27 +888,29 @@ enum ReaderRightPanelTab: String, CaseIterable, Identifiable {
     case comments
     case copilot
 
-    var id: String { rawValue }
+    var id: String {
+        rawValue
+    }
 
     var displayName: String {
         switch self {
         case .info:
-            return "Info"
+            "Info"
         case .comments:
-            return "Comments"
+            "Comments"
         case .copilot:
-            return "Copilot"
+            "Copilot"
         }
     }
 
     var symbolName: String {
         switch self {
         case .info:
-            return "info.circle"
+            "info.circle"
         case .comments:
-            return "text.bubble"
+            "text.bubble"
         case .copilot:
-            return "sparkles"
+            "sparkles"
         }
     }
 }
@@ -921,7 +920,7 @@ extension ReaderControllerPro: DocumentPrintable {}
 extension ReaderControllerPro: DocumentHealthPresentable {}
 
 extension ReaderControllerPro: FileExportable {
-     func exportSanitized() {
+    func exportSanitized() {
         guard let doc = document else { return }
         guard let data = doc.dataRepresentation(), let snapshotDoc = PDFDocument(data: data) else {
             log = "Export failed: couldn't read current document state"
@@ -932,36 +931,36 @@ extension ReaderControllerPro: FileExportable {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.pdf]
         panel.nameFieldStringValue = (doc.documentURL?.deletingPathExtension().lastPathComponent ?? "Document") + "-sanitized.pdf"
-        
+
         // Build accessory view with NSStackView for robust layout
         let label = NSTextField(labelWithString: "Sanitization Profile:")
         label.setContentHuggingPriority(.required, for: .vertical)
-        
+
         let profileSelector = NSPopUpButton(frame: .zero, pullsDown: false)
         profileSelector.addItems(withTitles: [
             "Privacy Clean (Rasterize, No Metadata)",
             "Light Clean (Searchable, No Metadata)",
-            "Keep Editable (Forms OK, No Metadata)"
+            "Keep Editable (Forms OK, No Metadata)",
         ])
-        
+
         // Map index to profile
         let profiles: [SanitizeProfile] = [.privacyClean, .lightClean, .keepEditable]
-        
+
         // Preselect based on user's default profile
         let defaultProfile = SanitizeDefaults.shared.defaultProfile
         let initialIndex = profiles.firstIndex(of: defaultProfile) ?? 0
         profileSelector.selectItem(at: initialIndex)
-        
+
         // "Set as default" checkbox
         let checkbox = NSButton(checkboxWithTitle: "Set as default", target: nil, action: nil)
         checkbox.state = .on
-        
+
         let stackView = NSStackView(views: [label, profileSelector, checkbox])
         stackView.orientation = .vertical
         stackView.alignment = .leading
         stackView.spacing = 8
         stackView.translatesAutoresizingMaskIntoConstraints = false
-        
+
         // Wrap in container for proper sizing
         let accessoryView = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 90))
         accessoryView.addSubview(stackView)
@@ -969,24 +968,24 @@ extension ReaderControllerPro: FileExportable {
             stackView.leadingAnchor.constraint(equalTo: accessoryView.leadingAnchor),
             stackView.trailingAnchor.constraint(equalTo: accessoryView.trailingAnchor),
             stackView.topAnchor.constraint(equalTo: accessoryView.topAnchor),
-            stackView.bottomAnchor.constraint(lessThanOrEqualTo: accessoryView.bottomAnchor)
+            stackView.bottomAnchor.constraint(lessThanOrEqualTo: accessoryView.bottomAnchor),
         ])
         panel.accessoryView = accessoryView
-        
+
         if panel.runModal() == .OK, let destination = panel.url {
             let selectedIndex = profileSelector.indexOfSelectedItem
-            guard selectedIndex >= 0 && selectedIndex < profiles.count else { return }
+            guard selectedIndex >= 0, selectedIndex < profiles.count else { return }
             let profile = profiles[selectedIndex]
             let options = PDFDocumentSanitizer.Options.from(profile: profile)
-            
+
             // Persist default if checkbox is on
             if checkbox.state == .on {
                 SanitizeDefaults.shared.defaultProfile = profile
             }
-            
+
             isProcessing = true
             loadingStatus = "Sanitizing..."
-            
+
             let sourceURL = currentURL
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 defer {
@@ -995,29 +994,30 @@ extension ReaderControllerPro: FileExportable {
                         self?.loadingStatus = nil
                     }
                 }
-                
+
                 do {
                     let processed = try PDFDocumentSanitizer.sanitize(document: sendableSnapshot.document,
                                                                       sourceURL: sourceURL,
-                                                                      options: options) { processed, total in
+                                                                      options: options)
+                    { processed, total in
                         Task { @MainActor [weak self] in
                             self?.loadingStatus = "Sanitizing \(processed)/\(total)"
                         }
                     } shouldCancel: {
-                         return false
+                        false
                     }
-                    
+
                     guard processed.write(to: destination) else {
                         // Throwing a generic error since we don't have access to PDFOpsError easily here without importing it or defining it
                         throw NSError(domain: "PDFQuickFix", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to save sanitized document"])
                     }
-                    
+
                     Task { @MainActor [weak self] in
                         self?.log = "Exported sanitized (\(profile.rawValue)) to \(destination.lastPathComponent)"
                         NSWorkspace.shared.activateFileViewerSelecting([destination])
                     }
                 } catch {
-                     Task { @MainActor [weak self] in
+                    Task { @MainActor [weak self] in
                         self?.log = "Sanitization failed: \(error.localizedDescription)"
                         self?.present(error)
                     }
@@ -1027,10 +1027,10 @@ extension ReaderControllerPro: FileExportable {
     }
 }
 
-// PDFViewDelegate conformance kept nonisolated to satisfy protocol requirements
-// while updating state on the main actor explicitly.
+/// PDFViewDelegate conformance kept nonisolated to satisfy protocol requirements
+/// while updating state on the main actor explicitly.
 extension ReaderControllerPro: PDFViewDelegate {
-    nonisolated func pdfViewWillChangeScaleFactor(_ sender: PDFView, toScale scale: CGFloat) -> CGFloat {
+    nonisolated func pdfViewWillChangeScaleFactor(_: PDFView, toScale scale: CGFloat) -> CGFloat {
         Task { @MainActor [weak self] in
             self?.zoomScale = scale
         }
@@ -1050,28 +1050,28 @@ struct ReaderProView: View, Equatable {
     @State private var showEncrypt = false
     @State private var userPassword = ""
     @State private var ownerPassword = ""
-    
+
     static func == (lhs: ReaderProView, rhs: ReaderProView) -> Bool {
-        return lhs.controller === rhs.controller &&
-               lhs.selectedTab == rhs.selectedTab
+        lhs.controller === rhs.controller &&
+            lhs.selectedTab == rhs.selectedTab
     }
-    
-    // Computed profile based on current document
+
+    /// Computed profile based on current document
     private var profile: DocumentProfile {
         if let doc = controller.document {
             return DocumentProfile.from(pageCount: doc.pageCount)
         }
         return .empty
     }
-    
+
     var body: some View {
-            ReaderShellView(controller: controller,
-                            quickFixPresented: $quickFixPresented,
-                            standaloneQuickFixPresented: $standaloneQuickFixPresented,
-                            showEncrypt: $showEncrypt,
-                            profile: profile,
-                            selectedTab: $selectedTab,
-                            syncEnabled: $documentHub.syncEnabled)
+        ReaderShellView(controller: controller,
+                        quickFixPresented: $quickFixPresented,
+                        standaloneQuickFixPresented: $standaloneQuickFixPresented,
+                        showEncrypt: $showEncrypt,
+                        profile: profile,
+                        selectedTab: $selectedTab,
+                        syncEnabled: $documentHub.syncEnabled)
             .overlay(alignment: .bottomTrailing) {
                 if controller.isRepaired {
                     Text("Normalized")
@@ -1163,7 +1163,7 @@ struct ReaderProView: View, Equatable {
                 syncFromHub()
             }
     }
-    
+
     private func encryptCurrent() {
         guard let doc = controller.document else { return }
         guard let data = PDFSecurity.encrypt(
@@ -1172,11 +1172,11 @@ struct ReaderProView: View, Equatable {
             ownerPassword: ownerPassword.isEmpty ? nil : ownerPassword,
             keyLength: 256
         ) else { return }
-        
+
         let savePanel = NSSavePanel()
         savePanel.allowedContentTypes = [.pdf]
         savePanel.nameFieldStringValue = (doc.documentURL?.deletingPathExtension().lastPathComponent ?? "Encrypted") + "-encrypted.pdf"
-        
+
         if savePanel.runModal() == .OK, let url = savePanel.url {
             do {
                 try data.write(to: url)
@@ -1202,19 +1202,19 @@ struct ReaderHomeView: View {
     @ObservedObject var controller: ReaderControllerPro
     @StateObject private var recentFiles = RecentFilesManager.shared
     @State private var isDragging = false
-    
-    // Grid layout for recent files (2 columns)
+
+    /// Grid layout for recent files (2 columns)
     private let columns = [
         GridItem(.flexible(), spacing: 16),
-        GridItem(.flexible(), spacing: 16)
+        GridItem(.flexible(), spacing: 16),
     ]
-    
+
     var body: some View {
         ScrollView {
             VStack(spacing: 40) {
                 Spacer()
                     .frame(height: 60)
-                
+
                 // Drop Zone
                 Button(action: {
                     chooseFile()
@@ -1227,7 +1227,7 @@ struct ReaderHomeView: View {
                                 RoundedRectangle(cornerRadius: AppTheme.Metrics.dropZoneCornerRadius, style: .continuous)
                                     .fill(isDragging ? AppTheme.Colors.dropZoneFillHighlighted : AppTheme.Colors.dropZoneFill)
                             )
-                        
+
                         VStack(spacing: 20) {
                             Image(systemName: "folder.badge.plus")
                                 .font(.system(size: 64))
@@ -1258,11 +1258,11 @@ struct ReaderHomeView: View {
                 }
                 .buttonStyle(.plain)
                 .onDrop(of: [.fileURL, .url, .pdf], isTargeted: $isDragging) { providers in
-                    return handlePDFDrop(providers) { url in
+                    handlePDFDrop(providers) { url in
                         controller.open(url: url)
                     }
                 }
-                
+
                 // Recent Files
                 if !recentFiles.recentFiles.isEmpty {
                     VStack(alignment: .leading, spacing: 16) {
@@ -1365,7 +1365,7 @@ struct ReaderHomeView: View {
                         }
                     }
                 }
-                
+
                 Spacer()
             }
             .padding(.horizontal)
@@ -1374,7 +1374,7 @@ struct ReaderHomeView: View {
         }
         .background(AppTheme.Colors.background)
     }
-    
+
     private func chooseFile() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.pdf]
@@ -1387,6 +1387,7 @@ struct ReaderHomeView: View {
 }
 
 // MARK: - Reader Shell View
+
 struct ReaderShellView: View {
     @ObservedObject var controller: ReaderControllerPro
     @Binding var quickFixPresented: Bool
@@ -1398,7 +1399,7 @@ struct ReaderShellView: View {
     @Binding var syncEnabled: Bool
     @State private var sidebarWidth: CGFloat = 260
     @State private var sidebarDragStart: CGFloat = 260
-    
+
     var body: some View {
         VStack(spacing: 0) {
             // 1. Unified Toolbar
@@ -1433,7 +1434,7 @@ struct ReaderShellView: View {
                     .frame(height: 1),
                 alignment: .bottom
             )
-            
+
             // 2. Main Content Area
             HStack(spacing: 0) {
                 // Left Sidebar (Thumbnails / Outline)
@@ -1468,7 +1469,7 @@ struct ReaderShellView: View {
 
                     Divider()
                 }
-                
+
                 // Center Canvas
                 // Center Canvas or Home View
                 if controller.document != nil {
@@ -1482,7 +1483,7 @@ struct ReaderShellView: View {
                                 } label: {
                                     Label("Rotate Left", systemImage: "rotate.left")
                                 }
-                                
+
                                 Button {
                                     controller.rotateCurrentPageRight()
                                 } label: {
@@ -1496,7 +1497,7 @@ struct ReaderShellView: View {
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-                
+
                 // Right Sidebar (Slide-in)
                 if controller.isRightPanelVisible {
                     Divider()
@@ -1505,7 +1506,7 @@ struct ReaderShellView: View {
                         .transition(.move(edge: .trailing))
                 }
             }
-            
+
             ReaderStatusBar(controller: controller)
         }
         .background(AppTheme.Colors.background.ignoresSafeArea())
@@ -1559,30 +1560,14 @@ private extension Int {
     }
 }
 
-// Extension to support right panel toggle in controller
-extension ReaderControllerPro {
-    // Add this property to your controller if not present, or use a @Published in the view
-    // For now, assuming we add it to the controller or manage it in the view.
-    // Since ReaderControllerPro is a class, we can't easily add @Published via extension.
-    // Let's assume we modify ReaderControllerPro to include isRightPanelVisible.
-    // For this refactor, I will add a computed property wrapper or assume it exists.
-    // Actually, let's add it to the controller class in the file.
-    // But the toolbar needs to toggle it.
-    // Let's add it to the controller class in the file.
-}
-
-
-
-
-
-
 // MARK: - Reader Sidebar Left (Pages / Outline)
+
 struct ReaderSidebarLeft: View {
     @ObservedObject var controller: ReaderControllerPro
     let profile: DocumentProfile
     @State private var selection: Int = 0
     @State private var hoveredIndex: Int? = nil
-    
+
     var body: some View {
         VStack(spacing: 0) {
             // Segmented Control
@@ -1592,9 +1577,9 @@ struct ReaderSidebarLeft: View {
             }
             .pickerStyle(.segmented)
             .padding(10)
-            
+
             Divider()
-            
+
             if controller.document == nil {
                 VStack(spacing: 8) {
                     Image(systemName: "doc.on.doc")
@@ -1644,13 +1629,12 @@ struct ReaderSidebarLeft: View {
     }
 }
 
-
-
 // MARK: - Reader Sidebar Right (Comments / Info)
+
 struct ReaderSidebarRight: View {
     @ObservedObject var controller: ReaderControllerPro
     let profile: DocumentProfile
-    
+
     var body: some View {
         VStack(spacing: 0) {
             Picker("", selection: $controller.selectedRightPanelTab) {
@@ -1661,9 +1645,9 @@ struct ReaderSidebarRight: View {
             }
             .pickerStyle(.segmented)
             .padding(8)
-            
+
             Divider()
-            
+
             switch controller.selectedRightPanelTab {
             case .info:
                 ScrollView {
@@ -1696,11 +1680,10 @@ struct ReaderSidebarRight: View {
     }
 }
 
-
 struct InfoRow: View {
     let label: String
     let value: String
-    
+
     var body: some View {
         HStack {
             Text(label).foregroundColor(AppTheme.Colors.secondaryText)
@@ -1714,9 +1697,10 @@ struct InfoRow: View {
 }
 
 // MARK: - Reader Status Bar
+
 struct ReaderStatusBar: View {
     @ObservedObject var controller: ReaderControllerPro
-    
+
     var body: some View {
         HStack(spacing: 12) {
             if let status = controller.validationStatus {
@@ -1731,9 +1715,9 @@ struct ReaderStatusBar: View {
                     .font(.caption)
                     .foregroundColor(AppTheme.Colors.secondaryText)
             }
-            
+
             Spacer()
-            
+
             if let selection = controller.pdfView?.currentSelection {
                 Text("\(selection.pages.count) pages selected")
                     .font(.caption)
@@ -1754,10 +1738,11 @@ extension Notification.Name {
 }
 
 // MARK: - Reader Canvas
+
 struct ReaderCanvas: View {
     @ObservedObject var controller: ReaderControllerPro
     let profile: DocumentProfile
-    
+
     var body: some View {
         ZStack {
             if controller.document != nil {
@@ -1766,7 +1751,7 @@ struct ReaderCanvas: View {
                         controller.pdfView = view
                     }
                     .background(Color(NSColor.textBackgroundColor))
-                    
+
                     if controller.isPartialLoad {
                         HStack {
                             Image(systemName: "exclamationmark.triangle.fill")
@@ -1774,9 +1759,9 @@ struct ReaderCanvas: View {
                             Text("Partial Load: First 50 pages")
                                 .font(.caption)
                                 .fontWeight(.medium)
-                            
+
                             Spacer()
-                            
+
                             Button("Load All") {
                                 controller.loadFullDocument()
                             }
@@ -1791,7 +1776,7 @@ struct ReaderCanvas: View {
                         .padding(.top, 8)
                         .frame(maxWidth: 400)
                     }
-                    
+
                     // Performance mode banner for massive documents
                     if controller.isMassiveDocument {
                         HStack(spacing: 8) {
@@ -1819,13 +1804,13 @@ struct ReaderCanvas: View {
                 Text("Open a PDF from the cleanup desk")
                     .foregroundColor(AppTheme.Colors.secondaryText)
             }
-            
+
             if controller.isLoadingDocument {
                 LoadingOverlayView(status: controller.loadingStatus ?? "Loading...")
             }
         }
         .onDrop(of: [.fileURL, .url, .pdf], isTargeted: nil) { providers in
-            return handlePDFDrop(providers) { url in
+            handlePDFDrop(providers) { url in
                 controller.open(url: url)
             }
         }
@@ -1838,8 +1823,8 @@ struct PDFViewProRepresented: NSViewRepresentable {
     var document: PDFDocument?
     var controller: ReaderControllerPro
     var didCreate: (PDFView) -> Void
-    
-    func makeNSView(context: Context) -> PDFView {
+
+    func makeNSView(context _: Context) -> PDFView {
         let view = ReaderPDFView()
         view.controller = controller
         view.backgroundColor = .textBackgroundColor
@@ -1850,8 +1835,8 @@ struct PDFViewProRepresented: NSViewRepresentable {
         didCreate(view)
         return view
     }
-    
-    func updateNSView(_ nsView: PDFView, context: Context) {
+
+    func updateNSView(_ nsView: PDFView, context _: Context) {
         if nsView.document !== document {
             nsView.document = document
         }
@@ -1868,27 +1853,27 @@ class ReaderPDFView: PDFView {
         super.setCurrentSelection(selection, animate: animate)
         controller?.handlePDFSelectionChange()
     }
-    
+
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = super.menu(for: event) ?? NSMenu()
         menu.addItem(NSMenuItem.separator())
-        
+
         let rotateLeft = NSMenuItem(title: "Rotate Left 90°", action: #selector(rotateLeft(_:)), keyEquivalent: "")
         rotateLeft.target = self
         menu.addItem(rotateLeft)
-        
+
         let rotateRight = NSMenuItem(title: "Rotate Right 90°", action: #selector(rotateRight(_:)), keyEquivalent: "")
         rotateRight.target = self
         menu.addItem(rotateRight)
-        
+
         return menu
     }
-    
-    @objc private func rotateLeft(_ sender: Any?) {
+
+    @objc private func rotateLeft(_: Any?) {
         controller?.rotateCurrentPageLeft()
     }
-    
-    @objc private func rotateRight(_ sender: Any?) {
+
+    @objc private func rotateRight(_: Any?) {
         controller?.rotateCurrentPageRight()
     }
 }
@@ -1897,8 +1882,8 @@ class ReaderPDFView: PDFView {
 
 struct ThumbnailProRepresentedView: NSViewRepresentable {
     var pdfViewGetter: () -> PDFView?
-    
-    func makeNSView(context: Context) -> PDFThumbnailView {
+
+    func makeNSView(context _: Context) -> PDFThumbnailView {
         let thumbnails = PDFThumbnailView()
         thumbnails.backgroundColor = .clear
         thumbnails.thumbnailSize = NSSize(width: 120, height: 160)
@@ -1906,8 +1891,8 @@ struct ThumbnailProRepresentedView: NSViewRepresentable {
         thumbnails.pdfView = pdfViewGetter()
         return thumbnails
     }
-    
-    func updateNSView(_ nsView: PDFThumbnailView, context: Context) {
+
+    func updateNSView(_ nsView: PDFThumbnailView, context _: Context) {
         nsView.pdfView = pdfViewGetter()
     }
 }

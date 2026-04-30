@@ -16,7 +16,7 @@ public enum PDFCoreObject: Equatable {
 public struct PDFCoreStream: Equatable {
     public let dictionary: [String: PDFCoreObject]
     public let data: Data
-    
+
     public init(dictionary: [String: PDFCoreObject], data: Data) {
         self.dictionary = dictionary
         self.data = data

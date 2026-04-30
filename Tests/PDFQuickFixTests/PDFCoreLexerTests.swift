@@ -1,11 +1,11 @@
-import XCTest
 import PDFCore
+import XCTest
 
 final class PDFCoreLexerTests: XCTestCase {
     func testHexStringTokenDecodesAscii() {
         let lexer = PDFCoreLexer(data: Data("<48656C6C6F>".utf8))
 
-        guard let token = lexer.nextToken(), case .string(let value) = token else {
+        guard let token = lexer.nextToken(), case let .string(value) = token else {
             return XCTFail("Expected string token")
         }
 
@@ -15,7 +15,7 @@ final class PDFCoreLexerTests: XCTestCase {
     func testHexStringTokenPadsOddLength() {
         let lexer = PDFCoreLexer(data: Data("<6162634>".utf8))
 
-        guard let token = lexer.nextToken(), case .string(let value) = token else {
+        guard let token = lexer.nextToken(), case let .string(value) = token else {
             return XCTFail("Expected string token")
         }
 
@@ -28,8 +28,8 @@ final class PDFCoreLexerTests: XCTestCase {
 
         let offset1 = header.count
         var data = Data()
-        data.append(header.data(using: .ascii)!)
-        data.append(obj1.data(using: .ascii)!)
+        try data.append(XCTUnwrap(header.data(using: .ascii)))
+        try data.append(XCTUnwrap(obj1.data(using: .ascii)))
 
         let xrefOffset = data.count
         let xref = """
@@ -43,15 +43,16 @@ final class PDFCoreLexerTests: XCTestCase {
         \(xrefOffset)
         %%EOF
         """
-        data.append(xref.data(using: .ascii)!)
+        try data.append(XCTUnwrap(xref.data(using: .ascii)))
 
         let parser = PDFCoreParser(data: data)
         let doc = try parser.parseDocument()
 
         guard let catalog = doc.objects[PDFCoreObjectRef(objectNumber: 1, generation: 0)],
-              case .dict(let dict) = catalog,
+              case let .dict(dict) = catalog,
               let titleToken = dict["Title"],
-              case .string(let title) = titleToken else {
+              case let .string(title) = titleToken
+        else {
             return XCTFail("Expected decoded Title string")
         }
 

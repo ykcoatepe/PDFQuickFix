@@ -1,10 +1,10 @@
-import Foundation
-import SwiftUI
 import AppKit
-@preconcurrency import PDFKit
-import UniformTypeIdentifiers
+import Foundation
 import os.log
+@preconcurrency import PDFKit
 @preconcurrency import PDFQuickFixKit
+import SwiftUI
+import UniformTypeIdentifiers
 
 struct PageSnapshot: Identifiable, Hashable {
     let id: Int
@@ -48,7 +48,9 @@ enum FormFieldKind: String, CaseIterable, Identifiable {
     case checkbox = "Checkbox"
     case signature = "Signature"
 
-    var id: String { rawValue }
+    var id: String {
+        rawValue
+    }
 }
 
 struct StudioDebugInfo {
@@ -66,11 +68,10 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     @Published var sourceURL: URL?
     private var activeSecurityScope: SecurityScopedAccess?
     @Published var pageSnapshots: [PageSnapshot] = []
-    
+
     /// Virtualized page provider for massive documents (7000+ pages)
-    lazy var virtualPageProvider: VirtualPageProvider = {
-        VirtualPageProvider(thumbnailCache: self.thumbnailCache)
-    }()
+    lazy var virtualPageProvider: VirtualPageProvider = .init(thumbnailCache: self.thumbnailCache)
+
     @Published var selectedPageIDs: Set<Int> = []
     @Published var outlineRows: [OutlineRow] = []
     @Published var annotationRows: [AnnotationRow] = []
@@ -87,25 +88,27 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     @Published var selectedTool: StudioTool = .organize
     @Published var isRepaired: Bool = false
     @Published var isDocumentHealthPresented: Bool = false
-    
+
     // MARK: - PDFActionable
+
     func zoomIn() {
         guard let view = pdfView else { return }
         view.zoomIn(self)
     }
-    
+
     func zoomOut() {
         guard let view = pdfView else { return }
         view.zoomOut(self)
     }
-    
+
     func rotateLeft() {
         rotateCurrentPageLeft()
     }
-    
+
     func rotateRight() {
         rotateCurrentPageRight()
     }
+
     weak var pdfView: PDFView?
     private let validationRunner = DocumentValidationRunner()
     private var snapshotGenerationID = UUID()
@@ -118,6 +121,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         cache.countLimit = 200
         return cache
     }()
+
     private let thumbnailQueue = DispatchQueue(label: "com.pdfquickfix.thumbnails", qos: .userInitiated)
     private var inflightThumbnails: Set<Int> = []
     private let inflightLock = NSLock()
@@ -128,6 +132,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         queue.maxConcurrentOperationCount = 1
         return queue
     }()
+
     private let snapshotTargetSize = CGSize(width: 140, height: 180)
     private let massiveThumbnailTargetSize = CGSize(width: 120, height: 150)
     private let largeDocumentPageThreshold = DocumentValidationRunner.largeDocumentPageThreshold
@@ -135,15 +140,13 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     private var validationMode: ValidationMode = .idle
     private var studioOpenSignpost: OSSignpostID?
     #if DEBUG
-    private var studioOpenStart: Date?
+        private var studioOpenStart: Date?
     #endif
     private var deferOutlineLoad = false
     private var deferAnnotationScan = false
-    
+
     /// Streaming loader for efficient massive document handling
     private let streamingLoader = StreamingPDFLoader()
-
-
 
     deinit {
         NotificationCenter.default.removeObserver(self)
@@ -156,16 +159,17 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         pdfView.delegate = self
         pdfView.document = document
         applyPDFViewConfiguration()
-        
+
         NotificationCenter.default.addObserver(self, selector: #selector(handlePageChange(_:)), name: .PDFViewPageChanged, object: pdfView)
-        
+
         if let doc = document,
-           let page = pdfView.currentPage {
+           let page = pdfView.currentPage
+        {
             let index = doc.index(for: page)
             prefetchThumbnails(around: index, window: 2, farWindow: 6)
         }
     }
-    
+
     @objc private func handlePageChange(_ notification: Notification) {
         let sp = PerfLog.begin("StudioPageChanged")
         defer { PerfLog.end("StudioPageChanged", sp) }
@@ -173,19 +177,19 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
               let page = pdfView.currentPage,
               let doc = document else { return }
         let index = doc.index(for: page)
-        
+
         // Update virtual provider center for massive docs
         if virtualPageProvider.isVirtualized {
             virtualPageProvider.updateCenter(index)
             pageSnapshots = virtualPageProvider.visibleSnapshots
         }
-        
+
         // For massive documents, cancel outdated thumbnail requests and reprioritize
         if isMassiveDocument {
             renderService.cancelRequestsOutsideWindow(center: index, window: 50)
             renderService.reprioritizeRequests(center: index)
         }
-        
+
         prefetchThumbnails(around: index, window: 2, farWindow: 6)
     }
 
@@ -197,13 +201,13 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         loadingStatus = "Opening \(url.lastPathComponent)…"
         studioOpenSignpost = PerfLog.begin("StudioOpen")
         #if DEBUG
-        PerfMetrics.shared.reset()
-        studioOpenStart = Date()
+            PerfMetrics.shared.reset()
+            studioOpenStart = Date()
         #endif
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
-            
+
             // Repair/Normalize
             var finalURL = url
             var repaired = false
@@ -216,27 +220,27 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
             } catch {
                 print("Studio repair failed: \(error)")
             }
-            
+
             DispatchQueue.main.async {
                 self.validationRunner.openDocument(at: finalURL,
-                                              quickValidationPageLimit: 0,
-                                              progress: { [weak self] processed, total in
-                                                  guard let self = self else { return }
-                                                  guard total > 0 else { return }
-                                                  let clamped = min(processed, total)
-                                                  self.loadingStatus = "Validating \(clamped)/\(total)"
-                                              },
-                                              completion: { [weak self] result in
-                                                  guard let self = self else { return }
-                                                  self.isDocumentLoading = false
-                                                  self.loadingStatus = nil
-                                                  switch result {
-                                                  case .success(let doc):
-                                                      self.finishOpen(document: doc, sourceURL: url, workingURL: finalURL, access: effectiveAccess, isRepaired: repaired)
-                                                  case .failure(let error):
-                                                      self.handleOpenError(error)
-                                                  }
-                                              })
+                                                   quickValidationPageLimit: 0,
+                                                   progress: { [weak self] processed, total in
+                                                       guard let self else { return }
+                                                       guard total > 0 else { return }
+                                                       let clamped = min(processed, total)
+                                                       loadingStatus = "Validating \(clamped)/\(total)"
+                                                   },
+                                                   completion: { [weak self] result in
+                                                       guard let self else { return }
+                                                       isDocumentLoading = false
+                                                       loadingStatus = nil
+                                                       switch result {
+                                                       case let .success(doc):
+                                                           finishOpen(document: doc, sourceURL: url, workingURL: finalURL, access: effectiveAccess, isRepaired: repaired)
+                                                       case let .failure(error):
+                                                           handleOpenError(error)
+                                                       }
+                                                   })
             }
         }
     }
@@ -245,9 +249,9 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         let sp = PerfLog.begin("StudioFinishOpen")
         defer { PerfLog.end("StudioFinishOpen", sp) }
         document = newDocument
-        self.currentURL = workingURL
+        currentURL = workingURL
         self.sourceURL = sourceURL
-        self.activeSecurityScope = access
+        activeSecurityScope = access
         let profile = DocumentProfile.from(pageCount: newDocument.pageCount)
         isLargeDocument = profile.isLarge
         isMassiveDocument = profile.isMassive
@@ -273,7 +277,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
             resolvedPageCount: newDocument.pageCount
         )
         skippedQuickValidation = shouldSkipAutoValidation
-        if !isMassive && !shouldSkipAutoValidation {
+        if !isMassive, !shouldSkipAutoValidation {
             scheduleValidation(for: workingURL, pageLimit: 10, mode: .quick)
         }
 
@@ -282,12 +286,12 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
             studioOpenSignpost = nil
         }
         #if DEBUG
-        if let start = studioOpenStart {
-            let duration = Date().timeIntervalSince(start)
-            PerfMetrics.shared.recordStudioOpen(duration: duration)
-            NSLog("%@", PerfMetrics.shared.summaryString())
-            studioOpenStart = nil
-        }
+            if let start = studioOpenStart {
+                let duration = Date().timeIntervalSince(start)
+                PerfMetrics.shared.recordStudioOpen(duration: duration)
+                NSLog("%@", PerfMetrics.shared.summaryString())
+                studioOpenStart = nil
+            }
         #endif
     }
 
@@ -380,37 +384,35 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         )
     }
 
-
     // MARK: - Selection & Editing
 
-    
     private enum DragMode {
         case none
         case move(startPoint: CGPoint, originalBounds: CGRect)
         case resize(handle: ResizeHandle, startPoint: CGPoint, originalBounds: CGRect)
     }
-    
+
     private enum ResizeHandle {
         case topLeft, topRight, bottomLeft, bottomRight
     }
-    
+
     private let selectionHandleSize: CGFloat = 6.0
     private var currentDragMode: DragMode = .none
-    
+
     func selectAnnotation(_ annotation: PDFAnnotation) {
         guard !isMassiveDocument else { return }
         // If already selected, do nothing (or refresh?)
         if selectedAnnotation === annotation { return }
-        
+
         // Invalidate old selection if it exists
         if let current = selectedAnnotation, let page = current.page {
             forceRedraw(rect: current.bounds.union(selectionHelperAnnotation?.bounds ?? .zero), on: page)
         }
 
         deselectAnnotation() // Clear previous (and invalidate its area)
-        
+
         selectedAnnotation = annotation
-        
+
         // Add visual feedback (SelectionAnnotation)
         if let page = annotation.page {
             // Use .square to avoid default stamp appearance
@@ -421,34 +423,34 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
             // Invalidate new selection area
             forceRedraw(rect: annotation.bounds.union(helper.bounds), on: page)
         }
-        
+
         pushLog("Selected annotation: \(annotation.type ?? "Unknown")")
     }
-    
+
     func deselectAnnotation() {
         if let helper = selectionHelperAnnotation {
             // Remove from page to prevent ghosts
             helper.page?.removeAnnotation(helper)
-            
+
             // Invalidate area
             if let page = helper.page {
                 forceRedraw(rect: helper.bounds, on: page)
             }
             selectionHelperAnnotation = nil
         }
-        
+
         if let current = selectedAnnotation, let page = current.page {
             // Invalidate old selection bounds too
             forceRedraw(rect: current.bounds, on: page)
         }
-        
+
         selectedAnnotation = nil
         selectionHelperAnnotation = nil
         refreshAnnotations()
     }
-    
+
     // MARK: - Page Rotation
-    
+
     func rotateCurrentPageLeft() {
         guard let page = currentPDFPage else { return }
         let oldRotation = page.rotation
@@ -468,7 +470,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     }
 
     private var currentPDFPage: PDFPage? {
-        if let pdfView = pdfView, let page = pdfView.currentPage {
+        if let pdfView, let page = pdfView.currentPage {
             return page
         }
         return nil
@@ -487,11 +489,11 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
 
     private func registerRotationUndo(page: PDFPage, oldRotation: Int, newRotation: Int) {
         guard let undoManager = pdfView?.undoManager else { return }
-        undoManager.registerUndo(withTarget: self) { [weak self] controller in
-            guard let self = self else { return }
+        undoManager.registerUndo(withTarget: self) { [weak self] _ in
+            guard let self else { return }
             page.rotation = oldRotation
-            self.notifyPageRotationChanged()
-            self.registerRotationUndo(page: page, oldRotation: newRotation, newRotation: oldRotation)
+            notifyPageRotationChanged()
+            registerRotationUndo(page: page, oldRotation: newRotation, newRotation: oldRotation)
         }
         undoManager.setActionName("Rotate Page")
     }
@@ -499,29 +501,29 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     private func logMassiveDocument(pageCount: Int, url: URL?) {
         NSLog("PDFPerfTelemetry: massiveDocEnabled pageCount=%d file=%@", pageCount, url?.lastPathComponent ?? "unknown")
     }
-    
+
     func deleteSelectedAnnotation() {
         guard let annotation = selectedAnnotation, let page = annotation.page else { return }
-        
+
         registerDelete(annotation: annotation, on: page)
-        
+
         deselectAnnotation()
         page.removeAnnotation(annotation)
         refreshAnnotations()
         pushLog("Deleted annotation")
     }
-    
+
     func handleMouseDown(in view: PDFView, with event: NSEvent) -> Bool {
         guard !isMassiveDocument else { return false }
         let point = view.convert(event.locationInWindow, from: nil)
-        
+
         guard let page = view.page(for: point, nearest: true) else {
             deselectAnnotation()
             return false
         }
-        
+
         let pagePoint = view.convert(point, to: page)
-        
+
         // 1. Check if we are hitting the currently selected annotation (or its handles)
         if let selected = selectedAnnotation, selected.page == page {
             if let mode = dragMode(for: pagePoint, annotation: selected) {
@@ -530,128 +532,127 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
                 return true
             }
         }
-        
+
         // 2. Check if we hit a new annotation
         if let annotation = page.annotation(at: pagePoint) {
             // Ignore our own selection helper if it somehow got hit directly
             if annotation is SelectionAnnotation { return true }
-            
+
             selectAnnotation(annotation)
-            
+
             // Check if we can drag this new annotation immediately
             if let mode = dragMode(for: pagePoint, annotation: annotation) {
                 currentDragMode = mode
             }
             return true
         }
-        
+
         // 3. Clicked empty space
         deselectAnnotation()
         return false
     }
-    
+
     func handleMouseDragged(in view: PDFView, with event: NSEvent) {
         guard !isMassiveDocument, let annotation = selectedAnnotation, let page = annotation.page else { return }
         let point = view.convert(event.locationInWindow, from: nil)
         let pagePoint = view.convert(point, to: page)
-        
+
         switch currentDragMode {
-            case .move(let startPoint, let originalBounds):
-                let dx = pagePoint.x - startPoint.x
-                let dy = pagePoint.y - startPoint.y
-                let newBounds = CGRect(x: originalBounds.origin.x + dx,
-                                       y: originalBounds.origin.y + dy,
-                                       width: originalBounds.width,
-                                       height: originalBounds.height)
-                
-                // Invalidate old area
-                forceRedraw(rect: annotation.bounds.union(selectionHelperAnnotation?.bounds ?? .zero), on: page)
-                
-                annotation.bounds = newBounds
-                selectionHelperAnnotation?.bounds = newBounds
-                
-                // Invalidate new area
-                forceRedraw(rect: newBounds, on: page)
-                
-            case .resize(let handle, let startPoint, let originalBounds):
-                let dx = pagePoint.x - startPoint.x
-                let dy = pagePoint.y - startPoint.y
+        case let .move(startPoint, originalBounds):
+            let dx = pagePoint.x - startPoint.x
+            let dy = pagePoint.y - startPoint.y
+            let newBounds = CGRect(x: originalBounds.origin.x + dx,
+                                   y: originalBounds.origin.y + dy,
+                                   width: originalBounds.width,
+                                   height: originalBounds.height)
 
-                var newBounds = originalBounds
-                let minSize: CGFloat = 10
+            // Invalidate old area
+            forceRedraw(rect: annotation.bounds.union(selectionHelperAnnotation?.bounds ?? .zero), on: page)
 
-                switch handle {
-                case .topLeft:
-                    let proposedWidth = originalBounds.width - dx
-                    let proposedHeight = originalBounds.height - dy
-                    let clampedWidth = max(minSize, proposedWidth)
-                    let clampedHeight = max(minSize, proposedHeight)
-                    let widthDelta = proposedWidth - clampedWidth
-                    let heightDelta = proposedHeight - clampedHeight
-                    newBounds.origin.x = originalBounds.origin.x + dx + widthDelta
-                    newBounds.origin.y = originalBounds.origin.y + dy + heightDelta
-                    newBounds.size.width = clampedWidth
-                    newBounds.size.height = clampedHeight
-                case .topRight:
-                    let proposedWidth = originalBounds.width + dx
-                    let proposedHeight = originalBounds.height - dy
-                    let clampedWidth = max(minSize, proposedWidth)
-                    let clampedHeight = max(minSize, proposedHeight)
-                    let heightDelta = proposedHeight - clampedHeight
-                    newBounds.origin.y = originalBounds.origin.y + dy + heightDelta
-                    newBounds.size.width = clampedWidth
-                    newBounds.size.height = clampedHeight
-                case .bottomLeft:
-                    let proposedWidth = originalBounds.width - dx
-                    let clampedWidth = max(minSize, proposedWidth)
-                    let widthDelta = proposedWidth - clampedWidth
-                    newBounds.origin.x = originalBounds.origin.x + dx + widthDelta
-                    newBounds.size.width = clampedWidth
-                    let proposedHeight = originalBounds.height + dy
-                    newBounds.size.height = max(minSize, proposedHeight)
-                case .bottomRight:
-                    let proposedWidth = originalBounds.width + dx
-                    let proposedHeight = originalBounds.height + dy
-                    newBounds.size.width = max(minSize, proposedWidth)
-                    newBounds.size.height = max(minSize, proposedHeight)
-                }
+            annotation.bounds = newBounds
+            selectionHelperAnnotation?.bounds = newBounds
 
-                // Invalidate old area
-                forceRedraw(rect: annotation.bounds.union(selectionHelperAnnotation?.bounds ?? .zero), on: page)
+            // Invalidate new area
+            forceRedraw(rect: newBounds, on: page)
 
-                annotation.bounds = newBounds
-                selectionHelperAnnotation?.bounds = newBounds
-                
-                // Invalidate new area
-                forceRedraw(rect: newBounds, on: page)
-            case .none:
-                break
+        case let .resize(handle, startPoint, originalBounds):
+            let dx = pagePoint.x - startPoint.x
+            let dy = pagePoint.y - startPoint.y
+
+            var newBounds = originalBounds
+            let minSize: CGFloat = 10
+
+            switch handle {
+            case .topLeft:
+                let proposedWidth = originalBounds.width - dx
+                let proposedHeight = originalBounds.height - dy
+                let clampedWidth = max(minSize, proposedWidth)
+                let clampedHeight = max(minSize, proposedHeight)
+                let widthDelta = proposedWidth - clampedWidth
+                let heightDelta = proposedHeight - clampedHeight
+                newBounds.origin.x = originalBounds.origin.x + dx + widthDelta
+                newBounds.origin.y = originalBounds.origin.y + dy + heightDelta
+                newBounds.size.width = clampedWidth
+                newBounds.size.height = clampedHeight
+            case .topRight:
+                let proposedWidth = originalBounds.width + dx
+                let proposedHeight = originalBounds.height - dy
+                let clampedWidth = max(minSize, proposedWidth)
+                let clampedHeight = max(minSize, proposedHeight)
+                let heightDelta = proposedHeight - clampedHeight
+                newBounds.origin.y = originalBounds.origin.y + dy + heightDelta
+                newBounds.size.width = clampedWidth
+                newBounds.size.height = clampedHeight
+            case .bottomLeft:
+                let proposedWidth = originalBounds.width - dx
+                let clampedWidth = max(minSize, proposedWidth)
+                let widthDelta = proposedWidth - clampedWidth
+                newBounds.origin.x = originalBounds.origin.x + dx + widthDelta
+                newBounds.size.width = clampedWidth
+                let proposedHeight = originalBounds.height + dy
+                newBounds.size.height = max(minSize, proposedHeight)
+            case .bottomRight:
+                let proposedWidth = originalBounds.width + dx
+                let proposedHeight = originalBounds.height + dy
+                newBounds.size.width = max(minSize, proposedWidth)
+                newBounds.size.height = max(minSize, proposedHeight)
             }
+
+            // Invalidate old area
+            forceRedraw(rect: annotation.bounds.union(selectionHelperAnnotation?.bounds ?? .zero), on: page)
+
+            annotation.bounds = newBounds
+            selectionHelperAnnotation?.bounds = newBounds
+
+            // Invalidate new area
+            forceRedraw(rect: newBounds, on: page)
+
+        case .none:
+            break
+        }
     }
-    
-    func handleMouseUp(in view: PDFView, with event: NSEvent) {
+
+    func handleMouseUp(in _: PDFView, with _: NSEvent) {
         guard !isMassiveDocument, let annotation = selectedAnnotation, let page = annotation.page else { return }
-        
-        if case .move(_, let originalBounds) = currentDragMode {
+
+        if case let .move(_, originalBounds) = currentDragMode {
             let finalBounds = annotation.bounds
             if finalBounds != originalBounds {
                 registerBoundsChange(annotation: annotation, oldBounds: originalBounds, newBounds: finalBounds)
             }
-        } else if case .resize(_, _, let originalBounds) = currentDragMode {
+        } else if case let .resize(_, _, originalBounds) = currentDragMode {
             let finalBounds = annotation.bounds
             if finalBounds != originalBounds {
                 registerBoundsChange(annotation: annotation, oldBounds: originalBounds, newBounds: finalBounds)
             }
         }
-        
+
         // Final redraw to ensure clean state
         forceRedraw(rect: annotation.bounds.union(selectionHelperAnnotation?.bounds ?? .zero), on: page)
-        
+
         currentDragMode = .none
     }
-    
 
-    
     private func dragMode(for point: CGPoint, annotation: PDFAnnotation) -> DragMode? {
         let bounds = annotation.bounds
         let handleSize = selectionHandleSize
@@ -659,7 +660,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
             (.bottomLeft, CGRect(origin: CGPoint(x: bounds.minX, y: bounds.minY), size: CGSize(width: handleSize, height: handleSize))),
             (.bottomRight, CGRect(origin: CGPoint(x: bounds.maxX - handleSize, y: bounds.minY), size: CGSize(width: handleSize, height: handleSize))),
             (.topLeft, CGRect(origin: CGPoint(x: bounds.minX, y: bounds.maxY - handleSize), size: CGSize(width: handleSize, height: handleSize))),
-            (.topRight, CGRect(origin: CGPoint(x: bounds.maxX - handleSize, y: bounds.maxY - handleSize), size: CGSize(width: handleSize, height: handleSize)))
+            (.topRight, CGRect(origin: CGPoint(x: bounds.maxX - handleSize, y: bounds.maxY - handleSize), size: CGSize(width: handleSize, height: handleSize))),
         ]
         if let match = handles.first(where: { $0.1.insetBy(dx: -2, dy: -2).contains(point) }) {
             return .resize(handle: match.0, startPoint: point, originalBounds: bounds)
@@ -699,12 +700,12 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         guard !isMassiveDocument else { return nil }
         guard let page = view.page(for: point, nearest: true) else { return nil }
         let pagePoint = view.convert(point, to: page)
-        
+
         // 1. Check resize handles if an annotation is selected
         if let annotation = selectedAnnotation, annotation.page == page {
             if let mode = dragMode(for: pagePoint, annotation: annotation) {
                 switch mode {
-                case .resize(let handle, _, _):
+                case let .resize(handle, _, _):
                     switch handle {
                     case .topLeft, .bottomRight: return .crosshair // Or diagonal resize
                     case .topRight, .bottomLeft: return .crosshair
@@ -716,18 +717,18 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
                 }
             }
         }
-        
+
         // 2. Check if hovering over any other annotation
         if let _ = page.annotation(at: pagePoint) {
             return .pointingHand
         }
-        
+
         return nil
     }
-    
+
     private func forceRedraw(rect: CGRect, on page: PDFPage) {
         renderThrottle.schedule { [weak self] in
-            guard let self = self, let view = self.pdfView else { return }
+            guard let self, let view = pdfView else { return }
             let viewRect = view.convert(rect, from: page)
             // Expand slightly to cover anti-aliasing/handles
             let expanded = viewRect.insetBy(dx: -10, dy: -10)
@@ -749,14 +750,14 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         isMassiveDocument = profile.isMassive
         deferOutlineLoad = isMassiveDocument
         deferAnnotationScan = isMassiveDocument
-        
+
         // Initialize streaming loader for massive documents
         if isMassiveDocument, let url = currentURL ?? document?.documentURL {
             _ = streamingLoader.open(url: url)
         } else {
             streamingLoader.close()
         }
-        
+
         resetThumbnailState()
         pdfView?.document = document
         applyPDFViewConfiguration()
@@ -808,7 +809,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
             isThumbnailsLoading = false
             return
         }
-        
+
         if isLargeDocument {
             // For large (but not massive) docs, use provider but don't virtualize
             virtualPageProvider.configure(pageCount: pageCount, forceVirtualize: false)
@@ -821,7 +822,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
 
         let token = snapshotGenerationID
         let count = pageCount
-        pageSnapshots = (0..<count).map { index in
+        pageSnapshots = (0 ..< count).map { index in
             PageSnapshot(id: index,
                          index: index,
                          thumbnail: thumbnailCache.object(forKey: NSNumber(value: index)),
@@ -838,7 +839,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     }
 
     func refreshOutline() {
-        if deferOutlineLoad && isMassiveDocument { return }
+        if deferOutlineLoad, isMassiveDocument { return }
         deferOutlineLoad = false
         guard let doc = document else {
             outlineRows = []
@@ -852,14 +853,14 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         var rows: [OutlineRow] = []
         func walk(item: PDFOutline, depth: Int) {
             rows.append(OutlineRow(outline: item, depth: depth))
-            for childIndex in 0..<item.numberOfChildren {
+            for childIndex in 0 ..< item.numberOfChildren {
                 if let child = item.child(at: childIndex) {
                     walk(item: child, depth: depth + 1)
                 }
             }
         }
 
-        for childIndex in 0..<root.numberOfChildren {
+        for childIndex in 0 ..< root.numberOfChildren {
             if let child = root.child(at: childIndex) {
                 walk(item: child, depth: 0)
             }
@@ -874,7 +875,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     }
 
     func refreshAnnotations() {
-        if deferAnnotationScan && isMassiveDocument { return }
+        if deferAnnotationScan, isMassiveDocument { return }
         deferAnnotationScan = false
         guard let doc = document else {
             annotationRows = []
@@ -885,7 +886,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
             return
         }
         var rows: [AnnotationRow] = []
-        for index in 0..<doc.pageCount {
+        for index in 0 ..< doc.pageCount {
             guard let page = doc.page(at: index) else { continue }
             for annotation in page.annotations {
                 rows.append(AnnotationRow(annotation: annotation, pageIndex: index))
@@ -983,24 +984,24 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
 
     func repairAndSaveAs() {
         guard let url = currentURL else { return }
-        
+
         isDocumentLoading = true
         loadingStatus = "Normalizing document..."
-        
+
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
             do {
                 let service = PDFRepairService()
                 let repairedURL = try service.repairForExport(inputURL: url)
-                
+
                 DispatchQueue.main.async {
                     self.isDocumentLoading = false
                     self.loadingStatus = nil
-                    
+
                     let panel = NSSavePanel()
                     panel.allowedContentTypes = [.pdf]
                     panel.nameFieldStringValue = (url.deletingPathExtension().lastPathComponent) + "-repaired.pdf"
-                    
+
                     if panel.runModal() == .OK, let destination = panel.url {
                         do {
                             if FileManager.default.fileExists(atPath: destination.path) {
@@ -1040,19 +1041,18 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         panel.prompt = "Export"
         panel.message = "Choose a folder to save images"
         panel.directoryURL = currentURL?.deletingLastPathComponent()
-        
+
         if panel.runModal() == .OK, let outputDir = panel.url {
-            let fileExtension: String
-            switch format {
-            case .jpeg: fileExtension = "jpg"
-            case .png: fileExtension = "png"
-            case .tiff: fileExtension = "tiff"
-            default: fileExtension = "img"
+            let fileExtension = switch format {
+            case .jpeg: "jpg"
+            case .png: "png"
+            case .tiff: "tiff"
+            default: "img"
             }
-            
+
             isDocumentLoading = true
             loadingStatus = "Exporting images..."
-            
+
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 defer {
                     DispatchQueue.main.async {
@@ -1060,7 +1060,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
                         self?.loadingStatus = nil
                     }
                 }
-                
+
                 // Create a new PDFDocument instance for background processing
                 guard let backgroundDoc = PDFDocument(data: snapshot) else {
                     DispatchQueue.main.async {
@@ -1068,22 +1068,22 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
                     }
                     return
                 }
-                
-                for i in 0..<backgroundDoc.pageCount {
+
+                for i in 0 ..< backgroundDoc.pageCount {
                     guard let page = backgroundDoc.page(at: i) else { continue }
                     let pageRect = page.bounds(for: .mediaBox)
                     let image = page.thumbnail(of: pageRect.size, for: .mediaBox)
-                    
+
                     if let tiffData = image.tiffRepresentation,
                        let bitmap = NSBitmapImageRep(data: tiffData),
-                       let data = bitmap.representation(using: format, properties: [:]) {
-                        
+                       let data = bitmap.representation(using: format, properties: [:])
+                    {
                         let filename = "Page_\(i + 1).\(fileExtension)"
                         let fileURL = outputDir.appendingPathComponent(filename)
                         try? data.write(to: fileURL)
                     }
                 }
-                
+
                 DispatchQueue.main.async {
                     self?.pushLog("Exported images to \(outputDir.lastPathComponent)")
                     NSWorkspace.shared.activateFileViewerSelecting([outputDir])
@@ -1101,7 +1101,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
                                        jobTitle: document?.documentURL?.lastPathComponent ?? "PDFQuickFix",
                                        source: "studio")
     }
-    
+
     func exportToText() {
         guard let doc = document, let snapshot = doc.dataRepresentation() else {
             pushLog("Export failed: couldn't read current document state")
@@ -1110,11 +1110,11 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.plainText]
         panel.nameFieldStringValue = (currentURL?.deletingPathExtension().lastPathComponent ?? "Document") + ".txt"
-        
+
         if panel.runModal() == .OK, let url = panel.url {
             isDocumentLoading = true
             loadingStatus = "Exporting text..."
-            
+
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 defer {
                     DispatchQueue.main.async {
@@ -1122,7 +1122,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
                         self?.loadingStatus = nil
                     }
                 }
-                
+
                 // Create a new PDFDocument instance for background processing
                 guard let backgroundDoc = PDFDocument(data: snapshot) else {
                     DispatchQueue.main.async {
@@ -1130,18 +1130,18 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
                     }
                     return
                 }
-                
+
                 var fullText = ""
-                for i in 0..<backgroundDoc.pageCount {
+                for i in 0 ..< backgroundDoc.pageCount {
                     if let page = backgroundDoc.page(at: i), let text = page.string {
                         fullText += "--- Page \(i + 1) ---\n\n"
                         fullText += text
                         fullText += "\n\n"
                     }
                 }
-                
+
                 try? fullText.write(to: url, atomically: true, encoding: .utf8)
-                
+
                 DispatchQueue.main.async {
                     self?.pushLog("Exported text to \(url.lastPathComponent)")
                     NSWorkspace.shared.activateFileViewerSelecting([url])
@@ -1149,7 +1149,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
             }
         }
     }
-    
+
     func exportSanitized() {
         guard let doc = document else { return }
         // We need a snapshot because sanitization (especially vector/data rebuild)
@@ -1164,36 +1164,36 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.pdf]
         panel.nameFieldStringValue = (currentURL?.deletingPathExtension().lastPathComponent ?? "Document") + "-sanitized.pdf"
-        
+
         // Build accessory view with NSStackView for robust layout
         let label = NSTextField(labelWithString: "Sanitization Profile:")
         label.setContentHuggingPriority(.required, for: .vertical)
-        
+
         let profileSelector = NSPopUpButton(frame: .zero, pullsDown: false)
         profileSelector.addItems(withTitles: [
             "Privacy Clean (Rasterize, No Metadata)",
             "Light Clean (Searchable, No Metadata)",
-            "Keep Editable (Forms OK, No Metadata)"
+            "Keep Editable (Forms OK, No Metadata)",
         ])
-        
+
         // Map index to profile
         let profiles: [SanitizeProfile] = [.privacyClean, .lightClean, .keepEditable]
-        
+
         // Preselect based on user's default profile
         let defaultProfile = SanitizeDefaults.shared.defaultProfile
         let initialIndex = profiles.firstIndex(of: defaultProfile) ?? 0
         profileSelector.selectItem(at: initialIndex)
-        
+
         // "Set as default" checkbox
         let checkbox = NSButton(checkboxWithTitle: "Set as default", target: nil, action: nil)
         checkbox.state = .on
-        
+
         let stackView = NSStackView(views: [label, profileSelector, checkbox])
         stackView.orientation = .vertical
         stackView.alignment = .leading
         stackView.spacing = 8
         stackView.translatesAutoresizingMaskIntoConstraints = false
-        
+
         // Wrap in container for proper sizing
         let accessoryView = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 90))
         accessoryView.addSubview(stackView)
@@ -1201,25 +1201,25 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
             stackView.leadingAnchor.constraint(equalTo: accessoryView.leadingAnchor),
             stackView.trailingAnchor.constraint(equalTo: accessoryView.trailingAnchor),
             stackView.topAnchor.constraint(equalTo: accessoryView.topAnchor),
-            stackView.bottomAnchor.constraint(lessThanOrEqualTo: accessoryView.bottomAnchor)
+            stackView.bottomAnchor.constraint(lessThanOrEqualTo: accessoryView.bottomAnchor),
         ])
         panel.accessoryView = accessoryView
-        
+
         if panel.runModal() == .OK, let destination = panel.url {
             let selectedIndex = profileSelector.indexOfSelectedItem
-            guard selectedIndex >= 0 && selectedIndex < profiles.count else { return }
+            guard selectedIndex >= 0, selectedIndex < profiles.count else { return }
             let profile = profiles[selectedIndex]
             let options = PDFDocumentSanitizer.Options.from(profile: profile)
             let sendableSnapshot = SendablePDFDocument(document: snapshotDoc)
-            
+
             // Persist default if checkbox is on
             if checkbox.state == .on {
                 SanitizeDefaults.shared.defaultProfile = profile
             }
-            
+
             isDocumentLoading = true
             loadingStatus = "Sanitizing..."
-            
+
             let sourceURL = currentURL
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 defer {
@@ -1228,30 +1228,31 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
                         self?.loadingStatus = nil
                     }
                 }
-                
+
                 do {
                     // Use the snapshotDoc we prepared
                     let processed = try PDFDocumentSanitizer.sanitize(document: sendableSnapshot.document,
                                                                       sourceURL: sourceURL,
-                                                                      options: options) { processed, total in
+                                                                      options: options)
+                    { processed, total in
                         DispatchQueue.main.async {
                             self?.loadingStatus = "Sanitizing \(processed)/\(total)"
                         }
                     } shouldCancel: {
-                         // Simplify cancellation for now
-                         return false
+                        // Simplify cancellation for now
+                        false
                     }
-                    
+
                     guard processed.write(to: destination) else {
                         throw PDFOpsError.saveFailed
                     }
-                    
+
                     DispatchQueue.main.async {
                         self?.pushLog("Exported sanitized (\(profile.rawValue)) to \(destination.lastPathComponent)")
                         NSWorkspace.shared.activateFileViewerSelecting([destination])
                     }
                 } catch {
-                     DispatchQueue.main.async {
+                    DispatchQueue.main.async {
                         self?.pushLog("Sanitization failed: \(error.localizedDescription)")
                         self?.present(error)
                     }
@@ -1268,7 +1269,8 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         let exportDocument = PDFDocument()
         for (offset, index) in targets.enumerated() {
             if let page = doc.page(at: index),
-               let copy = page.copy() as? PDFPage {
+               let copy = page.copy() as? PDFPage
+            {
                 exportDocument.insert(copy, at: offset)
             }
         }
@@ -1378,7 +1380,8 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
                         opacity: CGFloat,
                         rotation: CGFloat,
                         position: WatermarkPosition,
-                        margin: CGFloat) throws {
+                        margin: CGFloat) throws
+    {
         guard let document else { throw PDFOpsError.missingDocument }
         PDFOps.applyWatermark(document: document,
                               text: text,
@@ -1395,7 +1398,8 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     func applyHeaderFooter(header: String,
                            footer: String,
                            margin: CGFloat,
-                           fontSize: CGFloat) throws {
+                           fontSize: CGFloat) throws
+    {
         guard let document else { throw PDFOpsError.missingDocument }
         PDFOps.applyHeaderFooter(document: document,
                                  header: header,
@@ -1411,7 +1415,8 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
                            digits: Int,
                            placement: BatesPlacement,
                            margin: CGFloat,
-                           fontSize: CGFloat) throws {
+                           fontSize: CGFloat) throws
+    {
         guard let document else { throw PDFOpsError.missingDocument }
         PDFOps.applyBatesNumbers(document: document,
                                  prefix: prefix,
@@ -1433,7 +1438,8 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
 
     func optimize() throws -> Data {
         guard let document,
-              let data = PDFOps.optimize(document: document) else {
+              let data = PDFOps.optimize(document: document)
+        else {
             throw PDFOpsError.missingDocument
         }
         pushLog("Optimized document (\(ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file)))")
@@ -1448,21 +1454,21 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         validationRunner.validateDocument(at: url,
                                           pageLimit: pageLimit,
                                           progress: { [weak self] processed, total in
-                                              guard let self = self, self.currentURL == url else { return }
-                                              self.updateValidationStatus(processed: processed, total: total)
+                                              guard let self, currentURL == url else { return }
+                                              updateValidationStatus(processed: processed, total: total)
                                           },
                                           completion: { [weak self] result in
-                                              guard let self = self, self.currentURL == url else { return }
-                                              self.validationMode = .idle
-                                              self.isFullValidationRunning = false
-                                              self.validationStatus = nil
+                                              guard let self, currentURL == url else { return }
+                                              validationMode = .idle
+                                              isFullValidationRunning = false
+                                              validationStatus = nil
                                               switch result {
-                                              case .success(let sanitized):
-                                                  self.pushLog("Validated \(sanitized.pageCount) pages")
-                                              case .failure(let error):
+                                              case let .success(sanitized):
+                                                  pushLog("Validated \(sanitized.pageCount) pages")
+                                              case let .failure(error):
                                                   if case PDFDocumentSanitizerError.cancelled = error { return }
-                                                  self.pushLog("⚠️ \(error.localizedDescription)")
-                                                  self.present(error)
+                                                  pushLog("⚠️ \(error.localizedDescription)")
+                                                  present(error)
                                               }
                                           })
     }
@@ -1492,19 +1498,19 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         inflightThumbnails.removeAll()
     }
 
-#if DEBUG
-    var debugInfo: StudioDebugInfo {
-        let pages = document?.pageCount ?? 0
-        let isLarge = isLargeDocument
-        let isMassive = DocumentProfile.from(pageCount: pages).isMassive
-        let render = renderService.debugInfo()
-        return StudioDebugInfo(pageCount: pages,
-                               isLargeDocument: isLarge,
-                               isMassiveDocument: isMassive,
-                               renderQueueOps: render.queueOperationCount,
-                               renderTrackedOps: render.trackedOperationsCount)
-    }
-#endif
+    #if DEBUG
+        var debugInfo: StudioDebugInfo {
+            let pages = document?.pageCount ?? 0
+            let isLarge = isLargeDocument
+            let isMassive = DocumentProfile.from(pageCount: pages).isMassive
+            let render = renderService.debugInfo()
+            return StudioDebugInfo(pageCount: pages,
+                                   isLargeDocument: isLarge,
+                                   isMassiveDocument: isMassive,
+                                   renderQueueOps: render.queueOperationCount,
+                                   renderTrackedOps: render.trackedOperationsCount)
+        }
+    #endif
 
     func ensureThumbnail(for index: Int) {
         guard let document else { return }
@@ -1535,53 +1541,54 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         }
 
         let thumbSize = isMassiveDocument ? massiveThumbnailTargetSize : snapshotTargetSize
-        
+
         // For massive documents, use the streaming loader for faster thumbnail rendering
-        if isMassiveDocument && streamingLoader.isOpen {
+        if isMassiveDocument, streamingLoader.isOpen {
             let loader = streamingLoader
             thumbnailQueue.async { [weak self, loader] in
                 let image = loader.renderThumbnail(at: index, size: thumbSize)
-                
+
                 Task { @MainActor [weak self] in
                     guard let self else { return }
-                    self.inflightThumbnails.remove(index)
-                    
+                    inflightThumbnails.remove(index)
+
                     guard let image else { return }
-                    self.thumbnailCache.setObject(image, forKey: key)
-                    self.updateSnapshot(at: index, thumbnail: image)
+                    thumbnailCache.setObject(image, forKey: key)
+                    updateSnapshot(at: index, thumbnail: image)
                 }
             }
             return
         }
-        
+
         // Standard path for non-massive documents
         let docURL = doc.documentURL
-        let docData: Data?
-        if !isMassiveDocument {
-            docData = doc.dataRepresentation()
+        let docData: Data? = if !isMassiveDocument {
+            doc.dataRepresentation()
         } else {
-            docData = nil
+            nil
         }
 
         renderService.thumbnail(pageIndex: index,
                                 targetSize: thumbSize,
                                 documentURL: docURL,
                                 documentData: docData,
-                                priority: .high) { [weak self] image in
+                                priority: .high)
+        { [weak self] image in
             guard let self else { return }
-            self.inflightLock.lock()
-            self.inflightThumbnails.remove(index)
-            self.inflightLock.unlock()
+            inflightLock.lock()
+            inflightThumbnails.remove(index)
+            inflightLock.unlock()
 
             guard let image else { return }
-            self.thumbnailCache.setObject(image, forKey: key)
-            self.updateSnapshot(at: index, thumbnail: image)
+            thumbnailCache.setObject(image, forKey: key)
+            updateSnapshot(at: index, thumbnail: image)
         }
     }
 
     func prefetchThumbnails(around centerIndex: Int,
                             window: Int = 2,
-                            farWindow: Int = 6) {
+                            farWindow: Int = 6)
+    {
         guard let doc = document else { return }
         let sp = PerfLog.begin("StudioPrefetch")
         defer { PerfLog.end("StudioPrefetch", sp) }
@@ -1606,23 +1613,24 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         docData = isMassiveDocument ? nil : doc.dataRepresentation()
 
         // Near window (±window) with high priority.
-        for offset in -window...window {
+        for offset in -window ... window {
             let idx = centerIndex + offset
             guard let request = makeRequest(idx) else { continue }
             if thumbnailCache.object(forKey: NSNumber(value: idx)) != nil { continue }
             renderService.image(for: request,
                                 documentURL: docURL,
                                 documentData: docData,
-                                priority: .veryHigh) { [weak self] image in
+                                priority: .veryHigh)
+            { [weak self] image in
                 guard let self, let image else { return }
                 let key = NSNumber(value: idx)
-                self.thumbnailCache.setObject(image, forKey: key)
-                self.updateSnapshot(at: idx, thumbnail: image)
+                thumbnailCache.setObject(image, forKey: key)
+                updateSnapshot(at: idx, thumbnail: image)
             }
         }
 
         // Far window (±farWindow) with lower priority.
-        for offset in -(farWindow)...farWindow {
+        for offset in -farWindow ... farWindow {
             if abs(offset) <= window { continue }
             let idx = centerIndex + offset
             guard let request = makeRequest(idx) else { continue }
@@ -1630,25 +1638,22 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
             renderService.image(for: request,
                                 documentURL: docURL,
                                 documentData: docData,
-                                priority: .low) { [weak self] image in
+                                priority: .low)
+            { [weak self] image in
                 guard let self, let image else { return }
                 let key = NSNumber(value: idx)
-                self.thumbnailCache.setObject(image, forKey: key)
-                self.updateSnapshot(at: idx, thumbnail: image)
+                thumbnailCache.setObject(image, forKey: key)
+                updateSnapshot(at: idx, thumbnail: image)
             }
         }
     }
 
-
-
-
-
     private func updateSnapshot(at index: Int, thumbnail: CGImage) {
-        guard index >= 0 && index < (virtualPageProvider.isVirtualized ? virtualPageProvider.totalCount : pageSnapshots.count) else { return }
-        
+        guard index >= 0, index < (virtualPageProvider.isVirtualized ? virtualPageProvider.totalCount : pageSnapshots.count) else { return }
+
         Task { [weak self] in
             guard let self else { return }
-            await self.snapshotUpdateThrottle.run { [weak self] in
+            await snapshotUpdateThrottle.run { [weak self] in
                 guard let self else { return }
                 await MainActor.run {
                     // Use virtual provider if active
@@ -1657,9 +1662,9 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
                         self.pageSnapshots = self.virtualPageProvider.visibleSnapshots
                         return
                     }
-                    
+
                     // Fallback to direct array update
-                    guard index >= 0 && index < self.pageSnapshots.count else { return }
+                    guard index >= 0, index < self.pageSnapshots.count else { return }
                     var snapshots = self.pageSnapshots
                     let existing = snapshots[index]
                     if existing.thumbnail === thumbnail { return }
@@ -1703,7 +1708,8 @@ private final class PageSnapshotRenderOperation: Operation {
 
     init(document: PDFDocument,
          targetSize: CGSize,
-         completion: @escaping ([PageSnapshot], Bool) -> Void) {
+         completion: @escaping ([PageSnapshot], Bool) -> Void)
+    {
         self.document = document
         self.targetSize = targetSize
         self.completion = completion
@@ -1730,7 +1736,7 @@ private final class PageSnapshotRenderOperation: Operation {
         var snapshots: [PageSnapshot] = []
         snapshots.reserveCapacity(pageCount)
 
-        for index in 0..<pageCount {
+        for index in 0 ..< pageCount {
             if isCancelled { return }
             guard let page = cgDocument.page(at: index + 1),
                   let image = Self.renderThumbnail(for: page, targetSize: targetSize) else { continue }
@@ -1781,11 +1787,13 @@ private final class PageSnapshotRenderOperation: Operation {
     private static func makeCGDocument(from document: PDFDocument) -> CGPDFDocument? {
         if let url = document.documentURL,
            let provider = CGDataProvider(url: url as CFURL),
-           let cgDoc = CGPDFDocument(provider) {
+           let cgDoc = CGPDFDocument(provider)
+        {
             return cgDoc
         }
         if let data = document.dataRepresentation(),
-           let provider = CGDataProvider(data: data as CFData) {
+           let provider = CGDataProvider(data: data as CFData)
+        {
             return CGPDFDocument(provider)
         }
         return nil
@@ -1794,7 +1802,7 @@ private final class PageSnapshotRenderOperation: Operation {
     private static func makeSnapshotsUsingPDFKit(document: PDFDocument, targetSize: CGSize) -> [PageSnapshot] {
         var items: [PageSnapshot] = []
         items.reserveCapacity(document.pageCount)
-        for index in 0..<document.pageCount {
+        for index in 0 ..< document.pageCount {
             guard let page = document.page(at: index) else { continue }
             let nsImage = page.thumbnail(of: NSSize(width: targetSize.width, height: targetSize.height), for: .mediaBox)
             guard let cgImage = nsImage.cgImage(forProposedRect: nil, context: nil, hints: nil) else { continue }
@@ -1810,18 +1818,18 @@ private final class PageSnapshotRenderOperation: Operation {
 extension PageSnapshotRenderOperation: @unchecked Sendable {}
 
 class SelectionAnnotation: PDFAnnotation {
-    override func draw(with box: PDFDisplayBox, in context: CGContext) {
+    override func draw(with _: PDFDisplayBox, in context: CGContext) {
         // Do NOT call super.draw to avoid default appearance (like the X box)
-        
+
         context.saveGState()
-        
+
         // Draw border
         context.setStrokeColor(NSColor.systemBlue.cgColor)
         context.setLineWidth(1.0)
-        
+
         let rect = bounds
         context.stroke(rect)
-        
+
         // Handles
         let handleSize: CGFloat = 6.0
         // Corners
@@ -1829,18 +1837,18 @@ class SelectionAnnotation: PDFAnnotation {
             CGPoint(x: rect.minX, y: rect.minY),
             CGPoint(x: rect.maxX - handleSize, y: rect.minY),
             CGPoint(x: rect.minX, y: rect.maxY - handleSize),
-            CGPoint(x: rect.maxX - handleSize, y: rect.maxY - handleSize)
+            CGPoint(x: rect.maxX - handleSize, y: rect.maxY - handleSize),
         ]
-        
+
         context.setFillColor(NSColor.white.cgColor)
         context.setStrokeColor(NSColor.systemBlue.cgColor)
-        
+
         for corner in corners {
             let handleRect = CGRect(origin: corner, size: CGSize(width: handleSize, height: handleSize))
             context.fill(handleRect)
             context.stroke(handleRect)
         }
-        
+
         context.restoreGState()
     }
 }

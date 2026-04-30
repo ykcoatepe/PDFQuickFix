@@ -9,13 +9,13 @@ enum DocumentCopilotScope: Equatable {
     var displayLabel: String {
         switch self {
         case .document:
-            return "document"
-        case .pageRange(let value):
-            return "page range \(value)"
-        case .currentPage(let index):
-            return "current page \(index + 1)"
+            "document"
+        case let .pageRange(value):
+            "page range \(value)"
+        case let .currentPage(index):
+            "current page \(index + 1)"
         case .selection:
-            return "selection"
+            "selection"
         }
     }
 }
@@ -29,27 +29,27 @@ enum DocumentCopilotRequest: Equatable {
 
     var scope: DocumentCopilotScope {
         switch self {
-        case .quickSummary(let scope),
-             .ask(_, let scope),
-             .explainSelection(_, let scope),
-             .currentPageDigest(let scope),
-             .keySections(let scope):
-            return scope
+        case let .quickSummary(scope),
+             let .ask(_, scope),
+             let .explainSelection(_, scope),
+             let .currentPageDigest(scope),
+             let .keySections(scope):
+            scope
         }
     }
 
     var interactionKind: AIInteractionKind {
         switch self {
         case .quickSummary:
-            return .readerCopilot(action: .quickSummary)
+            .readerCopilot(action: .quickSummary)
         case .ask:
-            return .readerCopilot(action: .documentQuestion)
+            .readerCopilot(action: .documentQuestion)
         case .explainSelection:
-            return .readerCopilot(action: .selectionExplanation)
+            .readerCopilot(action: .selectionExplanation)
         case .currentPageDigest:
-            return .readerCopilot(action: .currentPageDigest)
+            .readerCopilot(action: .currentPageDigest)
         case .keySections:
-            return .readerCopilot(action: .keySections)
+            .readerCopilot(action: .keySections)
         }
     }
 }

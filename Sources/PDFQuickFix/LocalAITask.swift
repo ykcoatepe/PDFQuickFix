@@ -23,23 +23,25 @@ enum LocalAITask: String, CaseIterable, Identifiable, Codable {
     case piiDetection
     case fieldExtraction
 
-    var id: String { rawValue }
+    var id: String {
+        rawValue
+    }
 
     var displayName: String {
         switch self {
-        case .summarize: return "Summary"
-        case .translate: return "Translate"
-        case .piiDetection: return "PII Scan"
-        case .fieldExtraction: return "Field Extraction"
+        case .summarize: "Summary"
+        case .translate: "Translate"
+        case .piiDetection: "PII Scan"
+        case .fieldExtraction: "Field Extraction"
         }
     }
 
     var systemImage: String {
         switch self {
-        case .summarize: return "text.badge.checkmark"
-        case .translate: return "character.book.closed"
-        case .piiDetection: return "person.crop.circle.badge.exclamationmark"
-        case .fieldExtraction: return "list.bullet.rectangle"
+        case .summarize: "text.badge.checkmark"
+        case .translate: "character.book.closed"
+        case .piiDetection: "person.crop.circle.badge.exclamationmark"
+        case .fieldExtraction: "list.bullet.rectangle"
         }
     }
 
@@ -56,37 +58,37 @@ enum LocalAITask: String, CaseIterable, Identifiable, Codable {
         case .summarize:
             return LocalAIPrompt(
                 text: """
-You are a local assistant running entirely on the user's Mac.
-Summarize the document content below in 5-8 concise bullet points.
-Then list key entities (people, organizations, dates) in a short list.
-Output plain text only.
+                You are a local assistant running entirely on the user's Mac.
+                Summarize the document content below in 5-8 concise bullet points.
+                Then list key entities (people, organizations, dates) in a short list.
+                Output plain text only.
 
-Document:
-\(input)
-""",
+                Document:
+                \(input)
+                """,
                 expectsJSON: false
             )
         case .translate:
             return LocalAIPrompt(
                 text: """
-Translate the document text to \(parameters.targetLanguage).
-Preserve meaning and tone. Output only the translated text.
+                Translate the document text to \(parameters.targetLanguage).
+                Preserve meaning and tone. Output only the translated text.
 
-Document:
-\(input)
-""",
+                Document:
+                \(input)
+                """,
                 expectsJSON: false
             )
         case .piiDetection:
             return LocalAIPrompt(
                 text: """
-Analyze the text for personal or sensitive identifiers (names, emails, phone numbers, addresses, IDs).
-Return JSON with keys: contains_pii (boolean), items (array).
-Each item must include: type, value, context.
+                Analyze the text for personal or sensitive identifiers (names, emails, phone numbers, addresses, IDs).
+                Return JSON with keys: contains_pii (boolean), items (array).
+                Each item must include: type, value, context.
 
-Text:
-\(input)
-""",
+                Text:
+                \(input)
+                """,
                 expectsJSON: true
             )
         case .fieldExtraction:
@@ -94,13 +96,13 @@ Text:
             let fieldList = fields.joined(separator: ", ")
             return LocalAIPrompt(
                 text: """
-Extract the following fields from the document text.
-Return JSON with exactly these keys: \(fieldList).
-Use null when a value is unknown.
+                Extract the following fields from the document text.
+                Return JSON with exactly these keys: \(fieldList).
+                Use null when a value is unknown.
 
-Document:
-\(input)
-""",
+                Document:
+                \(input)
+                """,
                 expectsJSON: true
             )
         }

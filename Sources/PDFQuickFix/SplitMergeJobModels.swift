@@ -67,15 +67,16 @@ struct MergeJobRecord: Identifiable, Codable, Hashable {
 }
 
 enum CodableUserDefaultsStore {
-    static func loadArray<T: Codable>(_ type: [T].Type, key: String, defaults: UserDefaults) -> [T] {
+    static func loadArray<T: Codable>(_: [T].Type, key: String, defaults: UserDefaults) -> [T] {
         guard let data = defaults.data(forKey: key),
-              let decoded = try? JSONDecoder().decode([T].self, from: data) else {
+              let decoded = try? JSONDecoder().decode([T].self, from: data)
+        else {
             return []
         }
         return decoded
     }
 
-    static func saveArray<T: Codable>(_ values: [T], key: String, defaults: UserDefaults) {
+    static func saveArray(_ values: [some Codable], key: String, defaults: UserDefaults) {
         guard let data = try? JSONEncoder().encode(values) else { return }
         defaults.set(data, forKey: key)
     }

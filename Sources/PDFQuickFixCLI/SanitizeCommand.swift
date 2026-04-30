@@ -1,9 +1,9 @@
 import Foundation
 import PDFCore
-import PDFQuickFixKit
 import PDFKit
+import PDFQuickFixKit
 
-struct SanitizeCommand {
+enum SanitizeCommand {
     struct Result: Codable {
         let profile: String
         let inputBytes: Int
@@ -12,18 +12,18 @@ struct SanitizeCommand {
         let searchableText: Bool
         let output: String
     }
-    
+
     static func run(args: [String]) throws {
         guard args.count >= 2 else {
             throw CLIError.invalidArguments
         }
-        
+
         // Parse arguments
         var inputPath: String?
         var outputPath: String?
         var profile: SanitizeProfile = .privacyClean
         var presetPath: String?
-        
+
         var i = 0
         while i < args.count {
             let arg = args[i]
@@ -52,13 +52,13 @@ struct SanitizeCommand {
             }
             i += 1
         }
-        
+
         guard let input = inputPath, let output = outputPath else {
             throw CLIError.invalidArguments
         }
-        
+
         // Load preset if specified (overrides --profile)
-        if let presetPath = presetPath {
+        if let presetPath {
             let presetURL = URL(fileURLWithPath: presetPath)
             guard FileManager.default.fileExists(atPath: presetURL.path) else {
                 print("Error: Preset file not found at '\(presetPath)'")
@@ -76,44 +76,44 @@ struct SanitizeCommand {
                 exit(1)
             }
         }
-        
+
         let inputURL = URL(fileURLWithPath: input)
         let outputURL = URL(fileURLWithPath: output)
-        
+
         guard FileManager.default.fileExists(atPath: inputURL.path) else {
             throw CLIError.fileNotFound(input)
         }
-        
+
         let inputData = try Data(contentsOf: inputURL)
         guard let doc = PDFDocument(data: inputData) else {
             throw CLIError.commandFailed("Could not load PDF")
         }
-        
+
         let options = PDFDocumentSanitizer.Options.from(profile: profile)
-        
+
         // Perform Sanitize
         let sanitized = try PDFDocumentSanitizer.sanitize(document: doc,
                                                           sourceURL: inputURL,
                                                           options: options)
-        
+
         guard sanitized.write(to: outputURL) else {
             throw CLIError.commandFailed("Failed to write output to \(output)")
         }
-        
+
         // Gather stats for JSON output
         let outputData = try Data(contentsOf: outputURL)
         let pageCount = sanitized.pageCount
-        
+
         // Check searchability roughly
         let searchable = (sanitized.string?.trimmingCharacters(in: .whitespacesAndNewlines).count ?? 0) > 0
-        
+
         let result = Result(profile: profile.rawValue,
                             inputBytes: inputData.count,
                             outputBytes: outputData.count,
                             pageCount: pageCount,
                             searchableText: searchable,
                             output: outputURL.lastPathComponent)
-        
+
         let encoder = JSONEncoder()
         encoder.outputFormatting = .sortedKeys
         let json = try encoder.encode(result)
@@ -122,4 +122,3 @@ struct SanitizeCommand {
         }
     }
 }
-

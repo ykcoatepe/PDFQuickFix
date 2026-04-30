@@ -1,6 +1,6 @@
-import XCTest
 import PDFKit
 @testable import PDFQuickFix
+import XCTest
 
 final class PDFViewPerformanceTests: XCTestCase {
     private func makeViewWithDocument(pageCount: Int = 2) throws -> PDFView {

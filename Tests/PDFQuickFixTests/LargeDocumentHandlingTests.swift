@@ -1,7 +1,7 @@
-import XCTest
 import Combine
 import PDFKit
 @testable import PDFQuickFix
+import XCTest
 
 @MainActor
 final class LargeDocumentHandlingTests: XCTestCase {
@@ -21,7 +21,7 @@ final class LargeDocumentHandlingTests: XCTestCase {
         let opened = expectation(description: "ReaderPro opened large document")
 
         controller.$document
-            .compactMap { $0 }
+            .compactMap(\.self)
             .first()
             .sink { _ in opened.fulfill() }
             .store(in: &cancellables)

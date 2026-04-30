@@ -1,6 +1,6 @@
-import Foundation
-import Combine
 import AppKit
+import Combine
+import Foundation
 import UniformTypeIdentifiers
 
 enum MergeControllerError: LocalizedError {
@@ -9,7 +9,7 @@ enum MergeControllerError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .cancelled:
-            return "Operation cancelled."
+            "Operation cancelled."
         }
     }
 }
@@ -30,6 +30,7 @@ final class MergeController: ObservableObject {
             }
         }
     }
+
     @Published var outlinePolicy: MergeOutlinePolicy = .addTopLevelPerSource
     @Published var metadataPolicy: MergeMetadataPolicy = .keepFirst
 
@@ -103,7 +104,7 @@ final class MergeController: ObservableObject {
 
     func moveSource(from offsets: IndexSet, to destination: Int) {
         let moving = offsets.sorted().compactMap { sourceURLs.indices.contains($0) ? sourceURLs[$0] : nil }
-        let removedBeforeDestination = offsets.filter { $0 < destination }.count
+        let removedBeforeDestination = offsets.count(where: { $0 < destination })
         for index in offsets.sorted(by: >) {
             guard sourceURLs.indices.contains(index) else { continue }
             sourceURLs.remove(at: index)
@@ -228,15 +229,15 @@ final class MergeController: ObservableObject {
         let destinationFolder = outputSelection.url.deletingLastPathComponent()
         let settings = currentSettings(with: outputSelection.url)
         let outputAccess = outputSelection.access
-        let sourceAccesses = self.sourceAccesses
-        let destinationAccess = self.destinationAccess
+        let sourceAccesses = sourceAccesses
+        let destinationAccess = destinationAccess
         currentTask = Task.detached(priority: .userInitiated) { [weak self, outputAccess, sourceAccesses, destinationAccess] in
             guard let self else { return }
             _ = outputAccess
             _ = sourceAccesses
             _ = destinationAccess
             do {
-                let result = try self.mergeEngine.merge(
+                let result = try mergeEngine.merge(
                     urls: inputURLs,
                     outputURL: outputSelection.url,
                     options: options,
@@ -305,7 +306,7 @@ final class MergeController: ObservableObject {
     func currentSettings(with outputURL: URL? = nil) -> MergeJobSettings {
         let destinationFolder = outputURL?.deletingLastPathComponent().standardizedFileURL ?? destinationFolderURL?.standardizedFileURL
         return MergeJobSettings(
-            sourceURLStrings: sourceURLs.map { $0.standardizedFileURL.path },
+            sourceURLStrings: sourceURLs.map(\.standardizedFileURL.path),
             sourceBookmarkData: sourceURLs.map { bookmarkData(for: $0.standardizedFileURL) },
             destinationFolderURLString: destinationFolder?.path,
             destinationFolderBookmarkData: bookmarkData(for: destinationFolder),
@@ -345,7 +346,8 @@ final class MergeController: ObservableObject {
 
     private func finishMerge(result: PDFMergeResult,
                              settings: MergeJobSettings,
-                             selectedDestinationFolderURL: URL) {
+                             selectedDestinationFolderURL: URL)
+    {
         isWorking = false
         currentTask = nil
         lastOutputURL = result.outputURL
@@ -407,8 +409,9 @@ final class MergeController: ObservableObject {
     private func access(from bookmarkData: Data?) -> SecurityScopedAccess? {
         guard let bookmarkData,
               let result = try? bookmarking.resolveBookmarkData(bookmarkData,
-                                                               options: .withSecurityScope,
-                                                               relativeTo: nil) else {
+                                                                options: .withSecurityScope,
+                                                                relativeTo: nil)
+        else {
             return nil
         }
         return SecurityScopedAccess(url: result.url)

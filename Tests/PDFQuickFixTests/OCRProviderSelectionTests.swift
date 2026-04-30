@@ -1,6 +1,6 @@
-import XCTest
 import PDFKit
 @testable import PDFQuickFix
+import XCTest
 
 final class OCRProviderSelectionTests: XCTestCase {
     final class StubLocalProvider: LocalOCRProviding {
@@ -19,7 +19,7 @@ final class OCRProviderSelectionTests: XCTestCase {
             available
         }
 
-        func recognizeTextLines(cgImage: CGImage) throws -> [RecognizedRun] {
+        func recognizeTextLines(cgImage _: CGImage) throws -> [RecognizedRun] {
             recognizeCalls += 1
             if let error {
                 throw error
@@ -38,7 +38,7 @@ final class OCRProviderSelectionTests: XCTestCase {
             self.error = error
         }
 
-        func recognizeTextLines(cgImage: CGImage) throws -> [RecognizedRun] {
+        func recognizeTextLines(cgImage _: CGImage) throws -> [RecognizedRun] {
             recognizeCalls += 1
             if let error {
                 throw error

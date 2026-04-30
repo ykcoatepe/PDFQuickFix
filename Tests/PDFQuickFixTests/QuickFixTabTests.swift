@@ -1,5 +1,5 @@
-import XCTest
 @testable import PDFQuickFix
+import XCTest
 
 final class QuickFixTabTests: XCTestCase {
     func testExistingCachedOCRURLReturnsNilWhenFileIsMissing() {

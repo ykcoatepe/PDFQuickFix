@@ -1,11 +1,11 @@
-import SwiftUI
 import AppKit
+import SwiftUI
 
 struct SignatureCaptureView: View {
     @Binding var image: NSImage?
     @State private var drawing = NSBezierPath()
     @State private var lastPoint: CGPoint? = nil
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Create your signature").font(.headline)
@@ -21,7 +21,7 @@ struct SignatureCaptureView: View {
                 Spacer()
                 Button("Save") {
                     if let img = SignatureStore.image(from: drawing, size: CGSize(width: 800, height: 300)) {
-                        self.image = img
+                        image = img
                         SignatureStore.save(img)
                     }
                 }.keyboardShortcut(.defaultAction)
@@ -34,25 +34,27 @@ struct SignatureCaptureView: View {
 struct SignatureCanvas: NSViewRepresentable {
     @Binding var drawing: NSBezierPath
     @Binding var lastPoint: CGPoint?
-    func makeNSView(context: Context) -> NSCanvasView {
+    func makeNSView(context _: Context) -> NSCanvasView {
         let v = NSCanvasView()
         v.drawingBinding = $drawing
         v.lastPoint = lastPoint
         return v
     }
-    func updateNSView(_ nsView: NSCanvasView, context: Context) {
+
+    func updateNSView(_ nsView: NSCanvasView, context _: Context) {
         nsView.drawingBinding = $drawing
     }
 }
 
 final class NSCanvasView: NSView {
     var drawingBinding: Binding<NSBezierPath> = .constant(NSBezierPath())
-    var lastPoint: CGPoint? = nil
-    
+    var lastPoint: CGPoint?
+
     override func mouseDown(with event: NSEvent) {
         let pt = convert(event.locationInWindow, from: nil)
         lastPoint = pt
     }
+
     override func mouseDragged(with event: NSEvent) {
         let pt = convert(event.locationInWindow, from: nil)
         if let last = lastPoint {
@@ -62,6 +64,7 @@ final class NSCanvasView: NSView {
         lastPoint = pt
         needsDisplay = true
     }
+
     override func draw(_ dirtyRect: NSRect) {
         NSColor.white.setFill()
         dirtyRect.fill()
@@ -81,19 +84,23 @@ enum SignatureStore {
         }
         return nil
     }
+
     static func save(_ image: NSImage) {
         guard let url = appSupportURL()?.appendingPathComponent("signature.png") else { return }
         if let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),
-           let data = rep.representation(using: .png, properties: [:]) {
+           let data = rep.representation(using: .png, properties: [:])
+        {
             try? data.write(to: url)
         }
     }
+
     static func load() -> NSImage? {
         guard let url = appSupportURL()?.appendingPathComponent("signature.png"),
               let data = try? Data(contentsOf: url),
               let img = NSImage(data: data) else { return nil }
         return img
     }
+
     static func image(from path: NSBezierPath, size: CGSize) -> NSImage? {
         let img = NSImage(size: size)
         img.lockFocus()

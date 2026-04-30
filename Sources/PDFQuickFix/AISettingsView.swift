@@ -58,7 +58,7 @@ struct AISettingsView: View {
 
             Stepper(
                 value: $aiSettings.requestTimeoutSeconds,
-                in: LocalAISettings.minRequestTimeoutSeconds...LocalAISettings.maxRequestTimeoutSeconds,
+                in: LocalAISettings.minRequestTimeoutSeconds ... LocalAISettings.maxRequestTimeoutSeconds,
                 step: 10
             ) {
                 Text("AI request timeout: \(aiSettings.requestTimeoutSeconds)s")

@@ -1,8 +1,8 @@
-import XCTest
 import CoreGraphics
 import CoreText
 import PDFKit
 @testable import PDFQuickFix
+import XCTest
 
 final class DocumentTextSessionTests: XCTestCase {
     func testParsePageSelectionSupportsDisjointRanges() throws {

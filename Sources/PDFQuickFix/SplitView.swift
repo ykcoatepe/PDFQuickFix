@@ -1,11 +1,13 @@
-import SwiftUI
 import AppKit
+import SwiftUI
 
 enum SplitWorkspaceMode: String, CaseIterable, Identifiable {
     case split = "Split"
     case merge = "Merge"
 
-    var id: String { rawValue }
+    var id: String {
+        rawValue
+    }
 }
 
 struct SplitView: View {
@@ -63,8 +65,8 @@ struct SplitView: View {
                     .font(.title3.weight(.semibold))
                     .foregroundColor(AppTheme.Colors.primaryText)
                 Text(workspaceMode == .split
-                     ? "Break a PDF into smaller, reviewable outputs for safer sharing."
-                     : "Merge multiple PDFs into one reviewable document with controlled ordering and fallback rules.")
+                    ? "Break a PDF into smaller, reviewable outputs for safer sharing."
+                    : "Merge multiple PDFs into one reviewable document with controlled ordering and fallback rules.")
                     .font(.subheadline)
                     .foregroundColor(AppTheme.Colors.secondaryText)
             }
@@ -400,7 +402,8 @@ struct SplitView: View {
 
     private func splitSplitAction() {
         guard splitController.applyToAllPDFsInFolder,
-              let sourceURL = splitController.sourceURL else {
+              let sourceURL = splitController.sourceURL
+        else {
             splitController.split()
             return
         }
@@ -409,8 +412,8 @@ struct SplitView: View {
         let pdfCount = (try? FileManager.default.contentsOfDirectory(at: folder,
                                                                      includingPropertiesForKeys: nil,
                                                                      options: [.skipsHiddenFiles]))?
-            .filter { $0.pathExtension.lowercased() == "pdf" }
-            .count ?? 0
+            .count(where: { $0.pathExtension.lowercased() == "pdf" })
+            ?? 0
 
         pendingSplitBatchSummary = "\(pdfCount) PDF file(s) in \(folder.lastPathComponent)"
         showingSplitBatchConfirmation = true

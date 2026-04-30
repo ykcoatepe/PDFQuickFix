@@ -1,5 +1,5 @@
-import SwiftUI
 import PDFKit
+import SwiftUI
 
 struct CommentsPanel: View {
     @EnvironmentObject private var controller: StudioController
@@ -20,7 +20,7 @@ struct CommentsPanel: View {
             Text("Annotations")
                 .font(.headline)
 
-            if controller.isMassiveDocument && controller.annotationRows.isEmpty {
+            if controller.isMassiveDocument, controller.annotationRows.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Annotation evidence loads on demand for very large documents.")
                         .font(.footnote)
@@ -40,8 +40,8 @@ struct CommentsPanel: View {
                     Text(controller.annotationRows.isEmpty ? "No annotations on this file" : "No annotations match this filter")
                         .font(.subheadline.weight(.semibold))
                     Text(controller.annotationRows.isEmpty
-                         ? "Comments, highlights, and note annotations will appear here when the PDF contains them."
-                         : "Try a broader search to review the notes already captured in this document.")
+                        ? "Comments, highlights, and note annotations will appear here when the PDF contains them."
+                        : "Try a broader search to review the notes already captured in this document.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

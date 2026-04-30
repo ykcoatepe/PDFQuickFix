@@ -18,7 +18,7 @@ struct MeasureOverlay: View {
     }
 
     var body: some View {
-        GeometryReader { proxy in
+        GeometryReader { _ in
             ZStack(alignment: .topLeading) {
                 Color.clear
                 if let start = startPoint, let end = currentPoint {

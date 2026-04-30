@@ -9,12 +9,12 @@ public enum PDFDocumentSanitizerError: LocalizedError {
 
     public var errorDescription: String? {
         switch self {
-        case .unableToOpen(let url):
-            return "Belge açılamadı: \(url.lastPathComponent)."
-        case .pageRenderFailed(let page, let reason):
-            return "PDF içeriği sayfa \(page) sırasında işlenemedi: \(reason)."
+        case let .unableToOpen(url):
+            "Belge açılamadı: \(url.lastPathComponent)."
+        case let .pageRenderFailed(page, reason):
+            "PDF içeriği sayfa \(page) sırasında işlenemedi: \(reason)."
         case .cancelled:
-            return "İşlem iptal edildi."
+            "İşlem iptal edildi."
         }
     }
 }
@@ -46,7 +46,8 @@ public enum PDFDocumentSanitizer {
                     sanitizeAnnotations: Bool = true,
                     sanitizeOutline: Bool = true,
                     removeOutline: Bool = false,
-                    scrubMetadata: Bool = false) {
+                    scrubMetadata: Bool = false)
+        {
             self.rebuildMode = rebuildMode
             self.validationPageLimit = validationPageLimit
             self.sanitizeAnnotations = sanitizeAnnotations
@@ -55,32 +56,34 @@ public enum PDFDocumentSanitizer {
             self.scrubMetadata = scrubMetadata
         }
 
-        public static var full: Options { Options() }
-        
+        public static var full: Options {
+            Options()
+        }
+
         public static func from(profile: SanitizeProfile) -> Options {
             switch profile {
             case .privacyClean:
-                return Options(rebuildMode: .rasterize,
-                               sanitizeAnnotations: true, // effectively removed by rasterization
-                               sanitizeOutline: false,    // removed explicitly
-                               removeOutline: true,
-                               scrubMetadata: true)
+                Options(rebuildMode: .rasterize,
+                        sanitizeAnnotations: true, // effectively removed by rasterization
+                        sanitizeOutline: false, // removed explicitly
+                        removeOutline: true,
+                        scrubMetadata: true)
             case .lightClean:
-                return Options(rebuildMode: .alwaysRebuildVectorOrData,
-                               sanitizeAnnotations: true,
-                               sanitizeOutline: false,    // removed explicitly
-                               removeOutline: true,
-                               scrubMetadata: true)
+                Options(rebuildMode: .alwaysRebuildVectorOrData,
+                        sanitizeAnnotations: true,
+                        sanitizeOutline: false, // removed explicitly
+                        removeOutline: true,
+                        scrubMetadata: true)
             case .keepEditable:
-                return Options(rebuildMode: .never,
-                               sanitizeAnnotations: false,
-                               sanitizeOutline: false,    // removed explicitly
-                               removeOutline: true,
-                               scrubMetadata: true)
+                Options(rebuildMode: .never,
+                        sanitizeAnnotations: false,
+                        sanitizeOutline: false, // removed explicitly
+                        removeOutline: true,
+                        scrubMetadata: true)
             }
         }
     }
-    
+
     public struct ValidationOptions {
         public var pageLimit: Int?
 
@@ -99,7 +102,8 @@ public enum PDFDocumentSanitizer {
                                 sourceURL: URL? = nil,
                                 options: Options = .full,
                                 progress: ProgressHandler? = nil,
-                                shouldCancel: () -> Bool = { false }) throws -> PDFDocument {
+                                shouldCancel: () -> Bool = { false }) throws -> PDFDocument
+    {
         enforceStructureTreeOff(original)
 
         var attributesChanged = false
@@ -111,43 +115,42 @@ public enum PDFDocumentSanitizer {
             original.documentAttributes = cleanedAttributes
             attributesChanged = changed
         }
-        
+
         // Handle Outline: either sanitize or remove
         var outlineChanged = false
         if options.removeOutline {
             // Explicit removal for keepEditable or any profile requesting it
             if let root = original.outlineRoot {
                 while root.numberOfChildren > 0 {
-                   root.child(at: 0)?.removeFromParent()
+                    root.child(at: 0)?.removeFromParent()
                 }
                 outlineChanged = true
             }
         } else if options.sanitizeOutline {
             outlineChanged = sanitizeOutline(original.outlineRoot)
         }
-        
-        let annotationsChanged: Bool
-        if options.sanitizeAnnotations {
-            annotationsChanged = try sanitizeAnnotations(in: original, shouldCancel: shouldCancel)
+
+        let annotationsChanged: Bool = if options.sanitizeAnnotations {
+            try sanitizeAnnotations(in: original, shouldCancel: shouldCancel)
         } else {
-            annotationsChanged = false
+            false
         }
 
-        let requiresRebuild: Bool
-        switch options.rebuildMode {
+        let requiresRebuild: Bool = switch options.rebuildMode {
         case .rasterize:
-            requiresRebuild = true
+            true
         case .never:
-            requiresRebuild = false
+            false
         case .auto:
-            requiresRebuild = attributesChanged || outlineChanged || annotationsChanged
+            attributesChanged || outlineChanged || annotationsChanged
         case .alwaysRebuildVectorOrData:
-            requiresRebuild = true
+            true
         }
 
         let workingDocument: PDFDocument
-        if requiresRebuild && options.rebuildMode == .rasterize,
-           let redrawn = rebuildDocumentByRasterizing(original, shouldCancel: shouldCancel) {
+        if requiresRebuild, options.rebuildMode == .rasterize,
+           let redrawn = rebuildDocumentByRasterizing(original, shouldCancel: shouldCancel)
+        {
             enforceStructureTreeOff(redrawn)
             if options.scrubMetadata {
                 redrawn.documentAttributes = [:]
@@ -157,31 +160,32 @@ public enum PDFDocumentSanitizer {
             workingDocument = redrawn
         } else if requiresRebuild,
                   let data = original.dataRepresentation(),
-                  let rebuilt = PDFDocument(data: data) {
+                  let rebuilt = PDFDocument(data: data)
+        {
             enforceStructureTreeOff(rebuilt)
-             if options.scrubMetadata {
+            if options.scrubMetadata {
                 rebuilt.documentAttributes = [:]
             } else {
                 rebuilt.documentAttributes = original.documentAttributes
             }
-            
+
             // Re-apply outline removal on rebuilt doc
             if options.removeOutline, let root = rebuilt.outlineRoot {
-                 while root.numberOfChildren > 0 {
-                   root.child(at: 0)?.removeFromParent()
+                while root.numberOfChildren > 0 {
+                    root.child(at: 0)?.removeFromParent()
                 }
             } else if options.sanitizeOutline {
                 _ = sanitizeOutline(rebuilt.outlineRoot)
             }
-            
+
             // Annotations are part of data, but we might clean them again if needed?
             // Actually dataRepresentation() bakes current state.
             // If we modified original's annotations before dataRep, they are baked.
             // But let's be safe.
-             if options.sanitizeAnnotations {
+            if options.sanitizeAnnotations {
                 _ = try sanitizeAnnotations(in: rebuilt, shouldCancel: shouldCancel)
             }
-            
+
             workingDocument = rebuilt
         } else {
             workingDocument = original
@@ -197,9 +201,9 @@ public enum PDFDocumentSanitizer {
         guard let cgDocument = makeCGPDFDocument(for: workingDocument, url: validationURL) else {
             // Not a fatal error per se, but validation can't run.
             // Let's assume strictness for now.
-             throw PDFDocumentSanitizerError.pageRenderFailed(page: 0, reason: "PDF doğrulama kaynağı oluşturulamadı")
+            throw PDFDocumentSanitizerError.pageRenderFailed(page: 0, reason: "PDF doğrulama kaynağı oluşturulamadı")
         }
-        
+
         try validate(cgDocument: cgDocument,
                      options: validationOptions,
                      progress: progress,
@@ -210,21 +214,21 @@ public enum PDFDocumentSanitizer {
     public static func validate(cgDocument: CGPDFDocument,
                                 options: ValidationOptions = ValidationOptions(),
                                 progress: ProgressHandler? = nil,
-                                shouldCancel: () -> Bool = { false }) throws {
+                                shouldCancel: () -> Bool = { false }) throws
+    {
         let pageCount = cgDocument.numberOfPages
         guard pageCount > 0 else { return }
 
         let colorSpace = CGColorSpaceCreateDeviceRGB()
         let maxDimension: CGFloat = 1024
-        let totalPages: Int
-        if let limit = options.pageLimit {
-            totalPages = min(limit, pageCount)
+        let totalPages: Int = if let limit = options.pageLimit {
+            min(limit, pageCount)
         } else {
-            totalPages = pageCount
+            pageCount
         }
         guard totalPages > 0 else { return }
 
-        for index in 1...totalPages { // CGPDFDocument is 1-based
+        for index in 1 ... totalPages { // CGPDFDocument is 1-based
             if shouldCancel() { throw PDFDocumentSanitizerError.cancelled }
             guard let page = cgDocument.page(at: index) else { continue }
             var pageError: Error?
@@ -242,7 +246,8 @@ public enum PDFDocumentSanitizer {
                                           bitsPerComponent: 8,
                                           bytesPerRow: 0,
                                           space: colorSpace,
-                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+                else {
                     pageError = PDFDocumentSanitizerError.pageRenderFailed(page: index, reason: "Çizim bağlamı oluşturulamadı")
                     return
                 }
@@ -310,7 +315,7 @@ public enum PDFDocumentSanitizer {
         PDFDocumentAttribute.producerAttribute: .string,
         PDFDocumentAttribute.keywordsAttribute: .stringArray,
         PDFDocumentAttribute.creationDateAttribute: .date,
-        PDFDocumentAttribute.modificationDateAttribute: .date
+        PDFDocumentAttribute.modificationDateAttribute: .date,
     ]
 
     private static func sanitizeValue(_ value: Any?, for key: PDFDocumentAttribute) -> Any? {
@@ -345,7 +350,7 @@ public enum PDFDocumentSanitizer {
             if label != coerced { changed = true }
             outline.label = coerced
         }
-        for index in 0..<outline.numberOfChildren {
+        for index in 0 ..< outline.numberOfChildren {
             if sanitizeOutline(outline.child(at: index)) {
                 changed = true
             }
@@ -354,9 +359,10 @@ public enum PDFDocumentSanitizer {
     }
 
     private static func sanitizeAnnotations(in document: PDFDocument,
-                                            shouldCancel: () -> Bool) throws -> Bool {
+                                            shouldCancel: () -> Bool) throws -> Bool
+    {
         var changed = false
-        for pageIndex in 0..<document.pageCount {
+        for pageIndex in 0 ..< document.pageCount {
             if shouldCancel() { throw PDFDocumentSanitizerError.cancelled }
             guard let page = document.page(at: pageIndex) else { continue }
             autoreleasepool {
@@ -378,7 +384,8 @@ public enum PDFDocumentSanitizer {
                         changed = true
                     }
                     if let defaultValue = annotation.widgetDefaultStringValue,
-                       let sanitized = coerceToString(defaultValue), sanitized != defaultValue {
+                       let sanitized = coerceToString(defaultValue), sanitized != defaultValue
+                    {
                         annotation.widgetDefaultStringValue = sanitized
                         changed = true
                     }
@@ -391,21 +398,21 @@ public enum PDFDocumentSanitizer {
     private static func coerceToString(_ value: Any?) -> String? {
         switch value {
         case let string as String:
-            return string
+            string
         case let string as NSString:
-            return string as String
+            string as String
         case let attributed as NSAttributedString:
-            return attributed.string
+            attributed.string
         case let number as NSNumber:
-            return number.stringValue
+            number.stringValue
         case let date as Date:
-            return string(from: date)
+            string(from: date)
         case let url as URL:
-            return url.absoluteString
+            url.absoluteString
         case nil:
-            return nil
+            nil
         default:
-            return String(describing: value ?? "")
+            String(describing: value ?? "")
         }
     }
 
@@ -435,7 +442,7 @@ public enum PDFDocumentSanitizer {
             "setShouldEmitStructureTree:",
             "_setEmitStructureTree:",
             "_setShouldEmitStructureTree:",
-            "setShouldNotEmitStructureTree:"
+            "setShouldNotEmitStructureTree:",
         ]
         let argument = "false" as NSString
         for name in selectors {
@@ -448,25 +455,29 @@ public enum PDFDocumentSanitizer {
     private static func makeCGPDFDocument(for document: PDFDocument, url: URL?) -> CGPDFDocument? {
         if let url,
            let provider = CGDataProvider(url: url as CFURL),
-           let cgDocument = CGPDFDocument(provider) {
+           let cgDocument = CGPDFDocument(provider)
+        {
             return cgDocument
         }
         if let data = document.dataRepresentation(),
-           let provider = CGDataProvider(data: data as CFData) {
+           let provider = CGDataProvider(data: data as CFData)
+        {
             return CGPDFDocument(provider)
         }
         return nil
     }
 
     private static func rebuildDocumentByRasterizing(_ document: PDFDocument,
-                                                     shouldCancel: () -> Bool) -> PDFDocument? {
+                                                     shouldCancel: () -> Bool) -> PDFDocument?
+    {
         let data = NSMutableData()
         guard let consumer = CGDataConsumer(data: data as CFMutableData),
-              let ctx = CGContext(consumer: consumer, mediaBox: nil, nil) else {
+              let ctx = CGContext(consumer: consumer, mediaBox: nil, nil)
+        else {
             return nil
         }
 
-        for index in 0..<document.pageCount {
+        for index in 0 ..< document.pageCount {
             if shouldCancel() { return nil }
             guard let page = document.page(at: index) else { return nil }
             var shouldAbort = false
@@ -516,7 +527,7 @@ public enum PDFDocumentSanitizer {
 
     private static func debugLogUnsupportedAttributeKey(_ key: AnyHashable) {
         #if DEBUG
-        NSLog("PDFQuickFix: unsupported attribute key dropped: %@", String(describing: key))
+            NSLog("PDFQuickFix: unsupported attribute key dropped: %@", String(describing: key))
         #endif
     }
 

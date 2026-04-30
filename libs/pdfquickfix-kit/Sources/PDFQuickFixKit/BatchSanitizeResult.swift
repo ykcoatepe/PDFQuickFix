@@ -13,20 +13,20 @@ public struct BatchSanitizeReport: Codable, Sendable {
     public let recursive: Bool
     /// Whether this was a dry run (no files written)
     public let dryRun: Bool
-    
+
     /// Count of successfully processed files
     public let processed: Int
     /// Count of skipped files (output existed, overwrite=false)
     public let skipped: Int
     /// Count of failed files
     public let failed: Int
-    
+
     /// Total elapsed time in milliseconds
     public let totalElapsedMs: Int
-    
+
     /// Per-file results
     public let files: [FileResult]
-    
+
     public init(
         inputDirectory: String,
         outputDirectory: String,
@@ -50,7 +50,7 @@ public struct BatchSanitizeReport: Codable, Sendable {
         self.totalElapsedMs = totalElapsedMs
         self.files = files
     }
-    
+
     /// Per-file result in the batch.
     public struct FileResult: Codable, Sendable {
         /// Relative path from input directory
@@ -69,7 +69,7 @@ public struct BatchSanitizeReport: Codable, Sendable {
         public let elapsedMs: Int?
         /// Error message if failed
         public let error: String?
-        
+
         public init(
             input: String,
             output: String,
@@ -89,7 +89,7 @@ public struct BatchSanitizeReport: Codable, Sendable {
             self.elapsedMs = elapsedMs
             self.error = error
         }
-        
+
         /// Status of a single file in the batch.
         public enum Status: String, Codable, Sendable {
             case processed
@@ -109,14 +109,14 @@ public struct BatchSanitizeProgress: Sendable {
     public let currentPath: String
     /// Whether processing or skipping
     public let isSkipping: Bool
-    
+
     public init(currentFile: Int, totalFiles: Int, currentPath: String, isSkipping: Bool) {
         self.currentFile = currentFile
         self.totalFiles = totalFiles
         self.currentPath = currentPath
         self.isSkipping = isSkipping
     }
-    
+
     /// Progress as a fraction (0.0 to 1.0)
     public var fraction: Double {
         guard totalFiles > 0 else { return 0 }

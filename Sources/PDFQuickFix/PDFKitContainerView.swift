@@ -1,6 +1,6 @@
-import SwiftUI
-import PDFKit
 import AppKit
+import PDFKit
+import SwiftUI
 
 enum AnnotationTool {
     case select
@@ -19,11 +19,11 @@ struct PDFKitContainerView: NSViewRepresentable {
     @Binding var pdfDocument: PDFDocument?
     @Binding var tool: AnnotationTool
     @Binding var signatureImage: NSImage?
-    @Binding var manualRedactions: [Int:[CGRect]]
+    @Binding var manualRedactions: [Int: [CGRect]]
     var isLargeDocument: Bool
     @Binding var displayMode: PDFDisplayMode
-    var didCreate: ((PDFCanvasView) -> Void)? = nil
-    
+    var didCreate: ((PDFCanvasView) -> Void)?
+
     func makeNSView(context: Context) -> PDFCanvasView {
         let v = PDFCanvasView()
         v.autoScales = true
@@ -38,7 +38,8 @@ struct PDFKitContainerView: NSViewRepresentable {
         didCreate?(v)
         return v
     }
-    func updateNSView(_ nsView: PDFCanvasView, context: Context) {
+
+    func updateNSView(_ nsView: PDFCanvasView, context _: Context) {
         let documentChanged = nsView.document !== pdfDocument
         if documentChanged {
             let sp = PerfLog.begin("PDFViewDocumentSet")
@@ -52,12 +53,13 @@ struct PDFKitContainerView: NSViewRepresentable {
         nsView.signatureImage = signatureImage
         nsView.manualRedactionsBinding = $manualRedactions
     }
+
     func makeCoordinator() -> Coordinator {
         Coordinator()
     }
-    
+
     final class Coordinator: NSObject, PDFCanvasDelegate {
-        func jumpTo(selection: PDFSelection, on view: PDFCanvasView, page: PDFPage) {
+        func jumpTo(selection: PDFSelection, on view: PDFCanvasView, page _: PDFPage) {
             view.go(to: selection)
             view.setCurrentSelection(selection, animate: true)
         }
@@ -68,7 +70,8 @@ extension PDFView {
     /// Keeps PDFView responsive when dealing with very large documents by reducing layout and scaling work.
     func applyPerformanceTuning(isLargeDocument: Bool,
                                 desiredDisplayMode: PDFDisplayMode,
-                                resetScale: Bool) {
+                                resetScale: Bool)
+    {
         displayDirection = .vertical
         displaysPageBreaks = !isLargeDocument
 
@@ -82,8 +85,9 @@ extension PDFView {
         // then gets clamped to the default 0.1 scale and fails expectations. Give the
         // view a minimal, page-sized frame so fitting math can produce a real value.
         if resetScale,
-           (bounds.width == 0 || bounds.height == 0),
-           let page = document?.page(at: 0) {
+           bounds.width == 0 || bounds.height == 0,
+           let page = document?.page(at: 0)
+        {
             let box = page.bounds(for: .mediaBox)
             let fallbackSize = CGSize(width: max(box.width, 1),
                                       height: max(box.height, 1))
@@ -109,13 +113,13 @@ extension PDFView {
 final class ImageStampAnnotation: PDFAnnotation {
     private let signatureImage: NSImage
     private static let imageKey = "ImageStampAnnotationData"
-    
+
     init(bounds: CGRect, image: NSImage) {
-        self.signatureImage = image
+        signatureImage = image
         super.init(bounds: bounds, forType: .stamp, withProperties: nil)
-        self.color = .clear
+        color = .clear
     }
-    
+
     required init?(coder: NSCoder) {
         guard
             let data = coder.decodeObject(forKey: Self.imageKey) as? Data,
@@ -123,17 +127,17 @@ final class ImageStampAnnotation: PDFAnnotation {
         else {
             return nil
         }
-        self.signatureImage = image
+        signatureImage = image
         super.init(coder: coder)
     }
-    
+
     override func encode(with coder: NSCoder) {
         super.encode(with: coder)
         if let data = signatureImage.tiffRepresentation {
             coder.encode(data, forKey: Self.imageKey)
         }
     }
-    
+
     override func draw(with box: PDFDisplayBox, in context: CGContext) {
         super.draw(with: box, in: context)
         guard let cgImage = signatureImage.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
@@ -141,8 +145,8 @@ final class ImageStampAnnotation: PDFAnnotation {
         context.draw(cgImage, in: bounds)
         context.restoreGState()
     }
-    
-    override func copy(with zone: NSZone? = nil) -> Any {
+
+    override func copy(with _: NSZone? = nil) -> Any {
         let copy = ImageStampAnnotation(bounds: bounds, image: signatureImage)
         copy.border = border
         copy.color = color
@@ -158,30 +162,35 @@ final class PDFCanvasView: PDFView {
     weak var delegateProxy: PDFCanvasDelegate?
     var currentTool: AnnotationTool = .select
     var signatureImage: NSImage?
-    var manualRedactionsBinding: Binding<[Int:[CGRect]]>?
-    
+    var manualRedactionsBinding: Binding<[Int: [CGRect]]>?
+
     override init(frame: NSRect) {
         super.init(frame: frame)
         NotificationCenter.default.addObserver(self, selector: #selector(onJumpToSelection(_:)), name: .PDFQuickFixJumpToSelection, object: nil)
     }
-    required init?(coder: NSCoder) { fatalError() }
+
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) {
+        fatalError()
+    }
+
     deinit {
         NotificationCenter.default.removeObserver(self)
     }
-    
+
     @objc private func onJumpToSelection(_ n: Notification) {
         guard let sel = n.object as? PDFSelection else { return }
         guard let page = n.userInfo?["page"] as? PDFPage else { return }
         delegateProxy?.jumpTo(selection: sel, on: self, page: page)
     }
-    
+
     override func mouseDown(with event: NSEvent) {
-        guard let page = self.page(for: convert(event.locationInWindow, from: nil), nearest: true) else {
+        guard let page = page(for: convert(event.locationInWindow, from: nil), nearest: true) else {
             super.mouseDown(with: event); return
         }
         let pt = convert(event.locationInWindow, from: nil)
         let pagePoint = convert(pt, to: page)
-        
+
         switch currentTool {
         case .select:
             super.mouseDown(with: event)
@@ -192,14 +201,14 @@ final class PDFCanvasView: PDFView {
             page.addAnnotation(ann)
         case .rect:
             let w: CGFloat = 140, h: CGFloat = 60
-            let rect = CGRect(x: pagePoint.x - w/2, y: pagePoint.y - h/2, width: w, height: h)
+            let rect = CGRect(x: pagePoint.x - w / 2, y: pagePoint.y - h / 2, width: w, height: h)
             let ann = PDFAnnotation(bounds: rect, forType: .square, withProperties: nil)
             ann.color = NSColor.systemRed.withAlphaComponent(0.2)
             ann.border = PDFBorder()
             ann.border?.lineWidth = 2
             page.addAnnotation(ann)
         case .highlightSelection:
-            if let sel = self.currentSelection {
+            if let sel = currentSelection {
                 for p in sel.pages {
                     let b = sel.bounds(for: p)
                     let h = PDFAnnotation(bounds: b, forType: .highlight, withProperties: nil)
@@ -211,17 +220,17 @@ final class PDFCanvasView: PDFView {
             if let img = signatureImage {
                 let w: CGFloat = 180
                 let aspect = img.size.height / img.size.width
-                let rect = CGRect(x: pagePoint.x - w/2, y: pagePoint.y - w*aspect/2, width: w, height: w*aspect)
+                let rect = CGRect(x: pagePoint.x - w / 2, y: pagePoint.y - w * aspect / 2, width: w, height: w * aspect)
                 let ann = ImageStampAnnotation(bounds: rect, image: img)
                 page.addAnnotation(ann)
             }
         case .redactBox:
             let w: CGFloat = 180, h: CGFloat = 50
-            let rect = CGRect(x: pagePoint.x - w/2, y: pagePoint.y - h/2, width: w, height: h)
+            let rect = CGRect(x: pagePoint.x - w / 2, y: pagePoint.y - h / 2, width: w, height: h)
             let preview = PDFAnnotation(bounds: rect, forType: .square, withProperties: nil)
             preview.color = .black
             page.addAnnotation(preview)
-            if let doc = self.document, let pageIndex = doc.index(for: page) as Int? {
+            if let doc = document, let pageIndex = doc.index(for: page) as Int? {
                 var store = manualRedactionsBinding?.wrappedValue ?? [:]
                 var arr = store[pageIndex] ?? []
                 arr.append(rect)

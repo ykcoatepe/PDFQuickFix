@@ -1,8 +1,8 @@
 import AppKit
-import CoreGraphics
-import Foundation
-import CryptoKit
 import Combine
+import CoreGraphics
+import CryptoKit
+import Foundation
 
 enum OllamaDeepSeekOCRError: Error {
     case invalidImage
@@ -40,7 +40,7 @@ final class OllamaDeepSeekOCRProvider: LocalOCRProviding {
     private static let promptVariants = [
         "<image>\n<|grounding|>Extract the text in the image.",
         "<image>\n<|grounding|>Extract all text with bounding boxes.",
-        "<image>\n<|grounding|>Free OCR."
+        "<image>\n<|grounding|>Free OCR.",
     ]
 
     private let hostURL: URL
@@ -49,7 +49,8 @@ final class OllamaDeepSeekOCRProvider: LocalOCRProviding {
 
     init(modelName: String = "deepseek-ocr:3b",
          hostURL: URL = URL(string: "http://127.0.0.1:11434")!,
-         requestTimeout: TimeInterval = 25) {
+         requestTimeout: TimeInterval = 25)
+    {
         self.modelName = modelName
         self.hostURL = hostURL
         self.requestTimeout = requestTimeout
@@ -68,7 +69,8 @@ final class OllamaDeepSeekOCRProvider: LocalOCRProviding {
             return false
         }
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let models = json["models"] as? [[String: Any]] else {
+              let models = json["models"] as? [[String: Any]]
+        else {
             Self.storeAvailability(false, for: cacheKey)
             return false
         }
@@ -96,13 +98,14 @@ final class OllamaDeepSeekOCRProvider: LocalOCRProviding {
                 "model": modelName,
                 "prompt": prompt,
                 "images": [pngData.base64EncodedString()],
-                "stream": false
+                "stream": false,
             ]
 
             let body = try JSONSerialization.data(withJSONObject: payload)
             let data = try request(path: "/api/generate", body: body)
             guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let response = json["response"] as? String else {
+                  let response = json["response"] as? String
+            else {
                 throw OllamaDeepSeekOCRError.invalidResponse
             }
 
@@ -223,13 +226,13 @@ final class OllamaVisionOCRProvider: LocalOCRProviding {
     private static var availabilityCache: [String: (value: Bool, timestamp: Date)] = [:]
     private static let availabilityLock = NSLock()
     private static let prompt = """
-<image>
-Extract all text lines from the image.
-Return JSON as an array of objects with keys:
-- text: the line text
-- bbox: [x1, y1, x2, y2] normalized to 0..1000
-Use one entry per text line.
-"""
+    <image>
+    Extract all text lines from the image.
+    Return JSON as an array of objects with keys:
+    - text: the line text
+    - bbox: [x1, y1, x2, y2] normalized to 0..1000
+    Use one entry per text line.
+    """
     private static let responseSchema: [String: Any] = [
         "type": "array",
         "items": [
@@ -240,11 +243,11 @@ Use one entry per text line.
                     "type": "array",
                     "items": ["type": "number"],
                     "minItems": 4,
-                    "maxItems": 4
-                ]
+                    "maxItems": 4,
+                ],
             ],
-            "required": ["text", "bbox"]
-        ]
+            "required": ["text", "bbox"],
+        ],
     ]
 
     private let hostURL: URL
@@ -253,7 +256,8 @@ Use one entry per text line.
 
     init(modelName: String,
          hostURL: URL = URL(string: "http://127.0.0.1:11434")!,
-         requestTimeout: TimeInterval = 25) {
+         requestTimeout: TimeInterval = 25)
+    {
         self.modelName = modelName
         self.hostURL = hostURL
         self.requestTimeout = requestTimeout
@@ -272,7 +276,8 @@ Use one entry per text line.
             return false
         }
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let models = json["models"] as? [[String: Any]] else {
+              let models = json["models"] as? [[String: Any]]
+        else {
             Self.storeAvailability(false, for: cacheKey)
             return false
         }
@@ -299,13 +304,14 @@ Use one entry per text line.
             "prompt": Self.prompt,
             "images": [pngData.base64EncodedString()],
             "stream": false,
-            "format": Self.responseSchema
+            "format": Self.responseSchema,
         ]
 
         let body = try JSONSerialization.data(withJSONObject: payload)
         let data = try request(path: "/api/generate", body: body)
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let response = json["response"] as? String else {
+              let response = json["response"] as? String
+        else {
             throw OllamaVisionOCRError.invalidResponse
         }
 
@@ -434,7 +440,8 @@ final class LocalOCRModelRegistry: ObservableObject {
                     continue
                 }
                 if let details = try? await client.showModelDetails(model: model.name),
-                   details.capabilities.map({ $0.lowercased() }).contains("vision") {
+                   details.capabilities.map({ $0.lowercased() }).contains("vision")
+                {
                     visionModels.append(model)
                 }
             }
@@ -483,15 +490,17 @@ enum LocalOCRJSONParser {
 
     private static func parseJSON(response: String) -> Any? {
         if let data = response.data(using: .utf8),
-           let json = try? JSONSerialization.jsonObject(with: data) {
+           let json = try? JSONSerialization.jsonObject(with: data)
+        {
             return json
         }
         guard let start = response.firstIndex(of: "["),
               let end = response.lastIndex(of: "]"),
-              start < end else {
+              start < end
+        else {
             return nil
         }
-        let substring = String(response[start...end])
+        let substring = String(response[start ... end])
         guard let data = substring.data(using: .utf8) else { return nil }
         return try? JSONSerialization.jsonObject(with: data)
     }
@@ -566,7 +575,7 @@ final class GoogleVisionOCRProvider: CloudOCRProviding {
     init(apiKey: String, languages: [String], requestTimeout: TimeInterval = 20) {
         self.apiKey = apiKey
         self.requestTimeout = requestTimeout
-        self.languageHints = Self.buildLanguageHints(languages)
+        languageHints = Self.buildLanguageHints(languages)
     }
 
     func recognizeTextLines(cgImage: CGImage) throws -> [RecognizedRun] {
@@ -576,13 +585,13 @@ final class GoogleVisionOCRProvider: CloudOCRProviding {
 
         var requestItem: [String: Any] = [
             "image": ["content": pngData.base64EncodedString()],
-            "features": [["type": "DOCUMENT_TEXT_DETECTION"]]
+            "features": [["type": "DOCUMENT_TEXT_DETECTION"]],
         ]
         if !languageHints.isEmpty {
             requestItem["imageContext"] = ["languageHints": languageHints]
         }
         let payload: [String: Any] = [
-            "requests": [requestItem]
+            "requests": [requestItem],
         ]
         let body = try JSONSerialization.data(withJSONObject: payload)
 
@@ -621,7 +630,8 @@ final class GoogleVisionOCRProvider: CloudOCRProviding {
 
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let responses = json["responses"] as? [[String: Any]],
-              let response = responses.first else {
+              let response = responses.first
+        else {
             throw GoogleVisionOCRError.invalidResponse
         }
 
@@ -636,7 +646,8 @@ final class GoogleVisionOCRProvider: CloudOCRProviding {
 
     private func parseFullTextAnnotation(response: [String: Any]) -> [RecognizedRun]? {
         guard let annotation = response["fullTextAnnotation"] as? [String: Any],
-              let pages = annotation["pages"] as? [[String: Any]] else {
+              let pages = annotation["pages"] as? [[String: Any]]
+        else {
             return nil
         }
         var runs: [RecognizedRun] = []
@@ -673,7 +684,8 @@ final class GoogleVisionOCRProvider: CloudOCRProviding {
 
     private func rectFromBoundingBox(_ value: Any?) -> CGRect? {
         guard let box = value as? [String: Any],
-              let vertices = box["vertices"] as? [[String: Any]], !vertices.isEmpty else {
+              let vertices = box["vertices"] as? [[String: Any]], !vertices.isEmpty
+        else {
             return nil
         }
         let xs = vertices.compactMap { ($0["x"] as? NSNumber)?.doubleValue }
@@ -681,7 +693,8 @@ final class GoogleVisionOCRProvider: CloudOCRProviding {
         guard let minX = xs.min(),
               let maxX = xs.max(),
               let minY = ys.min(),
-              let maxY = ys.max() else {
+              let maxY = ys.max()
+        else {
             return nil
         }
         return CGRect(x: CGFloat(minX),
@@ -732,7 +745,8 @@ enum DeepSeekOCRParser {
 
     private static func parseFirstRect(from det: String, imageSize: CGSize) -> CGRect? {
         guard let data = det.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) else {
+              let json = try? JSONSerialization.jsonObject(with: data)
+        else {
             return nil
         }
         guard let rectValues = normalizedRect(from: json) else { return nil }

@@ -1,8 +1,8 @@
-import SwiftUI
-import PDFKit
-import UniformTypeIdentifiers
-import Combine
 import AppKit
+import Combine
+import PDFKit
+import SwiftUI
+import UniformTypeIdentifiers
 
 enum StudioTool: String, CaseIterable, Identifiable {
     case organize = "Organize"
@@ -11,20 +11,22 @@ enum StudioTool: String, CaseIterable, Identifiable {
     case forms = "Forms"
     case measure = "Measure"
 
-    var id: String { rawValue }
+    var id: String {
+        rawValue
+    }
 
     var systemImage: String {
         switch self {
         case .organize:
-            return "square.grid.2x2"
+            "square.grid.2x2"
         case .bookmarks:
-            return "bookmark"
+            "bookmark"
         case .comments:
-            return "text.bubble"
+            "text.bubble"
         case .forms:
-            return "rectangle.and.pencil.and.ellipsis"
+            "rectangle.and.pencil.and.ellipsis"
         case .measure:
-            return "ruler"
+            "ruler"
         }
     }
 }
@@ -37,7 +39,7 @@ struct StudioView: View, Equatable {
     @Binding var showQuickFix: Bool
     @Binding var quickFixURL: URL?
     @State private var navSelection: Int = 0 // 0 = Pages, 1 = Outline
-    
+
     @Binding var showingWatermarkSheet: Bool
     @Binding var showingHeaderFooterSheet: Bool
     @Binding var showingBatesSheet: Bool
@@ -48,17 +50,17 @@ struct StudioView: View, Equatable {
     @State private var batesOptions = BatesOptions()
     @State private var cropOptions = CropOptions()
     @State private var alertMessage: String?
-    
+
     static func == (lhs: StudioView, rhs: StudioView) -> Bool {
-        return lhs.controller === rhs.controller &&
-               lhs.selectedTab == rhs.selectedTab &&
-               lhs.selectedTool == rhs.selectedTool &&
-               lhs.showQuickFix == rhs.showQuickFix &&
-               lhs.quickFixURL == rhs.quickFixURL &&
-               lhs.showingWatermarkSheet == rhs.showingWatermarkSheet &&
-               lhs.showingHeaderFooterSheet == rhs.showingHeaderFooterSheet &&
-               lhs.showingBatesSheet == rhs.showingBatesSheet &&
-               lhs.showingCropSheet == rhs.showingCropSheet
+        lhs.controller === rhs.controller &&
+            lhs.selectedTab == rhs.selectedTab &&
+            lhs.selectedTool == rhs.selectedTool &&
+            lhs.showQuickFix == rhs.showQuickFix &&
+            lhs.quickFixURL == rhs.quickFixURL &&
+            lhs.showingWatermarkSheet == rhs.showingWatermarkSheet &&
+            lhs.showingHeaderFooterSheet == rhs.showingHeaderFooterSheet &&
+            lhs.showingBatesSheet == rhs.showingBatesSheet &&
+            lhs.showingCropSheet == rhs.showingCropSheet
     }
 
     var body: some View {
@@ -107,7 +109,7 @@ struct StudioView: View, Equatable {
 
                         ScrollView {
                             VStack(alignment: .leading, spacing: 4) {
-                                ForEach(controller.logMessages.enumerated().map({ $0 }), id: \.offset) { entry in
+                                ForEach(controller.logMessages.enumerated().map(\.self), id: \.offset) { entry in
                                     Text(entry.element)
                                         .font(.caption.monospaced())
                                         .foregroundColor(AppTheme.Colors.secondaryText)
@@ -128,9 +130,9 @@ struct StudioView: View, Equatable {
                 }
             }
 
-#if DEBUG
-            debugHUD
-#endif
+            #if DEBUG
+                debugHUD
+            #endif
         }
         .sheet(isPresented: $showQuickFix) {
             QuickFixSheet(inputURL: Binding(
@@ -182,10 +184,11 @@ struct StudioView: View, Equatable {
         }
         .alert("Studio",
                isPresented: Binding(
-                    get: { alertMessage != nil },
-                    set: { if !$0 { alertMessage = nil } }
+                   get: { alertMessage != nil },
+                   set: { if !$0 { alertMessage = nil } }
                ),
-               presenting: alertMessage) { _ in
+               presenting: alertMessage)
+        { _ in
             Button("OK", role: .cancel) {
                 alertMessage = nil
             }
@@ -241,8 +244,8 @@ struct StudioView: View, Equatable {
                     .font(.title3.weight(.semibold))
                     .foregroundStyle(AppTheme.Colors.primaryText)
                 Text(controller.document == nil
-                     ? "Open a PDF to reorder, annotate, and hand it off to cleanup, export, or folder-wide outbound prep."
-                     : "Duplicate, rotate, reorder, inspect annotations, and keep page operations in one focused station before cleanup or export.")
+                    ? "Open a PDF to reorder, annotate, and hand it off to cleanup, export, or folder-wide outbound prep."
+                    : "Duplicate, rotate, reorder, inspect annotations, and keep page operations in one focused station before cleanup or export.")
                     .font(.subheadline)
                     .foregroundStyle(AppTheme.Colors.secondaryText)
             }
@@ -281,11 +284,12 @@ struct StudioView: View, Equatable {
               documentHub.lastSource == .reader,
               let target = documentHub.currentURL,
               controller.sourceURL != target else { return }
-        
+
         // Anti-Gravity: Try to resolve a security scope from Recents if available,
         // to ensure we have long-lived access.
         if let recent = RecentFilesManager.shared.find(url: target),
-           let resolved = try? RecentFilesManager.shared.resolveForOpen(recent) {
+           let resolved = try? RecentFilesManager.shared.resolveForOpen(recent)
+        {
             // Use the resolved URL and scope
             controller.open(url: resolved.url, access: resolved.access)
         } else {
@@ -324,7 +328,7 @@ struct StudioView: View, Equatable {
                     .foregroundColor(AppTheme.Colors.secondaryText)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            
+
             Spacer()
         }
         .padding(10)
@@ -356,13 +360,13 @@ struct StudioView: View, Equatable {
                             } label: {
                                 Label("Rotate Left", systemImage: "rotate.left")
                             }
-                            
+
                             Button {
                                 controller.rotateCurrentPageRight()
                             } label: {
                                 Label("Rotate Right", systemImage: "rotate.right")
                             }
-                            
+
                             if controller.selectedAnnotation != nil {
                                 Divider()
                                 Button(role: .destructive) {
@@ -382,7 +386,7 @@ struct StudioView: View, Equatable {
                             Color.black.opacity(0.08)
                             LoadingOverlayView(status: controller.loadingStatus ?? "Loading…")
                         }
-                        
+
                         // Performance mode banner for massive documents
                         if controller.isMassiveDocument {
                             VStack {
@@ -405,7 +409,7 @@ struct StudioView: View, Equatable {
                                 .background(.ultraThinMaterial)
                                 .cornerRadius(8)
                                 .padding(12)
-                                
+
                                 Spacer()
                             }
                         }
@@ -569,7 +573,7 @@ struct StudioView: View, Equatable {
             .buttonStyle(.bordered)
             .tint(AppTheme.Colors.accent)
             .disabled(controller.document == nil)
-            
+
             // Rotation Buttons
             HStack(spacing: 0) {
                 Button {
@@ -579,7 +583,7 @@ struct StudioView: View, Equatable {
                 }
                 .buttonStyle(.bordered)
                 .disabled(controller.document == nil)
-                
+
                 Button {
                     controller.rotateCurrentPageRight()
                 } label: {
@@ -802,26 +806,26 @@ struct StudioView: View, Equatable {
         }
     }
 
-#if DEBUG
-    private var debugHUD: some View {
-        let info = controller.debugInfo
-        return VStack(alignment: .trailing, spacing: 4) {
-            Text("Pages: \(info.pageCount)")
-            let large = info.isLargeDocument ? "yes" : "no"
-            let massive = info.isMassiveDocument ? "yes" : "no"
-            Text("Large: \(large)")
-            Text("Massive: \(massive)")
-            Text("Render queue: \(info.renderQueueOps)")
-            Text("Tracked ops: \(info.renderTrackedOps)")
+    #if DEBUG
+        private var debugHUD: some View {
+            let info = controller.debugInfo
+            return VStack(alignment: .trailing, spacing: 4) {
+                Text("Pages: \(info.pageCount)")
+                let large = info.isLargeDocument ? "yes" : "no"
+                let massive = info.isMassiveDocument ? "yes" : "no"
+                Text("Large: \(large)")
+                Text("Massive: \(massive)")
+                Text("Render queue: \(info.renderQueueOps)")
+                Text("Tracked ops: \(info.renderTrackedOps)")
+            }
+            .font(.system(size: 10, weight: .medium, design: .monospaced))
+            .padding(6)
+            .background(.black.opacity(0.65))
+            .foregroundColor(.white)
+            .cornerRadius(6)
+            .padding()
         }
-        .font(.system(size: 10, weight: .medium, design: .monospaced))
-        .padding(6)
-        .background(.black.opacity(0.65))
-        .foregroundColor(.white)
-        .cornerRadius(6)
-        .padding()
-    }
-#endif
+    #endif
 }
 
 struct StudioPDFViewRepresented: NSViewRepresentable {
@@ -829,10 +833,9 @@ struct StudioPDFViewRepresented: NSViewRepresentable {
     var controller: StudioController
     var didCreate: (PDFView) -> Void
 
-    func makeCoordinator() -> () {
-    }
+    func makeCoordinator() {}
 
-    func makeNSView(context: Context) -> PDFView {
+    func makeNSView(context _: Context) -> PDFView {
         let view = StudioPDFView()
         view.controller = controller
         view.wantsLayer = true
@@ -840,12 +843,12 @@ struct StudioPDFViewRepresented: NSViewRepresentable {
         view.autoScales = true
         view.displayMode = .singlePage
         view.displaysPageBreaks = false
-        
+
         didCreate(view)
         return view
     }
 
-    func updateNSView(_ nsView: PDFView, context: Context) {
+    func updateNSView(_ nsView: PDFView, context _: Context) {
         if nsView.document !== document {
             nsView.document = document
             nsView.autoScales = true
@@ -859,14 +862,14 @@ class StudioPDFView: PDFView {
     private var isDraggingAnnotation: Bool = false
 
     override func mouseDown(with event: NSEvent) {
-        if let controller = controller, controller.handleMouseDown(in: self, with: event) {
+        if let controller, controller.handleMouseDown(in: self, with: event) {
             isDraggingAnnotation = true
         } else {
             isDraggingAnnotation = false
             super.mouseDown(with: event)
         }
     }
-    
+
     override func mouseDragged(with event: NSEvent) {
         if isDraggingAnnotation {
             controller?.handleMouseDragged(in: self, with: event)
@@ -874,7 +877,7 @@ class StudioPDFView: PDFView {
             super.mouseDragged(with: event)
         }
     }
-    
+
     override func mouseUp(with event: NSEvent) {
         if isDraggingAnnotation {
             controller?.handleMouseUp(in: self, with: event)
@@ -886,15 +889,15 @@ class StudioPDFView: PDFView {
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
-        if let trackingArea = trackingArea {
+        if let trackingArea {
             removeTrackingArea(trackingArea)
         }
-        
+
         let options: NSTrackingArea.Options = [.mouseMoved, .activeInKeyWindow, .activeAlways]
         trackingArea = NSTrackingArea(rect: bounds, options: options, owner: self, userInfo: nil)
         addTrackingArea(trackingArea!)
     }
-    
+
     override func mouseMoved(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         if let cursor = controller?.cursor(for: point, in: self) {
@@ -903,7 +906,7 @@ class StudioPDFView: PDFView {
             super.mouseMoved(with: event)
         }
     }
-    
+
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 53 { // Esc
             controller?.deselectAnnotation()
@@ -913,24 +916,23 @@ class StudioPDFView: PDFView {
             super.keyDown(with: event)
         }
     }
-    
+
     override func responds(to aSelector: Selector!) -> Bool {
         if aSelector == #selector(delete(_:)) {
             return controller?.selectedAnnotation != nil
         }
         return super.responds(to: aSelector)
     }
-    
-    @IBAction func delete(_ sender: Any?) {
+
+    @IBAction func delete(_: Any?) {
         controller?.deleteSelectedAnnotation()
     }
-    
 
-    @objc private func rotateLeft(_ sender: Any?) {
+    @objc private func rotateLeft(_: Any?) {
         controller?.rotateCurrentPageLeft()
     }
-    
-    @objc private func rotateRight(_ sender: Any?) {
+
+    @objc private func rotateRight(_: Any?) {
         controller?.rotateCurrentPageRight()
     }
 }
@@ -983,13 +985,13 @@ private struct WatermarkSheet: View {
             ColorPicker("Color", selection: $options.color)
 
             HStack {
-                Stepper("Font size \(Int(options.fontSize)) pt", value: $options.fontSize, in: 16...120, step: 4)
-                Stepper("Opacity \(Int(options.opacity * 100))%", value: $options.opacity, in: 0.1...1, step: 0.05)
+                Stepper("Font size \(Int(options.fontSize)) pt", value: $options.fontSize, in: 16 ... 120, step: 4)
+                Stepper("Opacity \(Int(options.opacity * 100))%", value: $options.opacity, in: 0.1 ... 1, step: 0.05)
             }
 
             HStack {
-                Stepper("Rotation \(Int(options.rotation))°", value: $options.rotation, in: -90...90, step: 5)
-                Stepper("Margin \(Int(options.margin)) pt", value: $options.margin, in: 0...144, step: 8)
+                Stepper("Rotation \(Int(options.rotation))°", value: $options.rotation, in: -90 ... 90, step: 5)
+                Stepper("Margin \(Int(options.margin)) pt", value: $options.margin, in: 0 ... 144, step: 8)
             }
 
             Picker("Position", selection: $options.position) {
@@ -1024,8 +1026,8 @@ private struct HeaderFooterSheet: View {
             TextField("Footer", text: $options.footer)
 
             HStack {
-                Stepper("Font size \(Int(options.fontSize)) pt", value: $options.fontSize, in: 9...24, step: 1)
-                Stepper("Margin \(Int(options.margin)) pt", value: $options.margin, in: 12...96, step: 6)
+                Stepper("Font size \(Int(options.fontSize)) pt", value: $options.fontSize, in: 9 ... 24, step: 1)
+                Stepper("Margin \(Int(options.margin)) pt", value: $options.margin, in: 12 ... 96, step: 6)
             }
 
             HStack {
@@ -1053,8 +1055,8 @@ private struct BatesSheet: View {
             TextField("Prefix", text: $options.prefix)
 
             HStack {
-                Stepper("Start \(options.start)", value: $options.start, in: 0...999999)
-                Stepper("Digits \(options.digits)", value: $options.digits, in: 3...8)
+                Stepper("Start \(options.start)", value: $options.start, in: 0 ... 999_999)
+                Stepper("Digits \(options.digits)", value: $options.digits, in: 3 ... 8)
             }
 
             Picker("Placement", selection: $options.placement) {
@@ -1064,8 +1066,8 @@ private struct BatesSheet: View {
             }
 
             HStack {
-                Stepper("Font size \(Int(options.fontSize)) pt", value: $options.fontSize, in: 8...18)
-                Stepper("Margin \(Int(options.margin)) pt", value: $options.margin, in: 12...96, step: 6)
+                Stepper("Font size \(Int(options.fontSize)) pt", value: $options.fontSize, in: 8 ... 18)
+                Stepper("Margin \(Int(options.margin)) pt", value: $options.margin, in: 12 ... 96, step: 6)
             }
 
             HStack {
@@ -1090,7 +1092,7 @@ private struct CropSheet: View {
                 .font(.title3)
                 .bold()
 
-            Stepper("Inset \(Int(options.inset)) pt", value: $options.inset, in: 4...120, step: 4)
+            Stepper("Inset \(Int(options.inset)) pt", value: $options.inset, in: 4 ... 120, step: 4)
 
             Picker("Target Pages", selection: $options.target) {
                 ForEach(CropTarget.allCases) { target in
@@ -1115,8 +1117,13 @@ private struct CropSheet: View {
 private struct StudioLayout {
     let width: CGFloat
 
-    var showsLeftColumn: Bool { true }
-    var showsRightColumn: Bool { width > 1200 }
+    var showsLeftColumn: Bool {
+        true
+    }
+
+    var showsRightColumn: Bool {
+        width > 1200
+    }
 
     var leftColumnWidth: CGFloat {
         max(220, min(260, width * 0.22))
@@ -1132,9 +1139,9 @@ private struct StudioLayout {
 struct OutlineTreeView: View {
     let rows: [OutlineRow]
     weak var pdfView: PDFView?
-    
+
     @State private var expandedIds: Set<ObjectIdentifier> = []
-    
+
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 2) {
@@ -1150,7 +1157,7 @@ struct OutlineTreeView: View {
             .padding(.vertical, 4)
         }
     }
-    
+
     private var topLevelItems: [OutlineRow] {
         rows.filter { $0.depth == 0 }
     }
@@ -1161,17 +1168,17 @@ private struct OutlineNodeView: View {
     let allRows: [OutlineRow]
     @Binding var expandedIds: Set<ObjectIdentifier>
     weak var pdfView: PDFView?
-    
+
     private var isExpanded: Bool {
         expandedIds.contains(item.id)
     }
-    
+
     private var children: [OutlineRow] {
         // Find children: items that follow this one with depth = item.depth + 1
         // until we hit another item at same depth or lower
         guard let startIndex = allRows.firstIndex(where: { $0.id == item.id }) else { return [] }
         var result: [OutlineRow] = []
-        for i in (startIndex + 1)..<allRows.count {
+        for i in (startIndex + 1) ..< allRows.count {
             let row = allRows[i]
             if row.depth <= item.depth { break }
             if row.depth == item.depth + 1 {
@@ -1180,11 +1187,11 @@ private struct OutlineNodeView: View {
         }
         return result
     }
-    
+
     private var hasChildren: Bool {
         !children.isEmpty
     }
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
@@ -1208,16 +1215,16 @@ private struct OutlineNodeView: View {
                 } else {
                     Spacer().frame(width: 14)
                 }
-                
+
                 // Label
                 Text(item.outline.label ?? "Untitled")
                     .font(.caption)
                     .fontWeight(item.depth == 0 ? .semibold : .regular)
                     .foregroundColor(AppTheme.Colors.primaryText)
                     .lineLimit(2)
-                
+
                 Spacer()
-                
+
                 // Navigate button
                 Button {
                     if let dest = item.outline.destination {
@@ -1242,7 +1249,7 @@ private struct OutlineNodeView: View {
                     pdfView?.go(to: dest)
                 }
             }
-            
+
             // Children (when expanded)
             if isExpanded {
                 VStack(alignment: .leading, spacing: 0) {

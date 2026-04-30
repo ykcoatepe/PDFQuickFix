@@ -1,5 +1,5 @@
-import XCTest
 @testable import PDFQuickFix
+import XCTest
 
 @MainActor
 final class AIInteractionStoreTests: XCTestCase {
@@ -33,7 +33,7 @@ final class AIInteractionStoreTests: XCTestCase {
 
     func testMaxEntriesIsCapped() {
         let store = AIInteractionStore(persistToDisk: false)
-        for _ in 0..<250 {
+        for _ in 0 ..< 250 {
             let entry = AIInteractionEntry(
                 id: UUID(),
                 timestamp: Date(),

@@ -1,13 +1,13 @@
-import SwiftUI
 import AppKit
+import SwiftUI
 
 enum QuickFixOptionsError: LocalizedError {
     case invalidCustomRegex(String)
 
     var errorDescription: String? {
         switch self {
-        case .invalidCustomRegex(let pattern):
-            return "Invalid custom regex: \(pattern)"
+        case let .invalidCustomRegex(pattern):
+            "Invalid custom regex: \(pattern)"
         }
     }
 }
@@ -35,11 +35,13 @@ final class QuickFixOptionsModel: ObservableObject {
             defaults.set(localOCRModel, forKey: Self.localOCRModelKey)
         }
     }
+
     @Published var cloudOcrEnabled: Bool = false {
         didSet {
             defaults.set(cloudOcrEnabled, forKey: Self.cloudOcrEnabledKey)
         }
     }
+
     @Published var cloudOcrApiKey: String = "" {
         didSet {
             KeychainStore.set(service: Self.keychainService,
@@ -51,10 +53,10 @@ final class QuickFixOptionsModel: ObservableObject {
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         let storedModel = defaults.string(forKey: Self.localOCRModelKey) ?? ""
-        self.localOCRModel = storedModel.isEmpty ? "qwen2.5vl:7b" : storedModel
-        self.cloudOcrEnabled = defaults.bool(forKey: Self.cloudOcrEnabledKey)
-        self.cloudOcrApiKey = KeychainStore.get(service: Self.keychainService,
-                                                account: Self.cloudOcrApiKeyAccount) ?? ""
+        localOCRModel = storedModel.isEmpty ? "qwen2.5vl:7b" : storedModel
+        cloudOcrEnabled = defaults.bool(forKey: Self.cloudOcrEnabledKey)
+        cloudOcrApiKey = KeychainStore.get(service: Self.keychainService,
+                                           account: Self.cloudOcrApiKeyAccount) ?? ""
     }
 
     func makeParameters(manualRedactions: [Int: [CGRect]] = [:]) throws -> QuickFixExecutionParameters {
@@ -90,7 +92,8 @@ final class QuickFixOptionsModel: ObservableObject {
                      isTemporaryOutput: Bool? = nil,
                      manualRedactions: [Int: [CGRect]] = [:],
                      shouldCancel: QuickFixCancellationChecker? = nil,
-                     progress: ((Int, Int) -> Void)? = nil) throws -> URL {
+                     progress: ((Int, Int) -> Void)? = nil) throws -> URL
+    {
         try runQuickFixResult(inputURL: inputURL,
                               outputURL: outputURL,
                               isTemporaryOutput: isTemporaryOutput,
@@ -104,7 +107,8 @@ final class QuickFixOptionsModel: ObservableObject {
                            isTemporaryOutput: Bool? = nil,
                            manualRedactions: [Int: [CGRect]] = [:],
                            shouldCancel: QuickFixCancellationChecker? = nil,
-                           progress: ((Int, Int) -> Void)? = nil) throws -> QuickFixResult {
+                           progress: ((Int, Int) -> Void)? = nil) throws -> QuickFixResult
+    {
         let parameters = try makeParameters(manualRedactions: manualRedactions)
         let engine = PDFQuickFixEngine(options: parameters.options, languages: parameters.languages)
         return try engine.processResult(
@@ -268,11 +272,11 @@ struct QuickFixOptionsForm: View {
                     .frame(width: 160)
             }
             HStack {
-                Stepper("DPI: \(Int(model.dpi))", value: $model.dpi, in: 150...600, step: 50)
+                Stepper("DPI: \(Int(model.dpi))", value: $model.dpi, in: 150 ... 600, step: 50)
                 Stepper(
                     "Redaction padding: \(String(format: "%.1f", model.padding)) px",
                     value: $model.padding,
-                    in: 0...8,
+                    in: 0 ... 8,
                     step: 0.5
                 )
             }
@@ -322,7 +326,8 @@ struct QuickFixOptionsForm: View {
             await MainActor.run {
                 localOCRAvailable = !localOCRRegistry.availableModels.isEmpty
                 if model.localOCRModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                   let recommended = localOCRRegistry.recommendedModelName {
+                   let recommended = localOCRRegistry.recommendedModelName
+                {
                     model.localOCRModel = recommended
                 }
                 isCheckingLocalOCR = false
@@ -366,11 +371,10 @@ struct QuickFixOptionsForm: View {
                 return
             }
 
-            let provider: LocalOCRProviding
-            if selectedModel.lowercased().contains("deepseek-ocr") {
-                provider = OllamaDeepSeekOCRProvider(modelName: selectedModel)
+            let provider: LocalOCRProviding = if selectedModel.lowercased().contains("deepseek-ocr") {
+                OllamaDeepSeekOCRProvider(modelName: selectedModel)
             } else {
-                provider = OllamaVisionOCRProvider(modelName: selectedModel)
+                OllamaVisionOCRProvider(modelName: selectedModel)
             }
 
             do {
@@ -417,23 +421,24 @@ struct QuickFixOptionsForm: View {
         let attrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 64, weight: .bold),
             .foregroundColor: NSColor.black,
-            .paragraphStyle: paragraph
+            .paragraphStyle: paragraph,
         ]
         let textRect = NSRect(x: 0, y: (size.height - 80) / 2, width: size.width, height: 80)
         "OCR TEST 1234".draw(in: textRect, withAttributes: attrs)
 
         image.unlockFocus()
         guard let data = image.tiffRepresentation,
-              let rep = NSBitmapImageRep(data: data) else {
+              let rep = NSBitmapImageRep(data: data)
+        else {
             return nil
         }
         return rep.cgImage
     }
 
-    nonisolated private static func extractText(from runs: [RecognizedRun]) -> String {
+    private nonisolated static func extractText(from runs: [RecognizedRun]) -> String {
         runs.compactMap { run -> String? in
             switch run.kind {
-            case .keep(let text), .replace(let text):
+            case let .keep(text), let .replace(text):
                 return text
             case .skip:
                 return nil

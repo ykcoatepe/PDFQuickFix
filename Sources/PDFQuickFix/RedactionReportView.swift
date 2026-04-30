@@ -38,7 +38,6 @@ struct RedactionReportView: View {
         return "\(shown), … (+\(pages.count - maxShown) more)"
     }
 
-    @ViewBuilder
     private func metricRow(label: String, value: String) -> some View {
         HStack {
             Text(label)

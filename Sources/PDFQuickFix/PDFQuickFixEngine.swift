@@ -1,11 +1,10 @@
-import Foundation
 import AppKit
-import PDFKit
-import Vision
 import CoreGraphics
 import CoreText
-
+import Foundation
+import PDFKit
 import PDFQuickFixKit
+import Vision
 
 typealias QuickFixCancellationChecker = () -> Bool
 
@@ -15,7 +14,7 @@ enum PDFQuickFixEngineError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .cancelled:
-            return "Operation cancelled."
+            "Operation cancelled."
         }
     }
 }
@@ -28,15 +27,16 @@ final class PDFQuickFixEngine {
     private let cloudOCRProviderOverride: CloudOCRProviding?
     private let localOCRTimeout: TimeInterval = 12
     private let cloudOCRTimeout: TimeInterval = 20
-    
+
     init(options: QuickFixOptions = .init(),
          languages: [String] = ["tr-TR", "en-US"],
          localOCRProvider: LocalOCRProviding? = nil,
-         cloudOCRProvider: CloudOCRProviding? = nil) {
+         cloudOCRProvider: CloudOCRProviding? = nil)
+    {
         self.options = options
         self.languages = languages
-        self.localOCRProviderOverride = localOCRProvider
-        self.cloudOCRProviderOverride = cloudOCRProvider
+        localOCRProviderOverride = localOCRProvider
+        cloudOCRProviderOverride = cloudOCRProvider
     }
 
     func processResult(inputURL: URL,
@@ -45,9 +45,10 @@ final class PDFQuickFixEngine {
                        redactionPatterns: [RedactionPattern] = DefaultPatterns.defaults(),
                        customRegexes: [NSRegularExpression] = [],
                        findReplace: [FindReplaceRule] = [],
-                       manualRedactions: [Int:[CGRect]] = [:],
+                       manualRedactions: [Int: [CGRect]] = [:],
                        shouldCancel: QuickFixCancellationChecker? = nil,
-                       progress: ((Int, Int) -> Void)? = nil) throws -> QuickFixResult {
+                       progress: ((Int, Int) -> Void)? = nil) throws -> QuickFixResult
+    {
         try checkCancellation(shouldCancel)
 
         let doc: PDFDocument
@@ -87,7 +88,7 @@ final class PDFQuickFixEngine {
             ? (cloudOCRProviderOverride ?? GoogleVisionOCRProvider(apiKey: trimmedCloudKey, languages: languages))
             : nil
 
-        for i in 0..<pageCount {
+        for i in 0 ..< pageCount {
             try checkCancellation(shouldCancel)
             guard let page = doc.page(at: i) else { continue }
             let result = try processPage(page: page,
@@ -120,7 +121,7 @@ final class PDFQuickFixEngine {
                 emptyOCRPages += 1
                 emptyOCRPageIndices.append(i)
             }
-            if result.localOCREligible && !result.localOCRSucceeded {
+            if result.localOCREligible, !result.localOCRSucceeded {
                 localOCRFallbackCount += 1
             }
 
@@ -158,9 +159,10 @@ final class PDFQuickFixEngine {
                  redactionPatterns: [RedactionPattern] = DefaultPatterns.defaults(),
                  customRegexes: [NSRegularExpression] = [],
                  findReplace: [FindReplaceRule] = [],
-                 manualRedactions: [Int:[CGRect]] = [:],
+                 manualRedactions: [Int: [CGRect]] = [:],
                  shouldCancel: QuickFixCancellationChecker? = nil,
-                 progress: ((Int, Int) -> Void)? = nil) throws -> URL {
+                 progress: ((Int, Int) -> Void)? = nil) throws -> URL
+    {
         try processResult(inputURL: inputURL,
                           outputURL: outputURL,
                           isTemporaryOutput: isTemporaryOutput,
@@ -171,29 +173,31 @@ final class PDFQuickFixEngine {
                           shouldCancel: shouldCancel,
                           progress: progress).outputURL
     }
-    
+
     private func processPage(page: PDFPage,
-                             pageIndex: Int,
+                             pageIndex _: Int,
                              manualRedactions: [CGRect],
                              redactionPatterns: [RedactionPattern],
                              customRegexes: [NSRegularExpression],
                              findReplace: [FindReplaceRule],
                              localOCRProvider: LocalOCRProviding?,
                              cloudOCRProvider: CloudOCRProviding?,
-                             visionProvider: VisionOCRProvider) throws -> PageProcessResult {
+                             visionProvider: VisionOCRProvider) throws -> PageProcessResult
+    {
         guard let cgPage = page.pageRef else {
             throw NSError(domain: "PDFQuickFix", code: -2, userInfo: [NSLocalizedDescriptionKey: "Missing CGPDFPage"])
         }
         let mediaBox = cgPage.getBoxRect(.mediaBox)
         let widthPx = Int(pointsToPixels(mediaBox.width, dpi: options.dpi))
         let heightPx = Int(pointsToPixels(mediaBox.height, dpi: options.dpi))
-        
+
         // Render original page into bitmap
         let colorSpace = CGColorSpaceCreateDeviceRGB()
         guard let ctx = CGContext(data: nil, width: widthPx, height: heightPx,
                                   bitsPerComponent: 8, bytesPerRow: 0,
                                   space: colorSpace,
-                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else {
             throw NSError(domain: "PDFQuickFix", code: -3, userInfo: [NSLocalizedDescriptionKey: "Unable to create bitmap context"])
         }
         ctx.interpolationQuality = .high
@@ -204,11 +208,11 @@ final class PDFQuickFixEngine {
         ctx.scaleBy(x: CGFloat(widthPx) / mediaBox.width, y: CGFloat(heightPx) / mediaBox.height)
         ctx.drawPDFPage(cgPage)
         ctx.restoreGState()
-        
+
         guard let baseImage = ctx.makeImage() else {
             throw NSError(domain: "PDFQuickFix", code: -4, userInfo: [NSLocalizedDescriptionKey: "Failed to rasterize page"])
         }
-        
+
         let needsVisionForRedaction = !redactionPatterns.isEmpty || !customRegexes.isEmpty || !findReplace.isEmpty
         let hasManualRedactions = !manualRedactions.isEmpty
         let allowLocalOverlay = options.doOCR
@@ -223,10 +227,10 @@ final class PDFQuickFixEngine {
                 textObservations = obs
             }
         }
-        
+
         // Build redaction rectangles and replacement runs
-        let allRegexes = redactionPatterns.map { $0.regex } + customRegexes
-        
+        let allRegexes = redactionPatterns.map(\.regex) + customRegexes
+
         let scaleX = CGFloat(widthPx) / mediaBox.width
         let scaleY = CGFloat(heightPx) / mediaBox.height
         var redactionRectsPx: [CGRect] = []
@@ -234,7 +238,7 @@ final class PDFQuickFixEngine {
         var visionTextRuns: [RecognizedRun] = []
         var suppressedOCRRunsByRedactionMatches = 0
         var didApplyVision = false
-        
+
         for rect in manualRedactions {
             let converted = CGRect(
                 x: rect.origin.x * scaleX,
@@ -244,7 +248,7 @@ final class PDFQuickFixEngine {
             )
             redactionRectsPx.append(converted)
         }
-        
+
         let applyVisionObservations: ([VNRecognizedTextObservation]) -> Void = { [self] observations in
             guard !didApplyVision else { return }
             didApplyVision = true
@@ -278,11 +282,11 @@ final class PDFQuickFixEngine {
                 // Build disjoint segments
                 var cursor = 0
                 var special: [(start: Int, end: Int, kind: RecognizedRun.Kind)] = []
-                special += redactionRanges.map { ( $0.location, $0.location+$0.length, .skip ) }
+                special += redactionRanges.map { ($0.location, $0.location + $0.length, .skip) }
                 special += replacements.map {
-                    ( $0.range.location,
-                      $0.range.location+$0.range.length,
-                      .replace(self.ruleReplacement(text: self.substring(forRange: $0.range, in: text), repl: $0.replacement)) )
+                    ($0.range.location,
+                     $0.range.location + $0.range.length,
+                     .replace(self.ruleReplacement(text: self.substring(forRange: $0.range, in: text), repl: $0.replacement)))
                 }
                 special.sort { $0.start < $1.start }
 
@@ -295,7 +299,7 @@ final class PDFQuickFixEngine {
                         let kind = special[idx].kind
                         if s > cursor {
                             let substrRange = NSRange(location: cursor, length: s - cursor)
-                            let substr = self.substring(forRange: substrRange, in: text)
+                            let substr = substring(forRange: substrRange, in: text)
                             segments.append((cursor, s, .keep(substr)))
                             cursor = s
                         } else {
@@ -305,7 +309,7 @@ final class PDFQuickFixEngine {
                         }
                     } else {
                         let substrRange = NSRange(location: cursor, length: textLength - cursor)
-                        let substr = self.substring(forRange: substrRange, in: text)
+                        let substr = substring(forRange: substrRange, in: text)
                         segments.append((cursor, textLength, .keep(substr)))
                         cursor = textLength
                     }
@@ -319,15 +323,15 @@ final class PDFQuickFixEngine {
                                                            imageSize: CGSize(width: baseImage.width, height: baseImage.height))
                         switch seg.kind {
                         case .skip:
-                            let padded = rectPx.insetBy(dx: -self.options.redactionPadding, dy: -self.options.redactionPadding)
+                            let padded = rectPx.insetBy(dx: -options.redactionPadding, dy: -options.redactionPadding)
                             redactionRectsPx.append(padded)
-                            if self.options.doOCR {
+                            if options.doOCR {
                                 suppressedOCRRunsByRedactionMatches += 1
                             }
-                        case .replace(let repl):
+                        case let .replace(repl):
                             replacementRunsPx.append((rectPx, repl))
                             visionTextRuns.append(RecognizedRun(kind: .replace(repl), rectInPixels: rectPx))
-                        case .keep(let s):
+                        case let .keep(s):
                             visionTextRuns.append(RecognizedRun(kind: .keep(s), rectInPixels: rectPx))
                         }
                     }
@@ -338,22 +342,25 @@ final class PDFQuickFixEngine {
         if !textObservations.isEmpty {
             applyVisionObservations(textObservations)
         }
-        
+
         // Draw redactions and replacements onto image
         guard let editCtx = CGContext(data: nil, width: widthPx, height: heightPx,
                                       bitsPerComponent: 8, bytesPerRow: 0,
                                       space: colorSpace,
-                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else {
             throw NSError(domain: "PDFQuickFix", code: -5, userInfo: [NSLocalizedDescriptionKey: "Unable to create edit context"])
         }
         editCtx.interpolationQuality = .high
         // original
         editCtx.draw(baseImage, in: CGRect(x: 0, y: 0, width: widthPx, height: heightPx))
-        
+
         // redact
         editCtx.setFillColor(NSColor.black.cgColor)
-        for r in redactionRectsPx { editCtx.fill(r) }
-        
+        for r in redactionRectsPx {
+            editCtx.fill(r)
+        }
+
         // replace (white out then draw text)
         for run in replacementRunsPx {
             editCtx.setFillColor(NSColor.white.cgColor)
@@ -363,7 +370,7 @@ final class PDFQuickFixEngine {
             let font = NSFont.systemFont(ofSize: fontSizePx)
             let attrs: [NSAttributedString.Key: Any] = [
                 .font: font,
-                .foregroundColor: NSColor.black
+                .foregroundColor: NSColor.black,
             ]
             let attributed = NSAttributedString(string: run.replacement, attributes: attrs)
             // Flip context for text drawing
@@ -376,11 +383,11 @@ final class PDFQuickFixEngine {
             CTFrameDraw(frame, editCtx)
             editCtx.restoreGState()
         }
-        
+
         guard let finalImage = editCtx.makeImage() else {
             throw NSError(domain: "PDFQuickFix", code: -6, userInfo: [NSLocalizedDescriptionKey: "Failed to finalize page image"])
         }
-        
+
         // Prepare OCR text runs in POINTS (for invisible overlay)
         let localEligible = options.doOCR && allowLocalOverlay && localOCRProvider != nil
         var localSucceeded = false
@@ -389,13 +396,15 @@ final class PDFQuickFixEngine {
 
         if options.doOCR {
             if localEligible, let provider = localOCRProvider,
-               let localRuns = runLocalOCROverlay(provider: provider, image: baseImage) {
+               let localRuns = runLocalOCROverlay(provider: provider, image: baseImage)
+            {
                 overlayRuns = localRuns
                 localSucceeded = true
                 ocrSource = .localOCR
             } else {
                 if allowLocalOverlay, let cloudProvider = cloudOCRProvider,
-                   let cloudRuns = runCloudOCROverlay(provider: cloudProvider, image: baseImage) {
+                   let cloudRuns = runCloudOCROverlay(provider: cloudProvider, image: baseImage)
+                {
                     overlayRuns = cloudRuns
                     ocrSource = .cloudOCR
                 } else {
@@ -431,7 +440,7 @@ final class PDFQuickFixEngine {
             }
             suppressedOCRRunsByRedactionMatches += suppressedByOverlap
         }
-        
+
         return PageProcessResult(pageSizePoints: mediaBox.size,
                                  cgImage: finalImage,
                                  textRunsInPoints: runsInPoints,
@@ -442,9 +451,9 @@ final class PDFQuickFixEngine {
                                  localOCREligible: localEligible,
                                  localOCRSucceeded: localSucceeded)
     }
-    
-    private func ruleReplacement(text: String, repl: String) -> String {
-        return repl // basic: ignore capture groups; could extend.
+
+    private func ruleReplacement(text _: String, repl: String) -> String {
+        repl // basic: ignore capture groups; could extend.
     }
 
     private func substring(forRange range: NSRange, in text: String) -> String {
@@ -510,7 +519,7 @@ final class PDFQuickFixEngine {
         }
         return OllamaVisionOCRProvider(modelName: modelName)
     }
-    
+
     private func writePDF(pages: [PageProcessResult], to url: URL) throws {
         guard let firstPage = pages.first else {
             throw NSError(domain: "PDFQuickFix", code: -9, userInfo: [NSLocalizedDescriptionKey: "No pages to write"])
@@ -525,13 +534,13 @@ final class PDFQuickFixEngine {
         guard let pdfCtx = CGContext(consumer: consumer, mediaBox: &mediaBox, nil) else {
             throw NSError(domain: "PDFQuickFix", code: -8, userInfo: [NSLocalizedDescriptionKey: "Cannot create PDF context"])
         }
-        
+
         for page in pages {
             let box = CGRect(origin: .zero, size: page.pageSizePoints)
             pdfCtx.beginPDFPage([kCGPDFContextMediaBox as String: box] as CFDictionary)
             // draw raster page
             pdfCtx.draw(page.cgImage, in: box)
-            
+
             // Draw invisible text overlay runs
             for run in page.textRunsInPoints {
                 let rect = CGRect(x: run.rectInPixels.origin.x,
@@ -540,18 +549,18 @@ final class PDFQuickFixEngine {
                                   height: run.rectInPixels.size.height)
                 let text: String
                 switch run.kind {
-                case .keep(let s): text = s
-                case .replace(let s): text = s
+                case let .keep(s): text = s
+                case let .replace(s): text = s
                 case .skip: continue
                 }
                 if text.isEmpty { continue }
-                
+
                 let fontSize = max(8, rect.height * 0.85)
                 let font = CTFontCreateWithName("Helvetica" as CFString, fontSize, nil)
                 let attr = [kCTFontAttributeName as NSAttributedString.Key: font]
                 let attrStr = NSAttributedString(string: text, attributes: attr)
                 let line = CTLineCreateWithAttributedString(attrStr as CFAttributedString)
-                
+
                 pdfCtx.saveGState()
                 pdfCtx.setTextDrawingMode(.invisible) // searchable but not visible
                 pdfCtx.textMatrix = .identity
@@ -559,7 +568,7 @@ final class PDFQuickFixEngine {
                 CTLineDraw(line, pdfCtx)
                 pdfCtx.restoreGState()
             }
-            
+
             pdfCtx.endPDFPage()
         }
         pdfCtx.closePDF()

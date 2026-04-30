@@ -1,7 +1,7 @@
-import SwiftUI
 import AppKit
-import UniformTypeIdentifiers
 import PDFKit
+import SwiftUI
+import UniformTypeIdentifiers
 
 struct QuickFixTab: View {
     @EnvironmentObject private var aiSettings: LocalAISettings
@@ -361,14 +361,14 @@ struct QuickFixTab: View {
                 if prepared.wasConverted {
                     await MainActor.run {
                         if prepared.didPreprocess {
-                            self.log += "✨ Auto-cropped & deskewed image.\n"
+                            log += "✨ Auto-cropped & deskewed image.\n"
                         }
-                        self.log += "📄 Converted image to PDF for OCR…\n"
+                        log += "📄 Converted image to PDF for OCR…\n"
                     }
                 }
                 if let document = PDFDocument(url: prepared.sourceURL) {
                     await MainActor.run {
-                        self.log += "📄 Pages: \(document.pageCount)\n"
+                        log += "📄 Pages: \(document.pageCount)\n"
                     }
                 }
                 let result = try model.runQuickFixResult(
@@ -378,22 +378,22 @@ struct QuickFixTab: View {
                     shouldCancel: { Task.isCancelled },
                     progress: { current, total in
                         DispatchQueue.main.async {
-                            self.log += "Progress: \(current)/\(total)\n"
+                            log += "Progress: \(current)/\(total)\n"
                         }
                     }
                 )
                 await MainActor.run {
-                    self.quickFixResult = result
+                    quickFixResult = result
                     QuickFixResultStore.shared.set(result, sourceURL: inputURL)
-                    self.printCoordinator.outputURL = result.displayOutputURL
-                    self.log += "✅ Done → temporary result at \(result.outputURL.path)\n"
-                    self.isProcessing = false
+                    printCoordinator.outputURL = result.displayOutputURL
+                    log += "✅ Done → temporary result at \(result.outputURL.path)\n"
+                    isProcessing = false
                 }
             } catch {
                 try? FileManager.default.removeItem(at: temporaryOutputURL)
                 await MainActor.run {
-                    self.log += "❌ Error: \(error.localizedDescription)\n"
-                    self.isProcessing = false
+                    log += "❌ Error: \(error.localizedDescription)\n"
+                    isProcessing = false
                 }
             }
         }
@@ -513,7 +513,8 @@ struct QuickFixTab: View {
     private static func inferAIOutputFormat(from text: String) -> AIOutputFormat {
         guard let data = text.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data),
-              JSONSerialization.isValidJSONObject(object) else {
+              JSONSerialization.isValidJSONObject(object)
+        else {
             return .txt
         }
         return .json
@@ -636,14 +637,15 @@ struct QuickFixTab: View {
         }
     }
 
-    private func availableReportsSummary(for result: QuickFixResult) -> String {
+    private func availableReportsSummary(for _: QuickFixResult) -> String {
         let reports = ["Redaction", "OCR"]
         return reports.joined(separator: ", ")
     }
 
     private nonisolated static func prepareQuickFixInput(for url: URL,
-                                                        preprocessImages: Bool,
-                                                        targetDPI: CGFloat) throws -> (sourceURL: URL, outputURL: URL?, cleanupURL: URL?, wasConverted: Bool, didPreprocess: Bool) {
+                                                         preprocessImages: Bool,
+                                                         targetDPI: CGFloat) throws -> (sourceURL: URL, outputURL: URL?, cleanupURL: URL?, wasConverted: Bool, didPreprocess: Bool)
+    {
         guard let kind = documentInputKind(for: url) else {
             return (url, nil, nil, false, false)
         }
@@ -721,7 +723,8 @@ struct QuickFixTab: View {
 
     static func copyResultPreservingExistingFile(from sourceURL: URL,
                                                  to destinationURL: URL,
-                                                 fileManager: FileManager = .default) throws {
+                                                 fileManager: FileManager = .default) throws
+    {
         let tempCopyURL = temporaryFileURL(prefix: "quickfix-save-", extension: destinationURL.pathExtension.isEmpty ? "pdf" : destinationURL.pathExtension)
         do {
             try fileManager.copyItem(at: sourceURL, to: tempCopyURL)
@@ -743,7 +746,6 @@ struct QuickFixTab: View {
             .appendingPathComponent("\(prefix)\(UUID().uuidString)")
             .appendingPathExtension(ext)
     }
-
 }
 
 private enum AIOutputFormat {
@@ -753,9 +755,9 @@ private enum AIOutputFormat {
     var fileExtension: String {
         switch self {
         case .txt:
-            return "txt"
+            "txt"
         case .json:
-            return "json"
+            "json"
         }
     }
 }
@@ -835,13 +837,13 @@ private struct QuickFixPreviewCard: View {
         .cornerRadius(AppTheme.Metrics.cardCornerRadius)
     }
 
-    @ViewBuilder
     private func previewColumn(title: String,
                                fileName: String,
                                systemImage: String,
                                actionTitle: String,
                                action: @escaping () -> Void,
-                               enabled: Bool) -> some View {
+                               enabled: Bool) -> some View
+    {
         VStack(alignment: .leading, spacing: 8) {
             Label(title, systemImage: systemImage)
                 .font(.subheadline.weight(.semibold))

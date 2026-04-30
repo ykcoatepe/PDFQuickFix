@@ -1,7 +1,7 @@
-import XCTest
 import Combine
 import PDFKit
 @testable import PDFQuickFix
+import XCTest
 
 @MainActor
 final class ReaderCopilotStateTests: XCTestCase {
@@ -37,7 +37,8 @@ final class ReaderCopilotStateTests: XCTestCase {
               let selection = document.selection(from: page,
                                                  atCharacterIndex: 0,
                                                  to: page,
-                                                 atCharacterIndex: pageText.count - 1) else {
+                                                 atCharacterIndex: pageText.count - 1)
+        else {
             XCTFail("Unable to create selection from text-backed PDF")
             return
         }
@@ -67,14 +68,15 @@ final class ReaderCopilotStateTests: XCTestCase {
               let selection = document.selection(from: page,
                                                  atCharacterIndex: 0,
                                                  to: page,
-                                                 atCharacterIndex: pageText.count - 1) else {
+                                                 atCharacterIndex: pageText.count - 1)
+        else {
             XCTFail("Unable to create selection from text-backed PDF")
             return
         }
 
         let stateChanged = expectation(description: "selection state published")
         controller.$currentSelectionTextState
-            .compactMap { $0 }
+            .compactMap(\.self)
             .first()
             .sink { _ in stateChanged.fulfill() }
             .store(in: &cancellables)
@@ -90,7 +92,7 @@ final class ReaderCopilotStateTests: XCTestCase {
         let expectedResponse = DocumentCopilotResponse(
             answer: "Summary ready.",
             citations: [
-                DocumentCopilotCitation(pageIndex: 0, pageLabel: "Page 1", snippet: "Page 1")
+                DocumentCopilotCitation(pageIndex: 0, pageLabel: "Page 1", snippet: "Page 1"),
             ],
             grounding: .grounded,
             model: "stub-model",
@@ -107,7 +109,7 @@ final class ReaderCopilotStateTests: XCTestCase {
 
         let loaded = expectation(description: "reader loads document")
         controller.$document
-            .compactMap { $0 }
+            .compactMap(\.self)
             .first()
             .sink { _ in loaded.fulfill() }
             .store(in: &cancellables)
@@ -119,7 +121,7 @@ final class ReaderCopilotStateTests: XCTestCase {
 
         let responseLoaded = expectation(description: "copilot response loads")
         controller.$copilotResponse
-            .compactMap { $0 }
+            .compactMap(\.self)
             .first()
             .sink { _ in responseLoaded.fulfill() }
             .store(in: &cancellables)
@@ -146,7 +148,7 @@ final class ReaderCopilotStateTests: XCTestCase {
 
         let loaded = expectation(description: "reader loads document")
         controller.$document
-            .compactMap { $0 }
+            .compactMap(\.self)
             .first()
             .sink { _ in loaded.fulfill() }
             .store(in: &cancellables)
@@ -210,11 +212,11 @@ final class ReaderCopilotStateTests: XCTestCase {
         let service = DelayedCopilotService(
             responses: [
                 "first": firstResponse,
-                "second": secondResponse
+                "second": secondResponse,
             ],
             delays: [
                 "first": 200_000_000,
-                "second": 10_000_000
+                "second": 10_000_000,
             ]
         )
         let controller = ReaderControllerPro(copilotService: service)
@@ -261,7 +263,6 @@ final class ReaderCopilotStateTests: XCTestCase {
         XCTAssertFalse(controller.isCopilotRunning)
         XCTAssertNil(controller.document)
     }
-
 }
 
 private final class StubCopilotService: DocumentCopilotServicing {
@@ -273,9 +274,10 @@ private final class StubCopilotService: DocumentCopilotServicing {
     }
 
     func respond(to request: DocumentCopilotRequest,
-                 using session: DocumentTextSession,
-                 sourceName: String?,
-                 modelName: String?) async throws -> DocumentCopilotResponse {
+                 using _: DocumentTextSession,
+                 sourceName _: String?,
+                 modelName _: String?) async throws -> DocumentCopilotResponse
+    {
         requests.append(request)
         return response
     }
@@ -291,11 +293,13 @@ private final class DelayedCopilotService: DocumentCopilotServicing {
     }
 
     func respond(to request: DocumentCopilotRequest,
-                 using session: DocumentTextSession,
-                 sourceName: String?,
-                 modelName: String?) async throws -> DocumentCopilotResponse {
-        guard case .ask(let question, _) = request,
-              let response = responses[question] else {
+                 using _: DocumentTextSession,
+                 sourceName _: String?,
+                 modelName _: String?) async throws -> DocumentCopilotResponse
+    {
+        guard case let .ask(question, _) = request,
+              let response = responses[question]
+        else {
             XCTFail("Unexpected request: \(request)")
             return .makeStub(answer: "unexpected")
         }
@@ -317,10 +321,11 @@ private actor BlockingCopilotService: DocumentCopilotServicing {
         self.response = response
     }
 
-    func respond(to request: DocumentCopilotRequest,
-                 using session: DocumentTextSession,
-                 sourceName: String?,
-                 modelName: String?) async throws -> DocumentCopilotResponse {
+    func respond(to _: DocumentCopilotRequest,
+                 using _: DocumentTextSession,
+                 sourceName _: String?,
+                 modelName _: String?) async throws -> DocumentCopilotResponse
+    {
         hasStarted = true
         startContinuation?.resume()
         startContinuation = nil
@@ -367,7 +372,7 @@ private func makeTextDocument(text: String) throws -> PDFDocument {
     var mediaBox = CGRect(x: 0, y: 0, width: 320, height: 240)
     guard let context = CGContext(url as CFURL, mediaBox: &mediaBox, nil) else {
         throw NSError(domain: "ReaderCopilotStateTests", code: -1, userInfo: [
-            NSLocalizedDescriptionKey: "Unable to create PDF context"
+            NSLocalizedDescriptionKey: "Unable to create PDF context",
         ])
     }
 
@@ -381,7 +386,7 @@ private func makeTextDocument(text: String) throws -> PDFDocument {
         string: text,
         attributes: [
             .font: NSFont.systemFont(ofSize: 18),
-            .foregroundColor: NSColor.black
+            .foregroundColor: NSColor.black,
         ]
     ).draw(in: CGRect(x: 24, y: 120, width: 272, height: 40))
     NSGraphicsContext.restoreGraphicsState()
@@ -393,7 +398,7 @@ private func makeTextDocument(text: String) throws -> PDFDocument {
     let data = try Data(contentsOf: url)
     guard let document = PDFDocument(data: data) else {
         throw NSError(domain: "ReaderCopilotStateTests", code: -2, userInfo: [
-            NSLocalizedDescriptionKey: "Unable to open generated PDF"
+            NSLocalizedDescriptionKey: "Unable to open generated PDF",
         ])
     }
 
