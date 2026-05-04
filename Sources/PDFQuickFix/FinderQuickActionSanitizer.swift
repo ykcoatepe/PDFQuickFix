@@ -228,6 +228,7 @@ final class FinderQuickActionCoordinator: ObservableObject {
 
 final class FinderQuickActionWindowController: NSWindowController {
     var onClose: (() -> Void)?
+    private var closeObserver: NSObjectProtocol?
 
     convenience init(coordinator: FinderQuickActionCoordinator) {
         let window = NSWindow(
@@ -246,7 +247,7 @@ final class FinderQuickActionWindowController: NSWindowController {
             rootView: FinderQuickActionReceiptView(coordinator: coordinator)
         )
 
-        NotificationCenter.default.addObserver(
+        closeObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.willCloseNotification,
             object: window,
             queue: .main
@@ -256,7 +257,9 @@ final class FinderQuickActionWindowController: NSWindowController {
     }
 
     deinit {
-        NotificationCenter.default.removeObserver(self)
+        if let closeObserver {
+            NotificationCenter.default.removeObserver(closeObserver)
+        }
     }
 }
 

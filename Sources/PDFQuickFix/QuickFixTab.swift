@@ -315,6 +315,16 @@ struct QuickFixTab: View {
                                 .textSelection(.enabled)
                         }
                         .frame(minHeight: 160, maxHeight: 280)
+
+                        HStack {
+                            Button("Copy") {
+                                copyAIOutput()
+                            }
+
+                            Button("Save...") {
+                                saveAIOutput()
+                            }
+                        }
                     }
                     .paperPanelStyle()
                 }
