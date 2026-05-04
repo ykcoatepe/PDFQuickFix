@@ -48,7 +48,14 @@ struct AISettingsView: View {
         VStack(alignment: .leading, spacing: 14) {
             sectionHeader("Local AI", detail: "Connection, persistence, and model refresh.")
 
-            keyValueRow("Ollama host", value: "127.0.0.1:11434")
+            Picker("Provider", selection: $aiSettings.selectedProvider) {
+                ForEach(LocalAIProvider.allCases) { provider in
+                    Text(provider.displayName).tag(provider)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            keyValueRow("Provider host", value: aiSettings.selectedProvider.hostLabel)
 
             Toggle("Persist AI interactions between launches", isOn: $aiSettings.persistAIInteractions)
                 .toggleStyle(.switch)
@@ -87,7 +94,7 @@ struct AISettingsView: View {
             sectionHeader("Default Model", detail: "Primary local model used when a task has no override.")
 
             if aiSettings.availableModels.isEmpty {
-                Text("No local Ollama models detected. Install models with ollama and refresh.")
+                Text("No local \(aiSettings.selectedProvider.displayName) models detected. Start the local server and refresh.")
                     .font(.caption)
                     .foregroundStyle(AppTheme.Colors.secondaryText)
             } else {

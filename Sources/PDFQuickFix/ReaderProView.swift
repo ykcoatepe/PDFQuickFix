@@ -21,6 +21,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
     @Published var copilotResponse: DocumentCopilotResponse?
     @Published var copilotError: String?
     @Published var isCopilotRunning: Bool = false
+    @Published var annotationRows: [AnnotationRow] = []
 
     func toggleRightPanel() {
         isRightPanelVisible.toggle()
@@ -58,6 +59,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
     private let validationRunner = DocumentValidationRunner()
     private var copilotService: any DocumentCopilotServicing
     private let usesCustomCopilotService: Bool
+    private weak var aiSettings: LocalAISettings?
     private var searchDebounceWorkItem: DispatchWorkItem?
     private var activeCopilotRequestID: UInt64 = 0
     private enum ValidationMode { case idle, quick, full }
@@ -196,6 +198,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         }
         currentPageIndex = 0
         searchMatches.removeAll()
+        refreshAnnotationsForReader()
         validationStatus = nil
         validationMode = .idle
         isFullValidationRunning = false
@@ -234,6 +237,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         validationMode = .idle
         log = "❌ \(error.localizedDescription)"
         currentSelectionTextState = nil
+        annotationRows = []
         clearCopilotOutput()
         present(error)
     }
@@ -266,6 +270,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         validationMode = .idle
         log = ""
         currentSelectionTextState = nil
+        annotationRows = []
         clearCopilotOutput()
     }
 
@@ -511,6 +516,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
                 page.addAnnotation(annotation)
             }
         }
+        refreshAnnotationsForReader()
     }
 
     func addStickyNote() {
@@ -521,6 +527,33 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         note.iconType = .note
         note.contents = "Note"
         page.addAnnotation(note)
+        refreshAnnotationsForReader()
+    }
+
+    func loadAnnotationsForReader(force: Bool = false) {
+        if isMassiveDocument, !force {
+            annotationRows = []
+            return
+        }
+        refreshAnnotationsForReader()
+    }
+
+    func focus(annotation row: AnnotationRow) {
+        guard let page = row.annotation.page else { return }
+        let bounds = row.annotation.bounds
+        let destination = PDFDestination(page: page, at: CGPoint(x: bounds.midX, y: bounds.midY))
+        pdfView?.go(to: destination)
+        if let document {
+            let index = document.index(for: page)
+            if index >= 0 {
+                currentPageIndex = index
+            }
+        }
+    }
+
+    func delete(annotation row: AnnotationRow) {
+        row.annotation.page?.removeAnnotation(row.annotation)
+        refreshAnnotationsForReader()
     }
 
     func loadPartialDocument(pageLimit: Int = 50) {
@@ -712,6 +745,15 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         copilotService = DocumentCopilotService(interactionStore: interactionStore)
     }
 
+    func configureCopilotAI(settings: LocalAISettings, interactionStore: AIInteractionStore) {
+        guard !usesCustomCopilotService else { return }
+        aiSettings = settings
+        copilotService = DocumentCopilotService(
+            interactionStore: interactionStore,
+            client: settings.makeTextClient()
+        )
+    }
+
     // MARK: - Helpers
 
     private func configurePDFView() {
@@ -732,8 +774,23 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         return try? DocumentTextSession(documentURL: url)
     }
 
+    private func refreshAnnotationsForReader() {
+        guard let document, !isMassiveDocument else {
+            annotationRows = []
+            return
+        }
+        var rows: [AnnotationRow] = []
+        for index in 0 ..< document.pageCount {
+            guard let page = document.page(at: index) else { continue }
+            for annotation in page.annotations {
+                rows.append(AnnotationRow(annotation: annotation, pageIndex: index))
+            }
+        }
+        annotationRows = rows
+    }
+
     private func currentCopilotModelName() -> String? {
-        let modelName = LocalAISettings().defaultModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        let modelName = (aiSettings?.defaultModel ?? LocalAISettings().defaultModel).trimmingCharacters(in: .whitespacesAndNewlines)
         return modelName.isEmpty ? nil : modelName
     }
 
@@ -1663,15 +1720,7 @@ struct ReaderSidebarRight: View {
                     .padding()
                 }
             case .comments:
-                VStack(spacing: 6) {
-                    Text("No comments captured")
-                        .foregroundColor(AppTheme.Colors.secondaryText)
-                    Text("Comments or note annotations on the current PDF will appear here for review.")
-                        .font(.caption)
-                        .foregroundColor(AppTheme.Colors.secondaryText)
-                        .multilineTextAlignment(.center)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                ReaderCommentsPanel(controller: controller)
             case .copilot:
                 ReaderCopilotView(controller: controller)
             }
@@ -1693,6 +1742,118 @@ struct InfoRow: View {
                 .foregroundColor(AppTheme.Colors.primaryText)
         }
         .font(.caption)
+    }
+}
+
+struct ReaderCommentsPanel: View {
+    @ObservedObject var controller: ReaderControllerPro
+    @State private var filterText = ""
+
+    private var filteredAnnotations: [AnnotationRow] {
+        let query = filterText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else { return controller.annotationRows }
+        return controller.annotationRows.filter { row in
+            row.title.lowercased().contains(query)
+                || (row.annotation.contents?.lowercased().contains(query) ?? false)
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if controller.isMassiveDocument, controller.annotationRows.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Annotation evidence loads on demand for very large PDFs.")
+                        .font(.caption)
+                        .foregroundColor(AppTheme.Colors.secondaryText)
+                    Button("Load annotations") {
+                        controller.loadAnnotationsForReader(force: true)
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
+                    .disabled(controller.document == nil)
+                }
+                .padding(.horizontal, 12)
+                .padding(.top, 12)
+            }
+
+            TextField("Filter comments", text: $filterText)
+                .textFieldStyle(.roundedBorder)
+                .padding(.horizontal, 12)
+                .padding(.top, 12)
+
+            if filteredAnnotations.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(controller.annotationRows.isEmpty ? "No annotations on this file" : "No annotations match this filter")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundColor(AppTheme.Colors.primaryText)
+                    Text(controller.annotationRows.isEmpty
+                        ? "Comments, highlights, links, and notes on the open PDF will appear here."
+                        : "Try a broader search to review the notes already captured in this document.")
+                        .font(.caption)
+                        .foregroundColor(AppTheme.Colors.secondaryText)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .padding(12)
+            } else {
+                List {
+                    ForEach(filteredAnnotations) { row in
+                        ReaderCommentRow(
+                            row: row,
+                            focus: controller.focus,
+                            delete: controller.delete
+                        )
+                    }
+                }
+                .listStyle(.inset)
+            }
+        }
+        .onAppear {
+            controller.loadAnnotationsForReader()
+        }
+    }
+}
+
+private struct ReaderCommentRow: View {
+    let row: AnnotationRow
+    let focus: (AnnotationRow) -> Void
+    let delete: (AnnotationRow) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(row.title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundColor(AppTheme.Colors.primaryText)
+                Spacer()
+                Text("Page \(row.pageIndex + 1)")
+                    .font(.caption)
+                    .foregroundColor(AppTheme.Colors.secondaryText)
+            }
+
+            if let contents = row.annotation.contents, !contents.isEmpty {
+                Text(contents)
+                    .font(.caption)
+                    .foregroundColor(AppTheme.Colors.secondaryText)
+                    .lineLimit(3)
+            }
+
+            HStack(spacing: 8) {
+                Button {
+                    focus(row)
+                } label: {
+                    Label("Go", systemImage: "arrow.right.circle")
+                }
+                .buttonStyle(.borderless)
+
+                Button(role: .destructive) {
+                    delete(row)
+                } label: {
+                    Label("Remove", systemImage: "trash")
+                }
+                .buttonStyle(.borderless)
+            }
+            .font(.caption)
+        }
+        .padding(.vertical, 4)
     }
 }
 

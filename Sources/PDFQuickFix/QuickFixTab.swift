@@ -450,7 +450,7 @@ struct QuickFixTab: View {
                 aiStatus = "Running \(task.displayName)…"
                 let runner = LocalAITaskRunner(
                     interactionStore: aiInteractions,
-                    client: OllamaClient(requestTimeout: TimeInterval(aiSettings.requestTimeoutSeconds))
+                    client: aiSettings.makeTextClient()
                 )
                 let result = try await runner.run(
                     task: task,

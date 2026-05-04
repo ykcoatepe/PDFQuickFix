@@ -52,6 +52,41 @@ final class ReaderLogicTests: XCTestCase {
         studioController.printDocument()
         XCTAssertNil(studioController.pdfView)
     }
+
+    func testReaderLoadsAnnotationRowsForCommentsPanel() throws {
+        let url = try TestPDFBuilder.makeSimplePDF(text: "Annotated")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let document = try XCTUnwrap(PDFDocument(url: url))
+        let page = try XCTUnwrap(document.page(at: 0))
+        let note = PDFAnnotation(bounds: CGRect(x: 10, y: 10, width: 24, height: 24), forType: .text, withProperties: nil)
+        note.contents = "Review this clause"
+        page.addAnnotation(note)
+
+        controller.document = document
+        controller.loadAnnotationsForReader()
+
+        let row = try XCTUnwrap(controller.annotationRows.first { $0.annotation === note })
+        XCTAssertEqual(row.pageIndex, 0)
+        XCTAssertEqual(row.annotation.contents, "Review this clause")
+    }
+
+    func testReaderDeleteAnnotationRefreshesCommentsPanelRows() throws {
+        let url = try TestPDFBuilder.makeSimplePDF(text: "Annotated")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let document = try XCTUnwrap(PDFDocument(url: url))
+        let page = try XCTUnwrap(document.page(at: 0))
+        let note = PDFAnnotation(bounds: CGRect(x: 10, y: 10, width: 24, height: 24), forType: .text, withProperties: nil)
+        page.addAnnotation(note)
+
+        controller.document = document
+        controller.loadAnnotationsForReader()
+        let row = try XCTUnwrap(controller.annotationRows.first)
+
+        controller.delete(annotation: row)
+
+        XCTAssertTrue(controller.annotationRows.isEmpty)
+        XCTAssertTrue(page.annotations.isEmpty)
+    }
 }
 
 final class PerfTests: XCTestCase {
