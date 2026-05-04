@@ -35,8 +35,8 @@ final class PDFCoreLexerTests: XCTestCase {
         let xref = """
         xref
         0 2
-        0000000000 65535 f 
-        \(String(format: "%010d", offset1)) 00000 n 
+        0000000000 65535 f
+        \(String(format: "%010d", offset1)) 00000 n
         trailer
         << /Size 2 /Root 1 0 R >>
         startxref

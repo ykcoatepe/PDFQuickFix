@@ -1,7 +1,7 @@
 # Autoplan Review
 
-Captured: 2026-04-18  
-Branch: `codex/split-merge-workbench`  
+Captured: 2026-04-18
+Branch: `codex/split-merge-workbench`
 Base branch: `master`
 
 ## Plan Summary
