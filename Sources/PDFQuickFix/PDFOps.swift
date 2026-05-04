@@ -442,7 +442,7 @@ enum PDFOps {
         context.clip(to: outputBounds)
         context.saveGState()
         context.translateBy(x: -bounds.minX, y: -bounds.minY)
-        page.draw(with: .mediaBox, to: context)
+        page.draw(with: box, to: context)
         context.restoreGState()
         return context.makeImage()
     }

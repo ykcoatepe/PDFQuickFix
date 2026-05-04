@@ -344,6 +344,21 @@ final class PDFOpsTests: XCTestCase {
         XCTAssertLessThan(converted.redComponent, 0.35)
     }
 
+    func testFlattenedDataDrawsRequestedCropBox() throws {
+        let document = PDFDocument()
+        document.insert(DisplayBoxProbePage(), at: 0)
+
+        let data = try PDFOps.flattenedData(document: document)
+        let flattenedDocument = try XCTUnwrap(PDFDocument(data: data))
+        let flattenedPage = try XCTUnwrap(flattenedDocument.page(at: 0))
+        let rendered = try XCTUnwrap(TestPDFRenderer.render(flattenedPage, size: CGSize(width: 100, height: 100)))
+        let center = try XCTUnwrap(rendered.color(at: CGPoint(x: 50, y: 50)))
+        let converted = center.usingColorSpace(.sRGB) ?? center
+
+        XCTAssertGreaterThan(converted.greenComponent, 0.45)
+        XCTAssertLessThan(converted.redComponent, 0.35)
+    }
+
     private func addReplacementTextAnnotations(to document: PDFDocument, replacement: String) {
         guard let page = document.page(at: 0) else { return }
         let cover = PDFAnnotation(bounds: CGRect(x: 20, y: 110, width: 260, height: 40),
@@ -394,5 +409,22 @@ final class PDFOpsTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: url) }
         let data = try Data(contentsOf: url)
         return try XCTUnwrap(PDFDocument(data: data))
+    }
+}
+
+private final class DisplayBoxProbePage: PDFPage {
+    override func bounds(for box: PDFDisplayBox) -> CGRect {
+        switch box {
+        case .cropBox:
+            CGRect(x: 50, y: 50, width: 100, height: 100)
+        default:
+            CGRect(x: 0, y: 0, width: 200, height: 200)
+        }
+    }
+
+    override func draw(with box: PDFDisplayBox, to context: CGContext) {
+        let fill = box == .cropBox ? NSColor.systemGreen.cgColor : NSColor.systemRed.cgColor
+        context.setFillColor(fill)
+        context.fill(bounds(for: box))
     }
 }
