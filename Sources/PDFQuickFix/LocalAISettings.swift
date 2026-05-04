@@ -17,7 +17,7 @@ final class LocalAISettings: ObservableObject {
     @Published var selectedProvider: LocalAIProvider {
         didSet {
             defaults.set(selectedProvider.rawValue, forKey: Self.selectedProviderKey)
-            defaultModel = defaults.string(forKey: Self.defaultModelKey(for: selectedProvider)) ?? ""
+            defaultModel = Self.savedDefaultModel(for: selectedProvider, defaults: defaults)
             taskOverrides = Self.loadOverrides(for: selectedProvider, defaults: defaults)
             availableModels = []
             lastRefreshError = nil
@@ -65,9 +65,7 @@ final class LocalAISettings: ObservableObject {
         let savedProvider = defaults.string(forKey: Self.selectedProviderKey)
             .flatMap(LocalAIProvider.init(rawValue:)) ?? .ollama
         selectedProvider = savedProvider
-        defaultModel = defaults.string(forKey: Self.defaultModelKey(for: savedProvider))
-            ?? defaults.string(forKey: Self.defaultModelKey)
-            ?? ""
+        defaultModel = Self.savedDefaultModel(for: savedProvider, defaults: defaults)
         persistAIInteractions = defaults.bool(forKey: Self.persistLogsKey)
         if defaults.object(forKey: Self.requestTimeoutKey) != nil {
             requestTimeoutSeconds = defaults.integer(forKey: Self.requestTimeoutKey)
@@ -177,6 +175,12 @@ final class LocalAISettings: ObservableObject {
 
     private static func defaultModelKey(for provider: LocalAIProvider) -> String {
         "\(defaultModelKey).\(provider.rawValue)"
+    }
+
+    private static func savedDefaultModel(for provider: LocalAIProvider, defaults: UserDefaults) -> String {
+        defaults.string(forKey: defaultModelKey(for: provider))
+            ?? (provider == .ollama ? defaults.string(forKey: defaultModelKey) : nil)
+            ?? ""
     }
 
     private static func overrideKey(for task: LocalAITask, provider: LocalAIProvider) -> String {

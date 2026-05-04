@@ -87,6 +87,27 @@ final class ReaderLogicTests: XCTestCase {
         XCTAssertTrue(controller.annotationRows.isEmpty)
         XCTAssertTrue(page.annotations.isEmpty)
     }
+
+    func testReaderForcedAnnotationLoadWorksForMassiveDocument() throws {
+        let url = try TestPDFBuilder.makeSimplePDF(text: "Annotated")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let document = try XCTUnwrap(PDFDocument(url: url))
+        let page = try XCTUnwrap(document.page(at: 0))
+        let note = PDFAnnotation(bounds: CGRect(x: 10, y: 10, width: 24, height: 24), forType: .text, withProperties: nil)
+        note.contents = "Massive review note"
+        page.addAnnotation(note)
+
+        controller.document = document
+        controller.isMassiveDocument = true
+
+        controller.loadAnnotationsForReader()
+        XCTAssertTrue(controller.annotationRows.isEmpty)
+
+        controller.loadAnnotationsForReader(force: true)
+
+        let row = try XCTUnwrap(controller.annotationRows.first { $0.annotation === note })
+        XCTAssertEqual(row.pageIndex, 0)
+    }
 }
 
 final class PerfTests: XCTestCase {

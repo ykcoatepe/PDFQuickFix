@@ -535,7 +535,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
             annotationRows = []
             return
         }
-        refreshAnnotationsForReader()
+        refreshAnnotationsForReader(includeMassiveDocument: force)
     }
 
     func focus(annotation row: AnnotationRow) {
@@ -774,8 +774,8 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         return try? DocumentTextSession(documentURL: url)
     }
 
-    private func refreshAnnotationsForReader() {
-        guard let document, !isMassiveDocument else {
+    private func refreshAnnotationsForReader(includeMassiveDocument: Bool = false) {
+        guard let document, includeMassiveDocument || !isMassiveDocument else {
             annotationRows = []
             return
         }

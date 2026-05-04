@@ -78,13 +78,26 @@ The Finder service accepts one or more selected PDFs, writes side-by-side `-sani
    ```
 4. Run (**⌘R**) the **PDFQuickFix** scheme.
 
-## Local AI (Ollama) setup
+## Local AI setup
+1. Install a local AI provider:
+   - Ollama for OCR and text tasks.
+   - LM Studio for OpenAI-compatible local text tasks on `127.0.0.1:1234`.
+2. Start the provider.
+   - Ollama: run `ollama serve`.
+   - LM Studio: start the local server from the Developer tab.
+3. For Ollama, pull models:
+   - OCR: `ollama pull qwen2.5vl:7b` (recommended) or `ollama pull minicpm-v:8b`
+   - Optional OCR fallback: `ollama pull deepseek-ocr:3b`
+   - Text tasks (default): `ollama pull deepseek-r1:8b` (or any local model you prefer)
+4. In **Settings → Local AI**, choose **Ollama** or **LM Studio**, click **Refresh Models**, and pick a default model.
+
+### Ollama model setup
 1. Install Ollama and start it.
 2. Pull models:
    - OCR: `ollama pull qwen2.5vl:7b` (recommended) or `ollama pull minicpm-v:8b`
    - Optional OCR fallback: `ollama pull deepseek-ocr:3b`
    - Text tasks (default): `ollama pull deepseek-r1:8b` (or any local model you prefer)
-3. In **Settings → Local AI**, click **Refresh Models** and pick a default model.
+3. In **Settings → Local AI**, choose **Ollama**, click **Refresh Models**, and pick a default model.
 
 ### Notes
 - Local OCR is used **only** for the OCR overlay when no redaction/Find→Replace/manual redactions are active.
@@ -96,8 +109,8 @@ The Finder service accepts one or more selected PDFs, writes side-by-side `-sani
 - Local OCR availability status is shown in **Options** with a Refresh button.
 - Cloud OCR fallback (Google Vision) is opt-in and requires an API key in Options.
 
-## Troubleshooting (Ollama)
-- **No models listed:** make sure Ollama is running and `ollama list` shows your models.
+## Troubleshooting (Local AI)
+- **No models listed:** make sure the selected provider is running. For Ollama, `ollama list` should show your models. For LM Studio, the local server should be enabled and have a loaded model.
 - **Local OCR not used:** confirm `qwen2.5vl:7b` or `minicpm-v:8b` is installed and OCR provider is set to Auto.
 - **Local OCR status says Unavailable:** ensure Ollama is running, then click **Refresh** in Options.
 - **AI tasks say “No local model available”:** open Settings, refresh, and select a default model.

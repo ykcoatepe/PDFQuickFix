@@ -48,6 +48,25 @@ final class LocalAISettingsTests: XCTestCase {
     }
 
     @MainActor
+    func testProviderSwitchPreservesLegacyOllamaDefaultModel() async throws {
+        let suiteName = "LocalAISettingsTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defaults.set("legacy-ollama-model", forKey: LocalAISettings.defaultModelKey)
+
+        let settings = LocalAISettings(defaults: defaults)
+
+        XCTAssertEqual(settings.defaultModel, "legacy-ollama-model")
+
+        settings.selectedProvider = .lmStudio
+        settings.selectedProvider = .ollama
+
+        XCTAssertEqual(settings.defaultModel, "legacy-ollama-model")
+
+        defaults.removePersistentDomain(forName: suiteName)
+    }
+
+    @MainActor
     func testLMStudioRefreshFailureIsProviderSpecific() async throws {
         let suiteName = "LocalAISettingsTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
