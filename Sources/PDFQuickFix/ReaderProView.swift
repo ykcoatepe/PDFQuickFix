@@ -1,4 +1,5 @@
 import AppKit
+import os.log
 @preconcurrency import PDFKit
 @preconcurrency import PDFQuickFixKit
 import SwiftUI
@@ -40,6 +41,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
     @Published var isPartialLoad: Bool = false
     @Published var isRepaired: Bool = false
     @Published var skippedQuickValidation: Bool = false
+    private var requiresUnlockedValidation: Bool = false
     @Published var isDocumentHealthPresented: Bool = false
     @Published private(set) var currentSelectionTextState: String?
 
@@ -54,21 +56,30 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         currentSelectionTextState ?? normalizedSelectionText(from: pdfView?.currentSelection)
     }
 
+    var canReplaceSelectedText: Bool {
+        currentSelectionText != nil
+    }
+
     private var findObserver: NSObjectProtocol?
     private var selectionObserver: NSObjectProtocol?
     private let validationRunner = DocumentValidationRunner()
     private var copilotService: any DocumentCopilotServicing
     private let usesCustomCopilotService: Bool
+    private let passwordProvider: PDFPasswordProvider
     private weak var aiSettings: LocalAISettings?
     private var searchDebounceWorkItem: DispatchWorkItem?
     private var activeCopilotRequestID: UInt64 = 0
     private enum ValidationMode { case idle, quick, full }
     private var validationMode: ValidationMode = .idle
     private let largeDocumentPageThreshold = DocumentValidationRunner.largeDocumentPageThreshold
+    private let editUndoManager = UndoManager()
 
-    init(copilotService: (any DocumentCopilotServicing)? = nil) {
+    init(copilotService: (any DocumentCopilotServicing)? = nil,
+         passwordProvider: @escaping PDFPasswordProvider = PDFPasswordPrompt.requestPassword)
+    {
         self.copilotService = copilotService ?? DocumentCopilotService(interactionStore: AIInteractionStore())
         usesCustomCopilotService = copilotService != nil
+        self.passwordProvider = passwordProvider
         super.init()
     }
 
@@ -89,14 +100,25 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         isLoadingDocument = true
         loadingStatus = "Opening \(url.lastPathComponent)…"
         let readerOpenSP = PerfLog.begin("ReaderOpen")
-        #if DEBUG
-            let openStart = Date()
-        #endif
+        let openStart = Date()
 
         let massiveThreshold = DocumentValidationRunner.massiveDocumentPageThreshold
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
+
+            if let encryptedDoc = PDFDocument(url: url), encryptedDoc.isEncrypted, encryptedDoc.isLocked {
+                DispatchQueue.main.async {
+                    self.finishEncryptedOpen(document: encryptedDoc,
+                                             sourceURL: url,
+                                             workingURL: url,
+                                             access: effectiveAccess,
+                                             isRepaired: false,
+                                             signpostID: readerOpenSP,
+                                             openStart: openStart)
+                }
+                return
+            }
 
             // Repair/Normalize if needed
             var finalURL = url
@@ -119,6 +141,19 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
                     self.loadingStatus = nil
                     self.handleOpenError(PDFDocumentSanitizerError.unableToOpen(url))
                     PerfLog.end("ReaderOpen", readerOpenSP)
+                }
+                return
+            }
+
+            if rawDoc.isEncrypted, rawDoc.isLocked {
+                DispatchQueue.main.async {
+                    self.finishEncryptedOpen(document: rawDoc,
+                                             sourceURL: url,
+                                             workingURL: finalURL,
+                                             access: effectiveAccess,
+                                             isRepaired: repaired,
+                                             signpostID: readerOpenSP,
+                                             openStart: openStart)
                 }
                 return
             }
@@ -169,12 +204,50 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         }
     }
 
-    private func finishOpen(document newDocument: PDFDocument, sourceURL: URL, workingURL: URL, access: SecurityScopedAccess?, isRepaired: Bool = false) {
+    private func finishEncryptedOpen(document rawDoc: PDFDocument,
+                                     sourceURL: URL,
+                                     workingURL: URL,
+                                     access: SecurityScopedAccess?,
+                                     isRepaired: Bool,
+                                     signpostID: OSSignpostID,
+                                     openStart: Date)
+    {
+        loadingStatus = "Unlocking \(sourceURL.lastPathComponent)…"
+        guard PDFPasswordUnlock.unlockIfNeeded(document: rawDoc, url: sourceURL, passwordProvider: passwordProvider) else {
+            resetDocumentState()
+            log = "Open failed: password required for \(sourceURL.lastPathComponent)"
+            PerfLog.end("ReaderOpen", signpostID)
+            return
+        }
+
+        isLoadingDocument = false
+        loadingStatus = nil
+        finishOpen(document: rawDoc,
+                   sourceURL: sourceURL,
+                   workingURL: workingURL,
+                   access: access,
+                   isRepaired: isRepaired,
+                   requiresUnlockedValidation: true)
+        #if DEBUG
+            let duration = Date().timeIntervalSince(openStart)
+            PerfMetrics.shared.recordReaderOpen(duration: duration)
+        #endif
+        PerfLog.end("ReaderOpen", signpostID)
+    }
+
+    private func finishOpen(document newDocument: PDFDocument,
+                            sourceURL: URL,
+                            workingURL: URL,
+                            access: SecurityScopedAccess?,
+                            isRepaired: Bool = false,
+                            requiresUnlockedValidation: Bool = false)
+    {
         let sp = PerfLog.begin("ReaderApplyDocument")
         defer { PerfLog.end("ReaderApplyDocument", sp) }
         currentURL = workingURL
         self.sourceURL = sourceURL
         activeSecurityScope = access
+        clearEditUndoStacks()
         document = newDocument
 
         let fileSize = (try? FileManager.default.attributesOfItem(atPath: workingURL.path)[.size] as? Int64) ?? 0
@@ -204,12 +277,13 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         isFullValidationRunning = false
         isPartialLoad = false
         self.isRepaired = isRepaired
+        self.requiresUnlockedValidation = requiresUnlockedValidation
         clearCopilotOutput()
 
         let shouldSkipAutoValidation = DocumentValidationRunner.shouldSkipQuickValidation(
             estimatedPages: nil,
             resolvedPageCount: newDocument.pageCount
-        )
+        ) || requiresUnlockedValidation
         skippedQuickValidation = shouldSkipAutoValidation
         let isMassive = profile.isMassive
         if !isMassive, !shouldSkipAutoValidation {
@@ -224,35 +298,35 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
     }
 
     private func handleOpenError(_ error: Error) {
-        document = nil
-        pdfView?.document = nil
-        currentURL = nil
-        sourceURL = nil
-        activeSecurityScope = nil
-        isLargeDocument = false
-        isMassiveDocument = false
-        skippedQuickValidation = false
-        validationStatus = nil
-        isFullValidationRunning = false
-        validationMode = .idle
+        resetDocumentState()
         log = "❌ \(error.localizedDescription)"
-        currentSelectionTextState = nil
-        annotationRows = []
-        clearCopilotOutput()
         present(error)
     }
 
     func validateFully() {
         guard let url = currentURL, !isFullValidationRunning else { return }
+        guard !requiresUnlockedValidation else {
+            skippedQuickValidation = true
+            validationMode = .idle
+            isFullValidationRunning = false
+            validationStatus = nil
+            log = "Full validation skipped for encrypted PDF. Export an unlocked, sanitized copy before validating."
+            return
+        }
         scheduleValidation(for: url, pageLimit: nil, mode: .full)
     }
 
     /// Closes the current document and resets all state.
     func closeDocument() {
+        resetDocumentState(clearLog: true)
+    }
+
+    private func resetDocumentState(clearLog: Bool = false) {
         validationRunner.cancelOpen()
         validationRunner.cancelValidation()
         isLoadingDocument = false
         loadingStatus = nil
+        clearEditUndoStacks()
         document = nil
         pdfView?.document = nil
         currentURL = nil
@@ -263,15 +337,23 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         isPartialLoad = false
         isRepaired = false
         skippedQuickValidation = false
+        requiresUnlockedValidation = false
         searchMatches.removeAll()
         currentMatchIndex = nil
         validationStatus = nil
         isFullValidationRunning = false
         validationMode = .idle
-        log = ""
+        if clearLog {
+            log = ""
+        }
         currentSelectionTextState = nil
         annotationRows = []
         clearCopilotOutput()
+    }
+
+    private func clearEditUndoStacks() {
+        pdfView?.undoManager?.removeAllActions()
+        editUndoManager.removeAllActions()
     }
 
     func saveAs() {
@@ -280,7 +362,57 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         panel.allowedContentTypes = [.pdf]
         panel.nameFieldStringValue = (doc.documentURL?.deletingPathExtension().lastPathComponent ?? "Document") + "-copy.pdf"
         if panel.runModal() == .OK, let url = panel.url {
-            doc.write(to: url)
+            if writeDocument(doc, to: url) {
+                currentURL = url
+                sourceURL = url
+                log = "Saved as \(url.lastPathComponent)"
+            } else if !log.contains("Save blocked") {
+                log = "Save As failed: \(url.lastPathComponent)"
+            }
+        }
+    }
+
+    func saveDocument() {
+        guard let doc = document else { return }
+        guard let url = sourceURL ?? currentURL ?? doc.documentURL else {
+            saveAs()
+            return
+        }
+
+        if writeDocument(doc, to: url) {
+            currentURL = url
+            sourceURL = url
+            log = "Saved \(url.lastPathComponent)"
+        } else if !log.contains("Save blocked") {
+            log = "Save failed: \(url.lastPathComponent)"
+        }
+    }
+
+    private func writeDocument(_ doc: PDFDocument, to url: URL) -> Bool {
+        guard PDFOps.containsReplacementTextAnnotations(in: doc) else {
+            return doc.write(to: url)
+        }
+        guard !doc.isEncrypted else {
+            log = "Save blocked: export an encrypted copy after replacing text in a protected PDF."
+            return false
+        }
+
+        do {
+            let data = try PDFOps.flattenedData(document: doc)
+            try data.write(to: url, options: .atomic)
+            guard let flattened = PDFDocument(data: data) else {
+                throw PDFOpsError.saveFailed
+            }
+            document = flattened
+            pdfView?.document = flattened
+            currentSelectionTextState = nil
+            clearEditUndoStacks()
+            refreshAnnotationsForReader(includeMassiveDocument: true)
+            return true
+        } catch {
+            log = "Save failed: \(error.localizedDescription)"
+            present(error)
+            return false
         }
     }
 
@@ -332,7 +464,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
     }
 
     func exportToImages(format: NSBitmapImageRep.FileType) {
-        guard let doc = document, let snapshot = doc.dataRepresentation() else {
+        guard let doc = document else {
             log = "Export failed: couldn't read current document state"
             return
         }
@@ -345,6 +477,15 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         panel.directoryURL = doc.documentURL?.deletingLastPathComponent()
 
         if panel.runModal() == .OK, let outputDir = panel.url {
+            let snapshot: Data
+            do {
+                snapshot = try imageExportSnapshotData()
+            } catch {
+                log = "Export failed: \(error.localizedDescription)"
+                present(error)
+                return
+            }
+
             let fileExtension = switch format {
             case .jpeg: "jpg"
             case .png: "png"
@@ -388,9 +529,26 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         }
     }
 
+    func imageExportSnapshotData() throws -> Data {
+        guard let document else { throw PDFOpsError.missingDocument }
+        let snapshot = try PDFOps.privacyPreservingSnapshot(document: document)
+        guard let data = snapshot.dataRepresentation() else {
+            throw PDFOpsError.saveFailed
+        }
+        return data
+    }
+
     func exportToText() {
-        guard let doc = document, let snapshot = doc.dataRepresentation() else {
+        guard let doc = document else {
             log = "Export failed: couldn't read current document state"
+            return
+        }
+        guard !PDFOps.containsReplacementTextAnnotations(in: doc) else {
+            log = "Export blocked: Text export is blocked after Replace Text or Redact Text because the original text layer may still be extractable. Export a sanitized or flattened PDF copy instead."
+            return
+        }
+        guard !doc.isEncrypted else {
+            log = "Export blocked: Text export is blocked for encrypted PDFs. Export a flattened or sanitized copy first."
             return
         }
         let panel = NSSavePanel()
@@ -399,31 +557,29 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
 
         if panel.runModal() == .OK, let url = panel.url {
             isProcessing = true
+            guard let snapshotData = doc.dataRepresentation() else {
+                isProcessing = false
+                log = "Export failed: couldn't snapshot current document state"
+                return
+            }
 
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-                // Create a new PDFDocument instance for background processing
-                guard let backgroundDoc = PDFDocument(data: snapshot) else {
+                do {
+                    guard let snapshot = PDFDocument(data: snapshotData) else {
+                        throw PDFOpsError.missingDocument
+                    }
+                    let fullText = try PDFOps.extractTextForExport(document: snapshot)
+                    try fullText.write(to: url, atomically: true, encoding: .utf8)
+
                     Task { @MainActor [weak self] in
                         self?.isProcessing = false
-                        self?.log = "Export failed: couldn't read current document state"
+                        NSWorkspace.shared.activateFileViewerSelecting([url])
                     }
-                    return
-                }
-
-                var fullText = ""
-                for i in 0 ..< backgroundDoc.pageCount {
-                    if let page = backgroundDoc.page(at: i), let text = page.string {
-                        fullText += "--- Page \(i + 1) ---\n\n"
-                        fullText += text
-                        fullText += "\n\n"
+                } catch {
+                    Task { @MainActor [weak self] in
+                        self?.isProcessing = false
+                        self?.log = "Export failed: \(error.localizedDescription)"
                     }
-                }
-
-                try? fullText.write(to: url, atomically: true, encoding: .utf8)
-
-                Task { @MainActor [weak self] in
-                    self?.isProcessing = false
-                    NSWorkspace.shared.activateFileViewerSelecting([url])
                 }
             }
         }
@@ -444,11 +600,21 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
     func find(_ text: String) {
         searchMatches.removeAll()
         currentMatchIndex = nil
-        guard let doc = document, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let query = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if query.isEmpty {
+            document?.cancelFindString()
+            if let findObserver {
+                NotificationCenter.default.removeObserver(findObserver)
+                self.findObserver = nil
+            }
+            return
+        }
+        guard let doc = document else { return }
         // PDFKit's beginFindString is asynchronous and fires per-match notifications,
         // so it's safe to run on massive documents without freezing the UI.
 
         findObserver.flatMap { NotificationCenter.default.removeObserver($0) }
+        findObserver = nil
         findObserver = NotificationCenter.default.addObserver(
             forName: .PDFDocumentDidFindMatch,
             object: doc,
@@ -465,7 +631,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         }
 
         doc.cancelFindString()
-        doc.beginFindString(text, withOptions: [.caseInsensitive])
+        doc.beginFindString(query, withOptions: [.caseInsensitive])
     }
 
     func updateSearchQueryDebounced(_ text: String) {
@@ -508,15 +674,103 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
 
     func applyMark(_ subtype: PDFAnnotationSubtype, color: NSColor) {
         guard let view = pdfView, let selection = view.currentSelection else { return }
+        var additions: [PDFAnnotation] = []
         for page in selection.pages {
             let rects = annotationRects(for: selection, on: page)
             for rect in rects {
                 let annotation = PDFAnnotation(bounds: rect, forType: subtype, withProperties: nil)
                 annotation.color = color
                 page.addAnnotation(annotation)
+                additions.append(annotation)
             }
         }
+        registerAnnotationAdditions(additions, actionName: "Add Markup")
         refreshAnnotationsForReader()
+    }
+
+    func replaceSelectedText(with replacement: String) {
+        guard let view = pdfView, let selection = view.currentSelection else { return }
+        let sanitized = PDFStringNormalizer.normalizedNonEmpty(replacement, context: "replacement text") ?? ""
+        guard !sanitized.isEmpty else { return }
+
+        var additions: [PDFAnnotation] = []
+        for page in selection.pages {
+            for rect in annotationRects(for: selection, on: page) {
+                let cover = PDFAnnotation(bounds: rect.insetBy(dx: -1, dy: -1), forType: .square, withProperties: nil)
+                cover.color = .white
+                cover.interiorColor = .white
+                cover.userName = PDFOps.replacementTextAnnotationUserName
+                let coverBorder = PDFBorder()
+                coverBorder.lineWidth = 0
+                cover.border = coverBorder
+                page.addAnnotation(cover)
+                additions.append(cover)
+
+                let text = PDFAnnotation(bounds: rect.insetBy(dx: -1, dy: -1), forType: .freeText, withProperties: nil)
+                text.contents = sanitized
+                text.font = NSFont.systemFont(ofSize: max(9, min(rect.height * 0.7, 14)))
+                text.fontColor = .black
+                text.color = .clear
+                text.backgroundColor = .clear
+                text.userName = PDFOps.replacementTextAnnotationUserName
+                page.addAnnotation(text)
+                additions.append(text)
+            }
+        }
+        registerAnnotationAdditions(additions, actionName: "Replace Text")
+        refreshAnnotationsForReader()
+    }
+
+    func redactSelectedText() {
+        guard let view = pdfView, let selection = view.currentSelection else { return }
+
+        var additions: [PDFAnnotation] = []
+        for page in selection.pages {
+            for rect in annotationRects(for: selection, on: page) {
+                let cover = PDFAnnotation(bounds: rect.insetBy(dx: -1, dy: -1), forType: .square, withProperties: nil)
+                cover.color = .black
+                cover.interiorColor = .black
+                cover.userName = PDFOps.replacementTextAnnotationUserName
+                let border = PDFBorder()
+                border.lineWidth = 0
+                cover.border = border
+                page.addAnnotation(cover)
+                additions.append(cover)
+            }
+        }
+
+        registerAnnotationAdditions(additions, actionName: "Redact Text")
+        refreshAnnotationsForReader()
+    }
+
+    @MainActor
+    func replaceSelectedTextWithPrompt() {
+        guard pdfView?.currentSelection != nil else { return }
+        let field = NSTextField(string: "")
+        field.placeholderString = "Replacement text"
+        field.frame = CGRect(x: 0, y: 0, width: 340, height: 24)
+
+        let alert = NSAlert()
+        alert.messageText = "Replace Selected Text"
+        alert.informativeText = "PDFQuickFix will cover the selected text and place editable replacement text on top."
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Replace")
+        alert.addButton(withTitle: "Cancel")
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        replaceSelectedText(with: field.stringValue)
+    }
+
+    func redactSelectedTextWithConfirmation() {
+        guard pdfView?.currentSelection != nil else { return }
+        let alert = NSAlert()
+        alert.messageText = "Redact Selected Text"
+        alert.informativeText = "PDFQuickFix will cover the selected text. Export a flattened or sanitized copy before sharing so the original text layer is removed."
+        alert.addButton(withTitle: "Redact")
+        alert.addButton(withTitle: "Cancel")
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        redactSelectedText()
     }
 
     func addStickyNote() {
@@ -527,6 +781,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         note.iconType = .note
         note.contents = "Note"
         page.addAnnotation(note)
+        registerAnnotationAddition(note, actionName: "Add Note")
         refreshAnnotationsForReader()
     }
 
@@ -552,7 +807,32 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
     }
 
     func delete(annotation row: AnnotationRow) {
-        row.annotation.page?.removeAnnotation(row.annotation)
+        guard let page = row.annotation.page else { return }
+        registerAnnotationRemoval(row.annotation, on: page, actionName: "Delete Annotation")
+        page.removeAnnotation(row.annotation)
+        refreshAnnotationsForReader()
+    }
+
+    func editAnnotation(_ row: AnnotationRow, contents: String) {
+        editAnnotation(row, draft: AnnotationEditDraft(contents: contents, urlString: nil))
+    }
+
+    func editAnnotation(_ row: AnnotationRow, draft: AnnotationEditDraft) {
+        let annotation = row.annotation
+        let oldContents = annotation.contents
+        let newContents = PDFStringNormalizer.normalizedNonEmpty(draft.contents, context: "annotation contents")
+        let oldURL = annotation.url
+        let newURL = draft.urlString.flatMap(Self.annotationURL)
+        guard oldContents != newContents || oldURL != newURL else { return }
+        registerAnnotationEditUndo(annotation: annotation,
+                                   oldContents: oldContents,
+                                   oldURL: oldURL,
+                                   newContents: newContents,
+                                   newURL: newURL)
+        annotation.contents = newContents
+        if draft.urlString != nil {
+            annotation.url = newURL
+        }
         refreshAnnotationsForReader()
     }
 
@@ -629,11 +909,23 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         registerRotationUndo(page: page, oldRotation: oldRotation, newRotation: newRotation)
     }
 
+    func undoLastEdit() {
+        activeUndoManager.undo()
+    }
+
+    func redoLastEdit() {
+        activeUndoManager.redo()
+    }
+
     private var currentPDFPage: PDFPage? {
         if let pdfView, let page = pdfView.currentPage {
             return page
         }
         return nil
+    }
+
+    private var activeUndoManager: UndoManager {
+        pdfView?.undoManager ?? editUndoManager
     }
 
     private func notifyPageRotationChanged() {
@@ -642,7 +934,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
     }
 
     private func registerRotationUndo(page: PDFPage, oldRotation: Int, newRotation: Int) {
-        guard let undoManager = pdfView?.undoManager else { return }
+        let undoManager = activeUndoManager
         undoManager.registerUndo(withTarget: self) { [weak self] _ in
             guard let self else { return }
             page.rotation = oldRotation
@@ -652,10 +944,131 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         undoManager.setActionName("Rotate Page")
     }
 
+    private func registerAnnotationAddition(_ annotation: PDFAnnotation, actionName: String) {
+        guard let page = annotation.page else { return }
+        let undoManager = activeUndoManager
+        undoManager.registerUndo(withTarget: self) { target in
+            page.removeAnnotation(annotation)
+            target.refreshAnnotationsForReader()
+            target.registerAnnotationRemoval(annotation, on: page, actionName: actionName)
+        }
+        if !undoManager.isUndoing {
+            undoManager.setActionName(actionName)
+        }
+    }
+
+    private func registerAnnotationAdditions(_ annotations: [PDFAnnotation], actionName: String) {
+        let entries = annotations.compactMap { annotation -> (PDFAnnotation, PDFPage)? in
+            guard let page = annotation.page else { return nil }
+            return (annotation, page)
+        }
+        guard !entries.isEmpty else { return }
+        let undoManager = activeUndoManager
+        undoManager.registerUndo(withTarget: self) { target in
+            for (annotation, page) in entries {
+                page.removeAnnotation(annotation)
+            }
+            target.refreshAnnotationsForReader()
+            target.registerAnnotationRemovals(entries, actionName: actionName)
+        }
+        if !undoManager.isUndoing {
+            undoManager.setActionName(actionName)
+        }
+    }
+
+    private func registerAnnotationRemoval(_ annotation: PDFAnnotation, on page: PDFPage, actionName: String) {
+        registerAnnotationRemovals([(annotation, page)], actionName: actionName)
+    }
+
+    private func registerAnnotationRemovals(_ entries: [(PDFAnnotation, PDFPage)], actionName: String) {
+        guard !entries.isEmpty else { return }
+        let undoManager = activeUndoManager
+        undoManager.registerUndo(withTarget: self) { target in
+            for (annotation, page) in entries {
+                page.addAnnotation(annotation)
+            }
+            target.refreshAnnotationsForReader()
+            target.registerAnnotationAdditions(entries.map { $0.0 }, actionName: actionName)
+        }
+        if !undoManager.isUndoing {
+            undoManager.setActionName(actionName)
+        }
+    }
+
+    private func registerAnnotationEditUndo(annotation: PDFAnnotation,
+                                            oldContents: String?,
+                                            oldURL: URL?,
+                                            newContents: String?,
+                                            newURL: URL?)
+    {
+        let undoManager = activeUndoManager
+        undoManager.registerUndo(withTarget: self) { target in
+            annotation.contents = oldContents
+            annotation.url = oldURL
+            target.refreshAnnotationsForReader()
+            target.registerAnnotationEditUndo(annotation: annotation,
+                                              oldContents: newContents,
+                                              oldURL: newURL,
+                                              newContents: oldContents,
+                                              newURL: oldURL)
+        }
+        if !undoManager.isUndoing {
+            undoManager.setActionName("Edit Annotation")
+        }
+    }
+
+    private static func annotationURL(from string: String) -> URL? {
+        let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return URL(string: trimmed)
+    }
+
     func deleteCurrentPage() {
         guard let doc = document, let page = pdfView?.currentPage else { return }
         let index = doc.index(for: page)
+        guard index >= 0, index < doc.pageCount else { return }
+        registerPageDeletionUndo(page: page, index: index, actionName: "Delete Page")
         doc.removePage(at: index)
+        currentPageIndex = min(index, max(doc.pageCount - 1, 0))
+        if let nextPage = doc.page(at: currentPageIndex) {
+            pdfView?.go(to: nextPage)
+        }
+        refreshAnnotationsForReader()
+    }
+
+    private func registerPageDeletionUndo(page: PDFPage, index: Int, actionName: String) {
+        let undoManager = activeUndoManager
+        undoManager.registerUndo(withTarget: self) { target in
+            guard let doc = target.document else { return }
+            let restoredIndex = max(0, min(index, doc.pageCount))
+            doc.insert(page, at: restoredIndex)
+            target.currentPageIndex = restoredIndex
+            target.pdfView?.go(to: page)
+            target.refreshAnnotationsForReader()
+            target.registerPageInsertionUndo(page: page, index: restoredIndex, actionName: actionName)
+        }
+        if !undoManager.isUndoing {
+            undoManager.setActionName(actionName)
+        }
+    }
+
+    private func registerPageInsertionUndo(page: PDFPage, index: Int, actionName: String) {
+        let undoManager = activeUndoManager
+        undoManager.registerUndo(withTarget: self) { target in
+            guard let doc = target.document else { return }
+            let currentIndex = doc.index(for: page)
+            guard currentIndex >= 0, currentIndex < doc.pageCount else { return }
+            doc.removePage(at: currentIndex)
+            target.currentPageIndex = min(currentIndex, max(doc.pageCount - 1, 0))
+            if let nextPage = doc.page(at: target.currentPageIndex) {
+                target.pdfView?.go(to: nextPage)
+            }
+            target.refreshAnnotationsForReader()
+            target.registerPageDeletionUndo(page: page, index: index, actionName: actionName)
+        }
+        if !undoManager.isUndoing {
+            undoManager.setActionName(actionName)
+        }
     }
 
     func setZoom(percent: Double) {
@@ -935,7 +1348,9 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
             isMassiveDocument: isMassiveDocument,
             skippedQuickValidation: skippedQuickValidation,
             validationStatus: validationStatus,
-            quickFixResult: quickFixResult
+            quickFixResult: quickFixResult,
+            documentAttributes: document.documentAttributes,
+            hasReplacementTextAnnotations: PDFOps.containsReplacementTextAnnotations(in: document)
         )
     }
 }
@@ -975,11 +1390,35 @@ enum ReaderRightPanelTab: String, CaseIterable, Identifiable {
 extension ReaderControllerPro: DocumentClosable {}
 extension ReaderControllerPro: DocumentPrintable {}
 extension ReaderControllerPro: DocumentHealthPresentable {}
+extension ReaderControllerPro: DocumentUndoable {}
+extension ReaderControllerPro: SelectedTextReplaceable {}
+
+extension ReaderControllerPro {
+    func exportDocumentHealthReport() {
+        guard let summary = documentHealthSummary else { return }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.plainText]
+        panel.nameFieldStringValue = summary.documentName.replacingOccurrences(of: ".pdf", with: "", options: [.caseInsensitive]) + "-health-report.txt"
+        if panel.runModal() == .OK, let url = panel.url {
+            do {
+                try summary.plainTextReport().write(to: url, atomically: true, encoding: .utf8)
+                log = "Exported health report to \(url.lastPathComponent)"
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+            } catch {
+                log = "Health report export failed: \(error.localizedDescription)"
+                present(error)
+            }
+        }
+    }
+}
 
 extension ReaderControllerPro: FileExportable {
     func exportSanitized() {
         guard let doc = document else { return }
-        guard let data = doc.dataRepresentation(), let snapshotDoc = PDFDocument(data: data) else {
+        let snapshotDoc: PDFDocument
+        do {
+            snapshotDoc = try PDFOps.privacyPreservingSnapshot(document: doc)
+        } catch {
             log = "Export failed: couldn't read current document state"
             return
         }
@@ -1082,6 +1521,124 @@ extension ReaderControllerPro: FileExportable {
             }
         }
     }
+
+    func exportOptimized() {
+        guard let doc = document else {
+            log = "Export failed: no document is loaded"
+            return
+        }
+
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.pdf]
+        panel.nameFieldStringValue = (doc.documentURL?.deletingPathExtension().lastPathComponent ?? "Document") + "-optimized.pdf"
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        let snapshotData: Data
+        do {
+            let snapshot = try PDFOps.privacyPreservingSnapshot(document: doc)
+            guard let data = snapshot.dataRepresentation() else {
+                throw PDFOpsError.saveFailed
+            }
+            snapshotData = data
+        } catch {
+            log = "Optimize export failed: \(error.localizedDescription)"
+            present(error)
+            return
+        }
+
+        isProcessing = true
+        log = "Optimizing \(url.lastPathComponent)…"
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                guard let snapshot = PDFDocument(data: snapshotData),
+                      let optimizedData = PDFOps.optimize(document: snapshot)
+                else {
+                    throw PDFOpsError.saveFailed
+                }
+                try optimizedData.write(to: url, options: .atomic)
+                Task { @MainActor [weak self] in
+                    self?.isProcessing = false
+                    self?.log = "Exported optimized copy to \(url.lastPathComponent)"
+                    NSWorkspace.shared.activateFileViewerSelecting([url])
+                }
+            } catch {
+                Task { @MainActor [weak self] in
+                    self?.isProcessing = false
+                    self?.log = "Optimize export failed: \(error.localizedDescription)"
+                    self?.present(error)
+                }
+            }
+        }
+    }
+
+    func exportMetadataCleaned() {
+        guard let doc = document else {
+            log = "Export failed: no document is loaded"
+            return
+        }
+
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.pdf]
+        panel.nameFieldStringValue = (doc.documentURL?.deletingPathExtension().lastPathComponent ?? "Document") + "-metadata-clean.pdf"
+
+        if panel.runModal() == .OK, let url = panel.url {
+            do {
+                let cleanedData = try PDFOps.metadataCleanedData(document: doc, sourceURL: currentURL)
+                try cleanedData.write(to: url, options: .atomic)
+                log = "Exported metadata-clean copy to \(url.lastPathComponent)"
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+            } catch {
+                log = "Metadata-clean export failed: \(error.localizedDescription)"
+                present(error)
+            }
+        }
+    }
+
+    func exportFlattened() {
+        guard let doc = document else {
+            log = "Export failed: no document is loaded"
+            return
+        }
+
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.pdf]
+        panel.nameFieldStringValue = (doc.documentURL?.deletingPathExtension().lastPathComponent ?? "Document") + "-flattened.pdf"
+
+        if panel.runModal() == .OK, let url = panel.url {
+            do {
+                let flattenedData = try PDFOps.flattenedData(document: doc)
+                try flattenedData.write(to: url, options: .atomic)
+                log = "Exported flattened copy to \(url.lastPathComponent)"
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+            } catch {
+                log = "Flattened export failed: \(error.localizedDescription)"
+                present(error)
+            }
+        }
+    }
+
+    func exportEncrypted() {
+        guard let doc = document else {
+            log = "Export failed: no document is loaded"
+            return
+        }
+        guard let options = PDFEncryptionExport.requestOptions() else { return }
+
+        do {
+            if let url = try PDFEncryptionExport.writeEncryptedCopy(
+                document: doc,
+                sourceURL: currentURL ?? doc.documentURL,
+                options: options
+            ) {
+                log = "Exported encrypted copy to \(url.lastPathComponent)"
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+            }
+        } catch {
+            log = "Encrypted export failed: \(error.localizedDescription)"
+            present(error)
+        }
+    }
 }
 
 /// PDFViewDelegate conformance kept nonisolated to satisfy protocol requirements
@@ -1144,6 +1701,8 @@ struct ReaderProView: View, Equatable {
             .focusedSceneValue(\.pdfActionable, controller)
             .focusedSceneValue(\.documentClosable, controller)
             .focusedSceneValue(\.documentHealthPresentable, controller)
+            .focusedSceneValue(\.documentUndoable, controller)
+            .focusedSceneValue(\.selectedTextReplaceable, controller)
             .onDrop(of: [.fileURL, .url, .pdf], delegate: PDFURLDropDelegate { url in
                 droppedURL = url
             })
@@ -1192,6 +1751,7 @@ struct ReaderProView: View, Equatable {
                         summary: summary,
                         onRepairAndSaveAs: { controller.repairAndSaveAs() },
                         onExportSanitized: { controller.exportSanitized() },
+                        onExportReport: { controller.exportDocumentHealthReport() },
                         onOpenQuickFix: { selectedTab = .quickFix }
                     )
                 } else {
@@ -1223,12 +1783,22 @@ struct ReaderProView: View, Equatable {
 
     private func encryptCurrent() {
         guard let doc = controller.document else { return }
+        let exportDocument: PDFDocument
+        do {
+            exportDocument = try PDFOps.privacyPreservingDocumentForExport(doc)
+        } catch {
+            controller.log = "Encrypt failed: \(error.localizedDescription)"
+            return
+        }
         guard let data = PDFSecurity.encrypt(
-            document: doc,
+            document: exportDocument,
             userPassword: userPassword,
             ownerPassword: ownerPassword.isEmpty ? nil : ownerPassword,
-            keyLength: 256
-        ) else { return }
+            keyLength: 128
+        ) else {
+            controller.log = "Encrypt failed: unsupported encryption settings"
+            return
+        }
 
         let savePanel = NSSavePanel()
         savePanel.allowedContentTypes = [.pdf]
@@ -1475,12 +2045,36 @@ struct ReaderShellView: View {
                 .buttonStyle(ReaderToolbarButtonStyle())
 
                 Button {
+                    controller.replaceSelectedTextWithPrompt()
+                } label: {
+                    Label("Replace Text", systemImage: "text.cursor")
+                }
+                .buttonStyle(ReaderToolbarButtonStyle())
+                .disabled(controller.currentSelectionText == nil)
+
+                Button {
+                    controller.redactSelectedTextWithConfirmation()
+                } label: {
+                    Label("Redact", systemImage: "rectangle.fill.on.rectangle.fill")
+                }
+                .buttonStyle(ReaderToolbarButtonStyle())
+                .disabled(controller.currentSelectionText == nil)
+
+                Button {
                     quickFixPresented = true
                 } label: {
                     Label("QuickFix", systemImage: "wand.and.stars")
                 }
                 .buttonStyle(ReaderToolbarButtonStyle())
                 .disabled(controller.currentURL == nil)
+
+                Button {
+                    showEncrypt = true
+                } label: {
+                    Label("Encrypt", systemImage: "lock")
+                }
+                .buttonStyle(ReaderToolbarButtonStyle())
+                .disabled(controller.document == nil)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
@@ -1799,6 +2393,7 @@ struct ReaderCommentsPanel: View {
                         ReaderCommentRow(
                             row: row,
                             focus: controller.focus,
+                            edit: controller.editAnnotation(_:draft:),
                             delete: controller.delete
                         )
                     }
@@ -1815,6 +2410,7 @@ struct ReaderCommentsPanel: View {
 private struct ReaderCommentRow: View {
     let row: AnnotationRow
     let focus: (AnnotationRow) -> Void
+    let edit: (AnnotationRow, AnnotationEditDraft) -> Void
     let delete: (AnnotationRow) -> Void
 
     var body: some View {
@@ -1844,6 +2440,15 @@ private struct ReaderCommentRow: View {
                 }
                 .buttonStyle(.borderless)
 
+                Button {
+                    if let draft = promptForAnnotationEdit(row) {
+                        edit(row, draft)
+                    }
+                } label: {
+                    Label("Edit", systemImage: "pencil")
+                }
+                .buttonStyle(.borderless)
+
                 Button(role: .destructive) {
                     delete(row)
                 } label: {
@@ -1854,6 +2459,37 @@ private struct ReaderCommentRow: View {
             .font(.caption)
         }
         .padding(.vertical, 4)
+    }
+
+    private func promptForAnnotationEdit(_ row: AnnotationRow) -> AnnotationEditDraft? {
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.spacing = 8
+        stack.alignment = .leading
+
+        let field = NSTextField(string: row.annotation.contents ?? "")
+        field.placeholderString = "Annotation text"
+        field.frame = CGRect(x: 0, y: 0, width: 340, height: 24)
+        stack.addArrangedSubview(field)
+
+        var urlField: NSTextField?
+        if row.annotation.url != nil || row.annotation.type == PDFAnnotationSubtype.link.rawValue {
+            let field = NSTextField(string: row.annotation.url?.absoluteString ?? "")
+            field.placeholderString = "https://example.com"
+            field.frame = CGRect(x: 0, y: 0, width: 340, height: 24)
+            urlField = field
+            stack.addArrangedSubview(field)
+        }
+
+        let alert = NSAlert()
+        alert.messageText = "Edit Annotation"
+        alert.informativeText = "Update the note, markup text, or link target for this annotation."
+        alert.accessoryView = stack
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        return AnnotationEditDraft(contents: field.stringValue, urlString: urlField?.stringValue)
     }
 }
 

@@ -62,11 +62,15 @@ enum PDFFormBuilder {
         return annotation
     }
 
-    static func makeChoice(name: String, rect: CGRect, isList: Bool) -> PDFAnnotation {
+    static func makeChoice(name: String, rect: CGRect, choices: [String], isList: Bool) -> PDFAnnotation {
         let annotation = PDFAnnotation(bounds: rect, forType: .widget, withProperties: nil)
         annotation.widgetFieldType = .choice
         annotation.fieldName = sanitizedFieldName(name, context: "choice field name")
         annotation.isListChoice = isList
+        annotation.choices = choices
+        annotation.widgetStringValue = choices.first ?? ""
+        annotation.widgetDefaultStringValue = choices.first ?? ""
+        annotation.backgroundColor = .white
         return annotation
     }
 

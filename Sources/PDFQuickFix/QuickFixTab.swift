@@ -254,7 +254,7 @@ struct QuickFixTab: View {
                     }
                 }
 
-                if aiTask == .summarize {
+                if aiTask.supportsPageSelection {
                     HStack {
                         Text("Pages")
                         TextField("All (e.g. 1-3, 6)", text: $aiPageSelection)
@@ -439,7 +439,7 @@ struct QuickFixTab: View {
         Task {
             do {
                 let sourceURL = try await resolveAITaskSourceURL()
-                let selection = task == .summarize ? aiPageSelection : ""
+                let selection = task.supportsPageSelection ? aiPageSelection : ""
                 let text = try await Task.detached(priority: .userInitiated) {
                     try DocumentTextSession(documentURL: sourceURL).extractText(pageSelection: selection)
                 }.value

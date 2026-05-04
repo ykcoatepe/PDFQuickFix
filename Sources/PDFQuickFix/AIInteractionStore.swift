@@ -330,10 +330,6 @@ final class AIInteractionStore: ObservableObject {
 
     private static func makeDecoder() -> JSONDecoder {
         let decoder = JSONDecoder()
-        let fractionalISO8601Formatter = ISO8601DateFormatter()
-        fractionalISO8601Formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let plainISO8601Formatter = ISO8601DateFormatter()
-        plainISO8601Formatter.formatOptions = [.withInternetDateTime]
         decoder.dateDecodingStrategy = .custom { decoder in
             let container = try decoder.singleValueContainer()
             if let timestamp = try? container.decode(Double.self) {
@@ -343,7 +339,7 @@ final class AIInteractionStore: ObservableObject {
                 return Self.decodeNumericDate(TimeInterval(timestamp))
             }
             let string = try container.decode(String.self)
-            if let date = fractionalISO8601Formatter.date(from: string) ?? plainISO8601Formatter.date(from: string) {
+            if let date = Self.decodeISO8601Date(string) {
                 return date
             }
             throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unsupported date encoding: \(string)")
@@ -351,11 +347,23 @@ final class AIInteractionStore: ObservableObject {
         return decoder
     }
 
-    private static func decodeNumericDate(_ timestamp: TimeInterval) -> Date {
+    nonisolated private static func decodeNumericDate(_ timestamp: TimeInterval) -> Date {
         if timestamp > 1_000_000_000 {
             return Date(timeIntervalSince1970: timestamp)
         }
         return Date(timeIntervalSinceReferenceDate: timestamp)
+    }
+
+    nonisolated private static func decodeISO8601Date(_ string: String) -> Date? {
+        let fractionalISO8601Formatter = ISO8601DateFormatter()
+        fractionalISO8601Formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = fractionalISO8601Formatter.date(from: string) {
+            return date
+        }
+
+        let plainISO8601Formatter = ISO8601DateFormatter()
+        plainISO8601Formatter.formatOptions = [.withInternetDateTime]
+        return plainISO8601Formatter.date(from: string)
     }
 
     private static func makeFileURL() -> URL {

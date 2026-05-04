@@ -16,6 +16,7 @@ struct ContentView: View {
     @State private var showingHeaderFooterSheet = false
     @State private var showingBatesSheet = false
     @State private var showingCropSheet = false
+    @State private var showingMetadataSheet = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -30,7 +31,8 @@ struct ContentView: View {
                 showingWatermarkSheet: $showingWatermarkSheet,
                 showingHeaderFooterSheet: $showingHeaderFooterSheet,
                 showingBatesSheet: $showingBatesSheet,
-                showingCropSheet: $showingCropSheet
+                showingCropSheet: $showingCropSheet,
+                showingMetadataSheet: $showingMetadataSheet
             )
             .environmentObject(documentHub)
 
@@ -53,7 +55,8 @@ struct ContentView: View {
                         showingWatermarkSheet: $showingWatermarkSheet,
                         showingHeaderFooterSheet: $showingHeaderFooterSheet,
                         showingBatesSheet: $showingBatesSheet,
-                        showingCropSheet: $showingCropSheet
+                        showingCropSheet: $showingCropSheet,
+                        showingMetadataSheet: $showingMetadataSheet
                     )
                 case .split:
                     SplitView(selectedTab: $currentMode)
@@ -170,6 +173,7 @@ struct UnifiedToolbar: View {
     @Binding var showingHeaderFooterSheet: Bool
     @Binding var showingBatesSheet: Bool
     @Binding var showingCropSheet: Bool
+    @Binding var showingMetadataSheet: Bool
 
     var body: some View {
         HStack(spacing: 0) {
@@ -242,11 +246,11 @@ struct UnifiedToolbar: View {
                 .buttonStyle(.plain)
                 .help("Open PDF…")
 
-                Button(action: { readerController.saveAs() }) {
+                Button(action: { readerController.saveDocument() }) {
                     Image(systemName: "square.and.arrow.down")
                 }
                 .buttonStyle(.plain)
-                .help("Save As…")
+                .help("Save")
                 .disabled(readerController.document == nil)
 
                 Button(action: { readerController.printDocument() }) {
@@ -263,6 +267,12 @@ struct UnifiedToolbar: View {
                         Button("TIFF") { readerController.exportToImages(format: .tiff) }
                     }
                     Button("Text") { readerController.exportToText() }
+                    Button("Optimized PDF…") { readerController.exportOptimized() }
+                    Button("Metadata-Clean PDF…") { readerController.exportMetadataCleaned() }
+                    Button("Flattened PDF…") { readerController.exportFlattened() }
+                    Button("Encrypted PDF…") { readerController.exportEncrypted() }
+                    Divider()
+                    Button("Sanitized PDF…") { readerController.exportSanitized() }
                 } label: {
                     Image(systemName: "square.and.arrow.up")
                 }
@@ -345,14 +355,14 @@ struct UnifiedToolbar: View {
                 }
                 .buttonStyle(GhostButtonStyle())
 
-                Button(action: saveStudioFile) {
-                    Label("Save", systemImage: "square.and.arrow.down")
+                Button(action: { studioController.saveAs() }) {
+                    Label("Save As", systemImage: "square.and.arrow.down.on.square")
                 }
                 .buttonStyle(GhostButtonStyle())
                 .disabled(studioController.document == nil)
 
-                Button(action: { studioController.saveAs() }) {
-                    Label("Save As", systemImage: "square.and.arrow.down.on.square")
+                Button(action: { studioController.saveDocument() }) {
+                    Label("Save", systemImage: "square.and.arrow.down")
                 }
                 .buttonStyle(GhostButtonStyle())
                 .disabled(studioController.document == nil)
@@ -370,6 +380,12 @@ struct UnifiedToolbar: View {
                         Button("TIFF") { studioController.exportToImages(format: .tiff) }
                     }
                     Button("Text") { studioController.exportToText() }
+                    Button("Optimized PDF…") { studioController.exportOptimized() }
+                    Button("Metadata-Clean PDF…") { studioController.exportMetadataCleaned() }
+                    Button("Flattened PDF…") { studioController.exportFlattened() }
+                    Button("Encrypted PDF…") { studioController.exportEncrypted() }
+                    Divider()
+                    Button("Sanitized PDF…") { studioController.exportSanitized() }
                 } label: {
                     Label("Export", systemImage: "square.and.arrow.up")
                 }
@@ -511,6 +527,21 @@ struct UnifiedToolbar: View {
                     .disabled(studioController.document == nil)
                 Button("Crop Pages…") { showingCropSheet = true }
                     .disabled(studioController.document == nil)
+                Button("Edit Metadata…") { showingMetadataSheet = true }
+                    .disabled(studioController.document == nil)
+                Button("Replace Selected Text…") { studioController.replaceSelectedTextWithPrompt() }
+                    .disabled(!studioController.canReplaceSelectedText)
+                Button("Redact Selected Text") { studioController.redactSelectedTextWithConfirmation() }
+                    .disabled(!studioController.canReplaceSelectedText)
+                Divider()
+                Button("Optimize Copy…") { studioController.exportOptimized() }
+                    .disabled(studioController.document == nil)
+                Button("Remove Metadata Copy…") { studioController.exportMetadataCleaned() }
+                    .disabled(studioController.document == nil)
+                Button("Flatten Copy…") { studioController.exportFlattened() }
+                    .disabled(studioController.document == nil)
+                Button("Encrypt Copy…") { studioController.exportEncrypted() }
+                    .disabled(studioController.document == nil)
             } label: {
                 Label("Tools", systemImage: "slider.horizontal.3")
             }
@@ -519,12 +550,54 @@ struct UnifiedToolbar: View {
 
             // Edit Tools Menu
             Menu("Edit Tools") {
-                Button("Add FreeText") { EditingTools.addFreeText(in: studioController.pdfView) }
-                Button("Add Rectangle") { EditingTools.addRectangle(in: studioController.pdfView) }
-                Button("Add Oval") { EditingTools.addOval(in: studioController.pdfView) }
-                Button("Add Line") { EditingTools.addLine(in: studioController.pdfView) }
-                Button("Add Arrow") { EditingTools.addArrow(in: studioController.pdfView) }
-                Button("Add Ink") { EditingTools.addSampleInk(in: studioController.pdfView) }
+                Button("Add Free Text…") {
+                    if let annotation = EditingTools.addFreeTextWithPrompt(in: studioController.pdfView) {
+                        studioController.registerAnnotationAddition(annotation, actionName: "Add Free Text")
+                    }
+                    studioController.refreshAnnotations()
+                }
+                Button("Add Note…") {
+                    if let annotation = EditingTools.addNoteWithPrompt(in: studioController.pdfView) {
+                        studioController.registerAnnotationAddition(annotation, actionName: "Add Note")
+                    }
+                    studioController.refreshAnnotations()
+                }
+                Button("Add Rectangle") {
+                    if let annotation = EditingTools.addRectangle(in: studioController.pdfView) {
+                        studioController.registerAnnotationAddition(annotation, actionName: "Add Rectangle")
+                    }
+                    studioController.refreshAnnotations()
+                }
+                Button("Add Oval") {
+                    if let annotation = EditingTools.addOval(in: studioController.pdfView) {
+                        studioController.registerAnnotationAddition(annotation, actionName: "Add Oval")
+                    }
+                    studioController.refreshAnnotations()
+                }
+                Button("Add Line") {
+                    if let annotation = EditingTools.addLine(in: studioController.pdfView) {
+                        studioController.registerAnnotationAddition(annotation, actionName: "Add Line")
+                    }
+                    studioController.refreshAnnotations()
+                }
+                Button("Add Arrow") {
+                    if let annotation = EditingTools.addArrow(in: studioController.pdfView) {
+                        studioController.registerAnnotationAddition(annotation, actionName: "Add Arrow")
+                    }
+                    studioController.refreshAnnotations()
+                }
+                Button("Add Link…") {
+                    if let annotation = EditingTools.addLinkWithPrompt(in: studioController.pdfView) {
+                        studioController.registerAnnotationAddition(annotation, actionName: "Add Link")
+                    }
+                    studioController.refreshAnnotations()
+                }
+                Button("Add Ink") {
+                    if let annotation = EditingTools.addSampleInk(in: studioController.pdfView) {
+                        studioController.registerAnnotationAddition(annotation, actionName: "Add Ink")
+                    }
+                    studioController.refreshAnnotations()
+                }
             }
             .menuStyle(.borderlessButton)
             .disabled(studioController.pdfView == nil)
@@ -599,12 +672,4 @@ struct UnifiedToolbar: View {
         }
     }
 
-    private func saveStudioFile() {
-        guard let document = studioController.document else { return }
-        if let url = studioController.currentURL {
-            if document.write(to: url) {
-                studioController.pushLog("Saved \(url.lastPathComponent)")
-            }
-        }
-    }
 }

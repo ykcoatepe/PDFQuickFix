@@ -56,6 +56,42 @@ final class LocalAITaskRunnerTests: XCTestCase {
         XCTAssertEqual(entry.kind, .quickFix(task: .summarize))
     }
 
+    func testShareReadinessReviewRequestsJSONFormat() async throws {
+        let response = "{\"readiness_hint\":\"review\",\"reasons\":[],\"suggested_checks\":[],\"possible_sensitive_items\":[]}"
+        let generator = StubGenerator(response: response)
+        let store = AIInteractionStore(persistToDisk: false)
+        let runner = LocalAITaskRunner(interactionStore: store, client: generator)
+
+        _ = try await runner.run(
+            task: .shareReadinessReview,
+            text: "Passport number AB123",
+            parameters: LocalAITaskParameters(),
+            sourceName: "Packet.pdf",
+            modelName: "stub-model"
+        )
+
+        XCTAssertEqual(generator.lastFormat, "json")
+        XCTAssertEqual(store.entries.first?.kind, .quickFix(task: .shareReadinessReview))
+    }
+
+    func testRedactionCandidatesRequestsJSONFormat() async throws {
+        let response = "{\"candidates\":[],\"page_hints\":[],\"must_review_manually\":[]}"
+        let generator = StubGenerator(response: response)
+        let store = AIInteractionStore(persistToDisk: false)
+        let runner = LocalAITaskRunner(interactionStore: store, client: generator)
+
+        _ = try await runner.run(
+            task: .redactionCandidates,
+            text: "SSN 123-45-6789",
+            parameters: LocalAITaskParameters(),
+            sourceName: "Packet.pdf",
+            modelName: "stub-model"
+        )
+
+        XCTAssertEqual(generator.lastFormat, "json")
+        XCTAssertEqual(store.entries.first?.kind, .quickFix(task: .redactionCandidates))
+    }
+
     func testFallsBackToRawTextWhenJSONInvalid() async throws {
         let response = "not json"
         let generator = StubGenerator(response: response)

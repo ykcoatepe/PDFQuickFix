@@ -43,13 +43,25 @@ struct AnnotationRow: Identifiable, Hashable {
     }
 }
 
+struct AnnotationEditDraft {
+    var contents: String
+    var urlString: String?
+}
+
 enum FormFieldKind: String, CaseIterable, Identifiable {
     case text = "Text Field"
     case checkbox = "Checkbox"
+    case radio = "Radio"
+    case dropdown = "Dropdown"
+    case list = "List"
     case signature = "Signature"
 
     var id: String {
         rawValue
+    }
+
+    var usesOptions: Bool {
+        self == .dropdown || self == .list
     }
 }
 
@@ -59,6 +71,15 @@ struct StudioDebugInfo {
     let isMassiveDocument: Bool
     let renderQueueOps: Int
     let renderTrackedOps: Int
+}
+
+struct DocumentMetadataDraft: Equatable {
+    var title: String = ""
+    var author: String = ""
+    var subject: String = ""
+    var keywords: String = ""
+    var creator: String = ""
+    var producer: String = ""
 }
 
 @MainActor
@@ -75,6 +96,13 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     @Published var selectedPageIDs: Set<Int> = []
     @Published var outlineRows: [OutlineRow] = []
     @Published var annotationRows: [AnnotationRow] = []
+    var formFieldRows: [AnnotationRow] {
+        annotationRows.filter { Self.isFormFieldAnnotation($0.annotation) }
+    }
+    @Published var searchQuery: String = ""
+    @Published var searchMatches: [PDFSelection] = []
+    @Published var currentMatchIndex: Int?
+
     @Published var logMessages: [String] = []
     @Published var validationStatus: String?
     @Published var isFullValidationRunning: Bool = false
@@ -84,10 +112,27 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     @Published var isLargeDocument: Bool = false
     @Published var isMassiveDocument: Bool = false
     @Published var skippedQuickValidation: Bool = false
+    private var requiresUnlockedValidation: Bool = false
     @Published var selectedAnnotation: PDFAnnotation?
     @Published var selectedTool: StudioTool = .organize
     @Published var isRepaired: Bool = false
     @Published var isDocumentHealthPresented: Bool = false
+    @Published private(set) var currentSelectionText: String?
+    private let passwordProvider: PDFPasswordProvider
+
+    init(passwordProvider: @escaping PDFPasswordProvider = PDFPasswordPrompt.requestPassword) {
+        self.passwordProvider = passwordProvider
+        super.init()
+    }
+
+    static func isFormFieldAnnotation(_ annotation: PDFAnnotation) -> Bool {
+        switch annotation.widgetFieldType {
+        case .text, .button, .choice, .signature:
+            true
+        default:
+            false
+        }
+    }
 
     // MARK: - PDFActionable
 
@@ -109,6 +154,10 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         rotateCurrentPageRight()
     }
 
+    var canReplaceSelectedText: Bool {
+        currentSelectionText != nil
+    }
+
     weak var pdfView: PDFView?
     private let validationRunner = DocumentValidationRunner()
     private var snapshotGenerationID = UUID()
@@ -116,6 +165,9 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     private let renderService = PDFRenderService.shared
     private let renderThrottle = RenderThrottle()
     private let snapshotUpdateThrottle = AsyncThrottle(.milliseconds(80))
+    private let editUndoManager = UndoManager()
+    private var findObserver: NSObjectProtocol?
+    private var searchDebounceWorkItem: DispatchWorkItem?
     private let thumbnailCache: NSCache<NSNumber, CGImage> = {
         let cache = NSCache<NSNumber, CGImage>()
         cache.countLimit = 200
@@ -149,18 +201,25 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     private let streamingLoader = StreamingPDFLoader()
 
     deinit {
+        if let findObserver {
+            NotificationCenter.default.removeObserver(findObserver)
+        }
         NotificationCenter.default.removeObserver(self)
         validationRunner.cancelAll()
         snapshotOperation?.cancel()
     }
 
     func attach(pdfView: PDFView) {
+        NotificationCenter.default.removeObserver(self, name: .PDFViewPageChanged, object: self.pdfView)
+        NotificationCenter.default.removeObserver(self, name: .PDFViewSelectionChanged, object: self.pdfView)
         self.pdfView = pdfView
         pdfView.delegate = self
         pdfView.document = document
         applyPDFViewConfiguration()
 
         NotificationCenter.default.addObserver(self, selector: #selector(handlePageChange(_:)), name: .PDFViewPageChanged, object: pdfView)
+        NotificationCenter.default.addObserver(self, selector: #selector(handleSelectionChange(_:)), name: .PDFViewSelectionChanged, object: pdfView)
+        refreshSelectionState()
 
         if let doc = document,
            let page = pdfView.currentPage
@@ -193,6 +252,23 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         prefetchThumbnails(around: index, window: 2, farWindow: 6)
     }
 
+    @objc private func handleSelectionChange(_: Notification) {
+        refreshSelectionState()
+    }
+
+    private func refreshSelectionState() {
+        currentSelectionText = normalizedSelectionText(from: pdfView?.currentSelection)
+    }
+
+    private func normalizedSelectionText(from selection: PDFSelection?) -> String? {
+        guard let value = selection?.string?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty
+        else {
+            return nil
+        }
+        return value
+    }
+
     func open(url: URL, access: SecurityScopedAccess? = nil) {
         validationRunner.cancelValidation()
         validationRunner.cancelOpen()
@@ -208,6 +284,17 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
 
+            if let encryptedDoc = PDFDocument(url: url), encryptedDoc.isEncrypted, encryptedDoc.isLocked {
+                DispatchQueue.main.async {
+                    self.finishEncryptedOpen(document: encryptedDoc,
+                                             sourceURL: url,
+                                             workingURL: url,
+                                             access: effectiveAccess,
+                                             isRepaired: false)
+                }
+                return
+            }
+
             // Repair/Normalize
             var finalURL = url
             var repaired = false
@@ -222,6 +309,11 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
             }
 
             DispatchQueue.main.async {
+                if let rawDoc = PDFDocument(url: finalURL), rawDoc.isEncrypted, rawDoc.isLocked {
+                    self.finishEncryptedOpen(document: rawDoc, sourceURL: url, workingURL: finalURL, access: effectiveAccess, isRepaired: repaired)
+                    return
+                }
+
                 self.validationRunner.openDocument(at: finalURL,
                                                    quickValidationPageLimit: 0,
                                                    progress: { [weak self] processed, total in
@@ -245,9 +337,43 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         }
     }
 
-    private func finishOpen(document newDocument: PDFDocument, sourceURL: URL, workingURL: URL, access: SecurityScopedAccess?, isRepaired: Bool = false) {
+    private func finishEncryptedOpen(document rawDoc: PDFDocument,
+                                     sourceURL: URL,
+                                     workingURL: URL,
+                                     access: SecurityScopedAccess?,
+                                     isRepaired: Bool)
+    {
+        loadingStatus = "Unlocking \(sourceURL.lastPathComponent)…"
+        guard PDFPasswordUnlock.unlockIfNeeded(document: rawDoc, url: sourceURL, passwordProvider: passwordProvider) else {
+            if let studioOpenSignpost {
+                PerfLog.end("StudioOpen", studioOpenSignpost)
+                self.studioOpenSignpost = nil
+            }
+            resetDocumentState()
+            pushLog("Open failed: password required for \(sourceURL.lastPathComponent)")
+            return
+        }
+
+        isDocumentLoading = false
+        loadingStatus = nil
+        finishOpen(document: rawDoc,
+                   sourceURL: sourceURL,
+                   workingURL: workingURL,
+                   access: access,
+                   isRepaired: isRepaired,
+                   requiresUnlockedValidation: true)
+    }
+
+    private func finishOpen(document newDocument: PDFDocument,
+                            sourceURL: URL,
+                            workingURL: URL,
+                            access: SecurityScopedAccess?,
+                            isRepaired: Bool = false,
+                            requiresUnlockedValidation: Bool = false)
+    {
         let sp = PerfLog.begin("StudioFinishOpen")
         defer { PerfLog.end("StudioFinishOpen", sp) }
+        clearEditUndoStacks()
         document = newDocument
         currentURL = workingURL
         self.sourceURL = sourceURL
@@ -271,11 +397,12 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         validationMode = .idle
         isFullValidationRunning = false
         self.isRepaired = isRepaired
+        self.requiresUnlockedValidation = requiresUnlockedValidation
 
         let shouldSkipAutoValidation = DocumentValidationRunner.shouldSkipQuickValidation(
             estimatedPages: nil,
             resolvedPageCount: newDocument.pageCount
-        )
+        ) || requiresUnlockedValidation
         skippedQuickValidation = shouldSkipAutoValidation
         if !isMassive, !shouldSkipAutoValidation {
             scheduleValidation(for: workingURL, pageLimit: 10, mode: .quick)
@@ -300,37 +427,25 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
             PerfLog.end("StudioOpen", openSP)
             studioOpenSignpost = nil
         }
-        document = nil
-        pdfView?.document = nil
-        currentURL = nil
-        sourceURL = nil
-        activeSecurityScope = nil
-        isLargeDocument = false
-        isMassiveDocument = false
-        skippedQuickValidation = false
-        resetThumbnailState()
-        validationStatus = nil
-        validationMode = .idle
-        isFullValidationRunning = false
-        deferOutlineLoad = false
-        deferAnnotationScan = false
-        pageSnapshots = []
-        outlineRows = []
-        annotationRows = []
-        selectedPageIDs = []
-        isThumbnailsLoading = false
+        resetDocumentState()
         pushLog("⚠️ \(error.localizedDescription)")
         present(error)
     }
 
     /// Closes the current document and resets all state.
     func closeDocument() {
+        resetDocumentState(clearLog: true)
+    }
+
+    private func resetDocumentState(clearLog: Bool = false) {
         validationRunner.cancelValidation()
         validationRunner.cancelOpen()
+        clearSearchState()
         isDocumentLoading = false
         loadingStatus = nil
         snapshotOperation?.cancel()
         snapshotOperation = nil
+        clearEditUndoStacks()
         document = nil
         pdfView?.document = nil
         currentURL = nil
@@ -339,6 +454,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         isLargeDocument = false
         isMassiveDocument = false
         skippedQuickValidation = false
+        requiresUnlockedValidation = false
         deferOutlineLoad = false
         deferAnnotationScan = false
         resetThumbnailState()
@@ -350,9 +466,17 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         annotationRows = []
         selectedPageIDs = []
         selectedAnnotation = nil
-        logMessages = []
+        currentSelectionText = nil
+        if clearLog {
+            logMessages = []
+        }
         isRepaired = false
         streamingLoader.close()
+    }
+
+    private func clearEditUndoStacks() {
+        pdfView?.undoManager?.removeAllActions()
+        editUndoManager.removeAllActions()
     }
 
     var canShowDocumentHealth: Bool {
@@ -380,8 +504,27 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
             isMassiveDocument: isMassiveDocument,
             skippedQuickValidation: skippedQuickValidation,
             validationStatus: validationStatus,
-            quickFixResult: quickFixResult
+            quickFixResult: quickFixResult,
+            documentAttributes: document.documentAttributes,
+            hasReplacementTextAnnotations: PDFOps.containsReplacementTextAnnotations(in: document)
         )
+    }
+
+    func exportDocumentHealthReport() {
+        guard let summary = documentHealthSummary else { return }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.plainText]
+        panel.nameFieldStringValue = summary.documentName.replacingOccurrences(of: ".pdf", with: "", options: [.caseInsensitive]) + "-health-report.txt"
+        if panel.runModal() == .OK, let url = panel.url {
+            do {
+                try summary.plainTextReport().write(to: url, atomically: true, encoding: .utf8)
+                pushLog("Exported health report to \(url.lastPathComponent)")
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+            } catch {
+                pushLog("Health report export failed: \(error.localizedDescription)")
+                present(error)
+            }
+        }
     }
 
     // MARK: - Selection & Editing
@@ -396,8 +539,28 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         case topLeft, topRight, bottomLeft, bottomRight
     }
 
+    private struct PageBoundsChange {
+        let page: PDFPage
+        let oldMediaBox: CGRect
+        let oldCropBox: CGRect
+        let newMediaBox: CGRect
+        let newCropBox: CGRect
+    }
+
     private let selectionHandleSize: CGFloat = 6.0
     private var currentDragMode: DragMode = .none
+
+    private var activeUndoManager: UndoManager {
+        pdfView?.undoManager ?? editUndoManager
+    }
+
+    func undoLastEdit() {
+        activeUndoManager.undo()
+    }
+
+    func redoLastEdit() {
+        activeUndoManager.redo()
+    }
 
     func selectAnnotation(_ annotation: PDFAnnotation) {
         guard !isMassiveDocument else { return }
@@ -488,7 +651,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     }
 
     private func registerRotationUndo(page: PDFPage, oldRotation: Int, newRotation: Int) {
-        guard let undoManager = pdfView?.undoManager else { return }
+        let undoManager = activeUndoManager
         undoManager.registerUndo(withTarget: self) { [weak self] _ in
             guard let self else { return }
             page.rotation = oldRotation
@@ -505,12 +668,165 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     func deleteSelectedAnnotation() {
         guard let annotation = selectedAnnotation, let page = annotation.page else { return }
 
-        registerDelete(annotation: annotation, on: page)
+        registerAnnotationRemoval(annotation, on: page, actionName: "Delete Annotation")
 
         deselectAnnotation()
         page.removeAnnotation(annotation)
         refreshAnnotations()
         pushLog("Deleted annotation")
+    }
+
+    func editAnnotation(_ row: AnnotationRow, contents: String) {
+        editAnnotation(row.annotation, contents: contents, urlString: nil)
+    }
+
+    func editAnnotation(_ row: AnnotationRow, draft: AnnotationEditDraft) {
+        editAnnotation(row.annotation, contents: draft.contents, urlString: draft.urlString)
+    }
+
+    func editAnnotation(_ annotation: PDFAnnotation, contents: String, urlString: String? = nil) {
+        let oldContents = annotation.contents
+        let newContents = PDFStringNormalizer.normalizedNonEmpty(contents, context: "annotation contents")
+        let oldURL = annotation.url
+        let newURL = urlString.flatMap(Self.annotationURL)
+        guard oldContents != newContents || oldURL != newURL else { return }
+        registerAnnotationEditUndo(annotation: annotation,
+                                   oldContents: oldContents,
+                                   oldURL: oldURL,
+                                   newContents: newContents,
+                                   newURL: newURL)
+        annotation.contents = newContents
+        if urlString != nil {
+            annotation.url = newURL
+        }
+        refreshAnnotations()
+        pushLog("Edited annotation")
+    }
+
+    private func registerAnnotationEditUndo(annotation: PDFAnnotation,
+                                            oldContents: String?,
+                                            oldURL: URL?,
+                                            newContents: String?,
+                                            newURL: URL?)
+    {
+        let undoManager = activeUndoManager
+        undoManager.registerUndo(withTarget: self) { target in
+            annotation.contents = oldContents
+            annotation.url = oldURL
+            target.refreshAnnotations()
+            target.registerAnnotationEditUndo(annotation: annotation,
+                                              oldContents: newContents,
+                                              oldURL: newURL,
+                                              newContents: oldContents,
+                                              newURL: oldURL)
+        }
+        undoManager.setActionName("Edit Annotation")
+    }
+
+    private static func annotationURL(from string: String) -> URL? {
+        let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return URL(string: trimmed)
+    }
+
+    func replaceSelectedText(with replacement: String) {
+        guard let selection = pdfView?.currentSelection else { return }
+        let sanitized = PDFStringNormalizer.normalizedNonEmpty(replacement, context: "replacement text") ?? ""
+        guard !sanitized.isEmpty else { return }
+
+        var additions: [PDFAnnotation] = []
+        for page in selection.pages {
+            for rect in annotationRects(for: selection, on: page) {
+                let cover = PDFAnnotation(bounds: rect.insetBy(dx: -1, dy: -1), forType: .square, withProperties: nil)
+                cover.color = .white
+                cover.interiorColor = .white
+                cover.userName = PDFOps.replacementTextAnnotationUserName
+                let coverBorder = PDFBorder()
+                coverBorder.lineWidth = 0
+                cover.border = coverBorder
+                page.addAnnotation(cover)
+                additions.append(cover)
+
+                let text = PDFAnnotation(bounds: rect.insetBy(dx: -1, dy: -1), forType: .freeText, withProperties: nil)
+                text.contents = sanitized
+                text.font = NSFont.systemFont(ofSize: max(9, min(rect.height * 0.7, 14)))
+                text.fontColor = .black
+                text.color = .clear
+                text.backgroundColor = .clear
+                text.userName = PDFOps.replacementTextAnnotationUserName
+                page.addAnnotation(text)
+                additions.append(text)
+            }
+        }
+
+        registerAnnotationAdditions(additions, actionName: "Replace Text")
+        refreshAnnotations()
+        pushLog("Replaced selected text")
+    }
+
+    func redactSelectedText() {
+        guard let selection = pdfView?.currentSelection else { return }
+
+        var additions: [PDFAnnotation] = []
+        for page in selection.pages {
+            for rect in annotationRects(for: selection, on: page) {
+                let cover = PDFAnnotation(bounds: rect.insetBy(dx: -1, dy: -1), forType: .square, withProperties: nil)
+                cover.color = .black
+                cover.interiorColor = .black
+                cover.userName = PDFOps.replacementTextAnnotationUserName
+                let border = PDFBorder()
+                border.lineWidth = 0
+                cover.border = border
+                page.addAnnotation(cover)
+                additions.append(cover)
+            }
+        }
+
+        registerAnnotationAdditions(additions, actionName: "Redact Text")
+        refreshAnnotations()
+        pushLog("Redacted selected text")
+    }
+
+    @MainActor
+    func replaceSelectedTextWithPrompt() {
+        guard pdfView?.currentSelection != nil else { return }
+        let field = NSTextField(string: "")
+        field.placeholderString = "Replacement text"
+        field.frame = CGRect(x: 0, y: 0, width: 340, height: 24)
+
+        let alert = NSAlert()
+        alert.messageText = "Replace Selected Text"
+        alert.informativeText = "PDFQuickFix will cover the selected text and place editable replacement text on top."
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Replace")
+        alert.addButton(withTitle: "Cancel")
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        replaceSelectedText(with: field.stringValue)
+    }
+
+    @MainActor
+    func redactSelectedTextWithConfirmation() {
+        guard pdfView?.currentSelection != nil else { return }
+        let alert = NSAlert()
+        alert.messageText = "Redact Selected Text"
+        alert.informativeText = "PDFQuickFix will cover the selected text. Export a flattened or sanitized copy before sharing so the original text layer is removed."
+        alert.addButton(withTitle: "Redact")
+        alert.addButton(withTitle: "Cancel")
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        redactSelectedText()
+    }
+
+    private func annotationRects(for selection: PDFSelection, on page: PDFPage) -> [CGRect] {
+        let perLine = selection.selectionsByLine()
+        let rects = perLine
+            .filter { $0.pages.contains(page) }
+            .map { $0.bounds(for: page) }
+            .filter { !$0.isEmpty }
+        if !rects.isEmpty { return rects }
+        let fallback = selection.bounds(for: page)
+        return fallback.isEmpty ? [] : [fallback]
     }
 
     func handleMouseDown(in view: PDFView, with event: NSEvent) -> Bool {
@@ -672,7 +988,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     }
 
     private func registerBoundsChange(annotation: PDFAnnotation, oldBounds: CGRect, newBounds: CGRect) {
-        guard let undoManager = pdfView?.undoManager else { return }
+        let undoManager = activeUndoManager
         undoManager.registerUndo(withTarget: self) { target in
             annotation.bounds = oldBounds
             target.selectionHelperAnnotation?.bounds = oldBounds
@@ -683,16 +999,230 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         }
     }
 
-    private func registerDelete(annotation: PDFAnnotation, on page: PDFPage) {
-        guard let undoManager = pdfView?.undoManager else { return }
+    func registerAnnotationAddition(_ annotation: PDFAnnotation, actionName: String = "Add Annotation") {
+        guard let page = annotation.page else { return }
+        let undoManager = activeUndoManager
+        undoManager.registerUndo(withTarget: self) { target in
+            target.clearSelectedAnnotationIfNeeded(annotation)
+            page.removeAnnotation(annotation)
+            target.refreshAnnotations()
+            target.registerAnnotationRemoval(annotation, on: page, actionName: actionName)
+        }
+        if !undoManager.isUndoing {
+            undoManager.setActionName(actionName)
+        }
+    }
+
+    private func registerAnnotationRemoval(_ annotation: PDFAnnotation, on page: PDFPage, actionName: String) {
+        let undoManager = activeUndoManager
         undoManager.registerUndo(withTarget: self) { target in
             page.addAnnotation(annotation)
             target.selectAnnotation(annotation)
             target.refreshAnnotations()
-            target.registerDelete(annotation: annotation, on: page)
+            target.registerAnnotationAddition(annotation, actionName: actionName)
         }
         if !undoManager.isUndoing {
-            undoManager.setActionName("Delete Annotation")
+            undoManager.setActionName(actionName)
+        }
+    }
+
+    private func registerAnnotationAdditions(_ annotations: [PDFAnnotation], actionName: String) {
+        let entries = annotations.compactMap { annotation -> (PDFAnnotation, PDFPage)? in
+            guard let page = annotation.page else { return nil }
+            return (annotation, page)
+        }
+        guard !entries.isEmpty else { return }
+
+        let undoManager = activeUndoManager
+        undoManager.registerUndo(withTarget: self) { target in
+            for (annotation, page) in entries {
+                target.clearSelectedAnnotationIfNeeded(annotation)
+                page.removeAnnotation(annotation)
+            }
+            target.refreshAnnotations()
+            target.registerAnnotationRemovals(entries, actionName: actionName)
+        }
+        if !undoManager.isUndoing {
+            undoManager.setActionName(actionName)
+        }
+    }
+
+    private func registerAnnotationRemovals(_ entries: [(PDFAnnotation, PDFPage)], actionName: String) {
+        guard !entries.isEmpty else { return }
+        let undoManager = activeUndoManager
+        undoManager.registerUndo(withTarget: self) { target in
+            for (annotation, page) in entries {
+                page.addAnnotation(annotation)
+            }
+            target.refreshAnnotations()
+            target.registerAnnotationAdditions(entries.map(\.0), actionName: actionName)
+        }
+        if !undoManager.isUndoing {
+            undoManager.setActionName(actionName)
+        }
+    }
+
+    private func clearSelectedAnnotationIfNeeded(_ annotation: PDFAnnotation) {
+        guard selectedAnnotation === annotation else { return }
+        deselectAnnotation()
+    }
+
+    private func detachSelectionHelperForPersistence() -> (SelectionAnnotation, PDFPage)? {
+        guard let helper = selectionHelperAnnotation as? SelectionAnnotation,
+              let page = helper.page else { return nil }
+        page.removeAnnotation(helper)
+        selectionHelperAnnotation = nil
+        return (helper, page)
+    }
+
+    private func restoreSelectionHelperAfterPersistence(_ detached: (SelectionAnnotation, PDFPage)?) {
+        guard let (helper, page) = detached,
+              selectedAnnotation?.page === page
+        else { return }
+        page.addAnnotation(helper)
+        selectionHelperAnnotation = helper
+    }
+
+    private func newAnnotations(after operation: () -> Void) -> [PDFAnnotation] {
+        guard let document else {
+            operation()
+            return []
+        }
+        let before = annotationIdentitySnapshot(in: document)
+        operation()
+        return addedAnnotations(in: document, after: before)
+    }
+
+    private func annotationIdentitySnapshot(in document: PDFDocument) -> [PDFPage: Set<ObjectIdentifier>] {
+        var snapshot: [PDFPage: Set<ObjectIdentifier>] = [:]
+        for index in 0 ..< document.pageCount {
+            guard let page = document.page(at: index) else { continue }
+            snapshot[page] = Set(page.annotations.map { ObjectIdentifier($0) })
+        }
+        return snapshot
+    }
+
+    private func addedAnnotations(in document: PDFDocument, after snapshot: [PDFPage: Set<ObjectIdentifier>]) -> [PDFAnnotation] {
+        var additions: [PDFAnnotation] = []
+        for index in 0 ..< document.pageCount {
+            guard let page = document.page(at: index) else { continue }
+            let known = snapshot[page] ?? []
+            additions.append(contentsOf: page.annotations.filter { !known.contains(ObjectIdentifier($0)) })
+        }
+        return additions
+    }
+
+    private func registerPageBoundsChange(_ changes: [PageBoundsChange], actionName: String) {
+        guard !changes.isEmpty else { return }
+        let undoManager = activeUndoManager
+        undoManager.registerUndo(withTarget: self) { target in
+            for change in changes {
+                change.page.setBounds(change.oldMediaBox, for: .mediaBox)
+                change.page.setBounds(change.oldCropBox, for: .cropBox)
+            }
+            target.refreshPages()
+            target.registerPageBoundsChange(changes.map {
+                PageBoundsChange(page: $0.page,
+                                 oldMediaBox: $0.newMediaBox,
+                                 oldCropBox: $0.newCropBox,
+                                 newMediaBox: $0.oldMediaBox,
+                                 newCropBox: $0.oldCropBox)
+            }, actionName: actionName)
+        }
+        if !undoManager.isUndoing {
+            undoManager.setActionName(actionName)
+        }
+    }
+
+    private func registerOutlineInsertion(_ outline: PDFOutline,
+                                          parent: PDFOutline,
+                                          document: PDFDocument,
+                                          index: Int,
+                                          createdRoot: Bool,
+                                          actionName: String)
+    {
+        let undoManager = activeUndoManager
+        undoManager.registerUndo(withTarget: self) { target in
+            outline.removeFromParent()
+            if createdRoot {
+                document.outlineRoot = nil
+            }
+            target.refreshOutline()
+            target.registerOutlineRemoval(outline,
+                                          parent: parent,
+                                          document: document,
+                                          index: index,
+                                          createdRoot: createdRoot,
+                                          actionName: actionName)
+        }
+        if !undoManager.isUndoing {
+            undoManager.setActionName(actionName)
+        }
+    }
+
+    private func registerOutlineRemoval(_ outline: PDFOutline,
+                                        parent: PDFOutline,
+                                        document: PDFDocument,
+                                        index: Int,
+                                        createdRoot: Bool,
+                                        actionName: String)
+    {
+        let undoManager = activeUndoManager
+        undoManager.registerUndo(withTarget: self) { target in
+            if createdRoot {
+                document.outlineRoot = parent
+            }
+            let insertionIndex = min(max(index, 0), parent.numberOfChildren)
+            parent.insertChild(outline, at: insertionIndex)
+            target.refreshOutline()
+            target.registerOutlineInsertion(outline,
+                                            parent: parent,
+                                            document: document,
+                                            index: insertionIndex,
+                                            createdRoot: createdRoot,
+                                            actionName: actionName)
+        }
+        if !undoManager.isUndoing {
+            undoManager.setActionName(actionName)
+        }
+    }
+
+    private func registerOutlineRename(_ outline: PDFOutline, oldLabel: String?, newLabel: String?, actionName: String) {
+        let undoManager = activeUndoManager
+        undoManager.registerUndo(withTarget: self) { target in
+            outline.label = oldLabel
+            target.refreshOutline()
+            target.registerOutlineRename(outline, oldLabel: newLabel, newLabel: oldLabel, actionName: actionName)
+        }
+        if !undoManager.isUndoing {
+            undoManager.setActionName(actionName)
+        }
+    }
+
+    private func outlineChildIndex(_ outline: PDFOutline, in parent: PDFOutline) -> Int? {
+        for index in 0 ..< parent.numberOfChildren {
+            if parent.child(at: index) === outline {
+                return index
+            }
+        }
+        return nil
+    }
+
+    private func registerMetadataChange(document: PDFDocument,
+                                        oldAttributes: [AnyHashable: Any]?,
+                                        newAttributes: [AnyHashable: Any]?,
+                                        actionName: String)
+    {
+        let undoManager = activeUndoManager
+        undoManager.registerUndo(withTarget: self) { target in
+            document.documentAttributes = oldAttributes
+            target.registerMetadataChange(document: document,
+                                          oldAttributes: newAttributes,
+                                          newAttributes: oldAttributes,
+                                          actionName: actionName)
+        }
+        if !undoManager.isUndoing {
+            undoManager.setActionName(actionName)
         }
     }
 
@@ -738,6 +1268,8 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
 
     func setDocument(_ document: PDFDocument?, url: URL? = nil) {
         validationRunner.cancelValidation()
+        clearEditUndoStacks()
+        clearSearchState()
         self.document = document
         if let url {
             currentURL = url
@@ -761,11 +1293,20 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         resetThumbnailState()
         pdfView?.document = document
         applyPDFViewConfiguration()
+        refreshSelectionState()
         refreshAll()
     }
 
     func runFullValidation() {
         guard let url = currentURL, document != nil, !isFullValidationRunning else { return }
+        guard !requiresUnlockedValidation else {
+            skippedQuickValidation = true
+            validationMode = .idle
+            isFullValidationRunning = false
+            validationStatus = nil
+            pushLog("Full validation skipped for encrypted PDF. Export an unlocked, sanitized copy before validating.")
+            return
+        }
         scheduleValidation(for: url, pageLimit: nil, mode: .full)
     }
 
@@ -781,6 +1322,94 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         } else {
             refreshAnnotations()
         }
+    }
+
+    // MARK: - Search
+
+    func find(_ text: String) {
+        searchMatches.removeAll()
+        currentMatchIndex = nil
+        let query = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if query.isEmpty {
+            document?.cancelFindString()
+            if let findObserver {
+                NotificationCenter.default.removeObserver(findObserver)
+                self.findObserver = nil
+            }
+            return
+        }
+        guard let doc = document else { return }
+
+        if let findObserver {
+            NotificationCenter.default.removeObserver(findObserver)
+            self.findObserver = nil
+        }
+        findObserver = NotificationCenter.default.addObserver(
+            forName: .PDFDocumentDidFindMatch,
+            object: doc,
+            queue: .main
+        ) { [weak self] note in
+            guard let selection = note.userInfo?["PDFDocumentFoundSelection"] as? PDFSelection else { return }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                searchMatches.append(selection)
+                if let index = searchMatches.indices.last, currentMatchIndex == nil {
+                    focusSelection(selection, at: index)
+                }
+            }
+        }
+
+        doc.cancelFindString()
+        doc.beginFindString(query, withOptions: [.caseInsensitive])
+    }
+
+    func updateSearchQueryDebounced(_ text: String) {
+        searchDebounceWorkItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            self?.find(text)
+        }
+        searchDebounceWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: item)
+    }
+
+    func focusSelection(_ selection: PDFSelection, at index: Int? = nil) {
+        selection.color = .yellow.withAlphaComponent(0.35)
+        pdfView?.setCurrentSelection(selection, animate: true)
+        pdfView?.go(to: selection)
+        currentMatchIndex = index ?? searchMatches.firstIndex(of: selection)
+    }
+
+    func findNext() {
+        guard !searchMatches.isEmpty else { return }
+        let nextIndex: Int = if let currentMatchIndex {
+            (currentMatchIndex + 1) % searchMatches.count
+        } else {
+            0
+        }
+        focusSelection(searchMatches[nextIndex], at: nextIndex)
+    }
+
+    func findPrev() {
+        guard !searchMatches.isEmpty else { return }
+        let previousIndex: Int = if let currentMatchIndex {
+            (currentMatchIndex - 1 + searchMatches.count) % searchMatches.count
+        } else {
+            max(searchMatches.count - 1, 0)
+        }
+        focusSelection(searchMatches[previousIndex], at: previousIndex)
+    }
+
+    private func clearSearchState() {
+        document?.cancelFindString()
+        searchDebounceWorkItem?.cancel()
+        searchDebounceWorkItem = nil
+        if let findObserver {
+            NotificationCenter.default.removeObserver(findObserver)
+            self.findObserver = nil
+        }
+        searchQuery = ""
+        searchMatches = []
+        currentMatchIndex = nil
     }
 
     func refreshPages() {
@@ -889,6 +1518,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         for index in 0 ..< doc.pageCount {
             guard let page = doc.page(at: index) else { continue }
             for annotation in page.annotations {
+                if annotation is SelectionAnnotation { continue }
                 rows.append(AnnotationRow(annotation: annotation, pageIndex: index))
             }
         }
@@ -908,7 +1538,10 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
 
     func movePages(from source: IndexSet, to destination: Int) {
         guard let doc = document else { return }
+        let previousOrder = pageOrder(in: doc)
+        let previousSelection = selectedPageIDs
         let pages = source.sorted().compactMap { doc.page(at: $0) }
+        guard !pages.isEmpty else { return }
         for index in source.sorted(by: >) {
             doc.removePage(at: index)
         }
@@ -922,6 +1555,11 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         }
         selectedPageIDs = []
         refreshPages()
+        registerPageOrderChange(previousOrder: previousOrder,
+                                nextOrder: pageOrder(in: doc),
+                                previousSelection: previousSelection,
+                                nextSelection: selectedPageIDs,
+                                actionName: "Reorder Pages")
         pushLog("Reordered \(pages.count) page(s)")
     }
 
@@ -929,11 +1567,18 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         guard let doc = document,
               let page = doc.page(at: index),
               index != newIndex else { return }
+        let previousOrder = pageOrder(in: doc)
+        let previousSelection = selectedPageIDs
         doc.removePage(at: index)
         let destination = max(0, min(newIndex, doc.pageCount))
         doc.insert(page, at: destination)
         selectedPageIDs = Set([destination])
         refreshPages()
+        registerPageOrderChange(previousOrder: previousOrder,
+                                nextOrder: pageOrder(in: doc),
+                                previousSelection: previousSelection,
+                                nextSelection: selectedPageIDs,
+                                actionName: "Move Page")
         pushLog("Moved page \(index + 1) to \(destination + 1)")
     }
 
@@ -942,12 +1587,17 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         guard let doc = document else { return false }
         let targets = selectedPageIDs.sorted(by: >)
         guard !targets.isEmpty else { return false }
+        let removedPages: [(index: Int, page: PDFPage)] = targets.compactMap { index in
+            guard index < doc.pageCount, let page = doc.page(at: index) else { return nil }
+            return (index, page)
+        }
         for index in targets {
             guard index < doc.pageCount else { continue }
             doc.removePage(at: index)
         }
         selectedPageIDs = []
         refreshPages()
+        registerPageDeletionUndo(removedPages: removedPages, actionName: "Delete Page")
         pushLog("Deleted \(targets.count) page(s)")
         return true
     }
@@ -957,14 +1607,224 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         guard let doc = document else { return false }
         let targets = selectedPageIDs.sorted(by: >)
         guard !targets.isEmpty else { return false }
+        var insertedPages: [PDFPage] = []
         for index in targets {
             guard let page = doc.page(at: index),
                   let clone = page.copy() as? PDFPage else { continue }
             doc.insert(clone, at: index + 1)
+            insertedPages.append(clone)
         }
         refreshPages()
+        registerPageInsertionUndo(insertedPages: insertedPages, actionName: "Duplicate Page")
         pushLog("Duplicated \(targets.count) page(s)")
         return true
+    }
+
+    @discardableResult
+    func insertBlankPage(after index: Int? = nil) -> Bool {
+        guard let doc = document else { return false }
+        let insertionIndex = boundedInsertionIndex(after: index)
+        guard let page = makeBlankPage(referenceIndex: insertionIndex - 1) else { return false }
+        doc.insert(page, at: insertionIndex)
+        selectedPageIDs = [insertionIndex]
+        refreshPages()
+        registerPageInsertionUndo(insertedIndices: [insertionIndex], actionName: "Insert Blank Page")
+        goTo(page: insertionIndex)
+        pushLog("Inserted blank page at \(insertionIndex + 1)")
+        return true
+    }
+
+    func importPagesFromFiles() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.pdf, .png, .jpeg, .tiff]
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        panel.message = "Choose PDFs or images to insert into the current document"
+        if panel.runModal() == .OK {
+            let count = importPages(from: panel.urls, after: selectedPageIDs.sorted().last)
+            if count > 0 {
+                pushLog("Imported \(count) page(s) from \(panel.urls.count) file(s)")
+            } else {
+                pushLog("Import failed: no pages could be created from the selected file(s)")
+            }
+        }
+    }
+
+    @discardableResult
+    func importPages(from source: PDFDocument, after index: Int? = nil) -> Int {
+        guard let doc = document, source.pageCount > 0 else { return 0 }
+        let insertionIndex = boundedInsertionIndex(after: index)
+        var inserted = 0
+        for sourceIndex in 0 ..< source.pageCount {
+            guard let page = source.page(at: sourceIndex),
+                  let copy = page.copy() as? PDFPage
+            else { continue }
+            doc.insert(copy, at: insertionIndex + inserted)
+            inserted += 1
+        }
+        guard inserted > 0 else { return 0 }
+        selectedPageIDs = Set(insertionIndex ..< insertionIndex + inserted)
+        refreshPages()
+        registerPageInsertionUndo(insertedIndices: Array(insertionIndex ..< insertionIndex + inserted), actionName: "Import Pages")
+        goTo(page: insertionIndex)
+        return inserted
+    }
+
+    @discardableResult
+    func importPages(from urls: [URL], after index: Int? = nil) -> Int {
+        guard let doc = document, !urls.isEmpty else { return 0 }
+        let insertionIndex = boundedInsertionIndex(after: index)
+        var inserted = 0
+        for url in urls {
+            for page in makeImportPages(from: url) {
+                doc.insert(page, at: insertionIndex + inserted)
+                inserted += 1
+            }
+        }
+        guard inserted > 0 else { return 0 }
+        selectedPageIDs = Set(insertionIndex ..< insertionIndex + inserted)
+        refreshPages()
+        registerPageInsertionUndo(insertedIndices: Array(insertionIndex ..< insertionIndex + inserted), actionName: "Import Pages")
+        goTo(page: insertionIndex)
+        return inserted
+    }
+
+    private func registerPageInsertionUndo(insertedIndices: [Int], actionName: String) {
+        guard !insertedIndices.isEmpty else { return }
+        let undoManager = activeUndoManager
+        undoManager.registerUndo(withTarget: self) { target in
+            guard let doc = target.document else { return }
+            var removedPages: [(index: Int, page: PDFPage)] = []
+            for index in insertedIndices.sorted(by: >) {
+                guard index < doc.pageCount, let page = doc.page(at: index) else { continue }
+                doc.removePage(at: index)
+                removedPages.append((index, page))
+            }
+            target.selectedPageIDs = []
+            target.refreshPages()
+            target.registerPageDeletionUndo(removedPages: removedPages, actionName: actionName)
+        }
+        if !undoManager.isUndoing {
+            undoManager.setActionName(actionName)
+        }
+    }
+
+    private func registerPageInsertionUndo(insertedPages: [PDFPage], actionName: String) {
+        guard !insertedPages.isEmpty else { return }
+        let undoManager = activeUndoManager
+        undoManager.registerUndo(withTarget: self) { target in
+            guard let doc = target.document else { return }
+            var removedPages: [(index: Int, page: PDFPage)] = []
+            for page in insertedPages {
+                let index = doc.index(for: page)
+                guard index != NSNotFound else { continue }
+                doc.removePage(at: index)
+                removedPages.append((index, page))
+            }
+            target.selectedPageIDs = []
+            target.refreshPages()
+            target.registerPageDeletionUndo(removedPages: removedPages, actionName: actionName)
+        }
+        if !undoManager.isUndoing {
+            undoManager.setActionName(actionName)
+        }
+    }
+
+    private func registerPageDeletionUndo(removedPages: [(index: Int, page: PDFPage)], actionName: String) {
+        guard !removedPages.isEmpty else { return }
+        let undoManager = activeUndoManager
+        undoManager.registerUndo(withTarget: self) { target in
+            guard let doc = target.document else { return }
+            var restoredIndices: [Int] = []
+            for item in removedPages.sorted(by: { $0.index < $1.index }) {
+                let index = max(0, min(item.index, doc.pageCount))
+                doc.insert(item.page, at: index)
+                restoredIndices.append(index)
+            }
+            target.selectedPageIDs = Set(restoredIndices)
+            target.refreshPages()
+            target.registerPageInsertionUndo(insertedIndices: restoredIndices, actionName: actionName)
+        }
+        if !undoManager.isUndoing {
+            undoManager.setActionName(actionName)
+        }
+    }
+
+    private func registerPageOrderChange(previousOrder: [PDFPage],
+                                         nextOrder: [PDFPage],
+                                         previousSelection: Set<Int>,
+                                         nextSelection: Set<Int>,
+                                         actionName: String)
+    {
+        guard previousOrder.map(ObjectIdentifier.init) != nextOrder.map(ObjectIdentifier.init) else { return }
+        let undoManager = activeUndoManager
+        undoManager.registerUndo(withTarget: self) { target in
+            target.applyPageOrder(previousOrder, selection: previousSelection)
+            target.registerPageOrderChange(previousOrder: nextOrder,
+                                           nextOrder: previousOrder,
+                                           previousSelection: nextSelection,
+                                           nextSelection: previousSelection,
+                                           actionName: actionName)
+        }
+        if !undoManager.isUndoing {
+            undoManager.setActionName(actionName)
+        }
+    }
+
+    private func pageOrder(in document: PDFDocument) -> [PDFPage] {
+        (0 ..< document.pageCount).compactMap { document.page(at: $0) }
+    }
+
+    private func applyPageOrder(_ pages: [PDFPage], selection: Set<Int>) {
+        guard let doc = document else { return }
+        if doc.pageCount > 0 {
+            for index in stride(from: doc.pageCount - 1, through: 0, by: -1) {
+                doc.removePage(at: index)
+            }
+        }
+        for (index, page) in pages.enumerated() {
+            doc.insert(page, at: index)
+        }
+        selectedPageIDs = selection
+        refreshPages()
+    }
+
+    private func boundedInsertionIndex(after index: Int?) -> Int {
+        guard let doc = document else { return 0 }
+        let anchor = index ?? selectedPageIDs.sorted().last ?? currentDisplayedPageIndex()
+        guard let anchor else { return doc.pageCount }
+        return max(0, min(anchor + 1, doc.pageCount))
+    }
+
+    private func makeBlankPage(referenceIndex: Int) -> PDFPage? {
+        let fallbackSize = CGSize(width: 612, height: 792)
+        let referenceSize = document?
+            .page(at: max(0, min(referenceIndex, (document?.pageCount ?? 1) - 1)))?
+            .bounds(for: .mediaBox)
+            .size ?? fallbackSize
+        let size = CGSize(width: max(referenceSize.width, 1), height: max(referenceSize.height, 1))
+        let image = NSImage(size: size)
+        image.lockFocus()
+        NSColor.white.setFill()
+        NSRect(origin: .zero, size: size).fill()
+        image.unlockFocus()
+        return PDFPage(image: image)
+    }
+
+    private func makeImportPages(from url: URL) -> [PDFPage] {
+        if let source = PDFDocument(url: url) {
+            return (0 ..< source.pageCount).compactMap { index in
+                guard let page = source.page(at: index) else { return nil }
+                return page.copy() as? PDFPage
+            }
+        }
+
+        guard let image = NSImage(contentsOf: url),
+              let page = PDFPage(image: image)
+        else {
+            return []
+        }
+        return [page]
     }
 
     func saveAs() {
@@ -973,12 +1833,65 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         panel.allowedContentTypes = [.pdf]
         panel.nameFieldStringValue = (currentURL?.lastPathComponent ?? "PDFQuickFix.pdf")
         if panel.runModal() == .OK, let url = panel.url {
-            if doc.write(to: url) {
-                setDocument(doc, url: url)
+            if writeDocument(doc, to: url) {
+                setDocument(document ?? doc, url: url)
+                sourceURL = url
                 pushLog("Saved as \(url.lastPathComponent)")
             } else {
                 pushLog("Failed to save to \(url.path)")
             }
+        }
+    }
+
+    func saveDocument() {
+        guard let doc = document else { return }
+        guard let url = sourceURL ?? currentURL ?? doc.documentURL else {
+            saveAs()
+            return
+        }
+
+        if writeDocument(doc, to: url) {
+            currentURL = url
+            sourceURL = url
+            pushLog("Saved \(url.lastPathComponent)")
+        } else {
+            pushLog("Save failed: \(url.lastPathComponent)")
+        }
+    }
+
+    private func writeDocument(_ doc: PDFDocument, to url: URL) -> Bool {
+        guard PDFOps.containsReplacementTextAnnotations(in: doc) else {
+            let detachedHelper = detachSelectionHelperForPersistence()
+            defer { restoreSelectionHelperAfterPersistence(detachedHelper) }
+            return doc.write(to: url)
+        }
+        guard !doc.isEncrypted else {
+            pushLog("Save blocked: export an encrypted copy after replacing text in a protected PDF.")
+            return false
+        }
+
+        let detachedHelper = detachSelectionHelperForPersistence()
+        do {
+            let data = try PDFOps.flattenedData(document: doc)
+            try data.write(to: url, options: .atomic)
+            guard let flattened = PDFDocument(data: data) else {
+                throw PDFOpsError.saveFailed
+            }
+            document = flattened
+            pdfView?.document = flattened
+            currentSelectionText = nil
+            selectedAnnotation = nil
+            selectedPageIDs = []
+            clearEditUndoStacks()
+            refreshPages()
+            refreshOutline()
+            refreshAnnotations()
+            return true
+        } catch {
+            restoreSelectionHelperAfterPersistence(detachedHelper)
+            pushLog("Save failed: \(error.localizedDescription)")
+            present(error)
+            return false
         }
     }
 
@@ -1030,7 +1943,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     }
 
     func exportToImages(format: NSBitmapImageRep.FileType) {
-        guard let doc = document, let snapshot = doc.dataRepresentation() else {
+        guard document != nil else {
             pushLog("Export failed: couldn't read current document state")
             return
         }
@@ -1043,6 +1956,15 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         panel.directoryURL = currentURL?.deletingLastPathComponent()
 
         if panel.runModal() == .OK, let outputDir = panel.url {
+            let snapshot: Data
+            do {
+                snapshot = try imageExportSnapshotData()
+            } catch {
+                pushLog("Export failed: \(error.localizedDescription)")
+                present(error)
+                return
+            }
+
             let fileExtension = switch format {
             case .jpeg: "jpg"
             case .png: "png"
@@ -1092,6 +2014,15 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         }
     }
 
+    func imageExportSnapshotData() throws -> Data {
+        guard let document else { throw PDFOpsError.missingDocument }
+        let snapshot = try PDFOps.privacyPreservingSnapshot(document: document)
+        guard let data = snapshot.dataRepresentation() else {
+            throw PDFOpsError.saveFailed
+        }
+        return data
+    }
+
     var hasPrintableDocument: Bool {
         document != nil
     }
@@ -1103,8 +2034,16 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     }
 
     func exportToText() {
-        guard let doc = document, let snapshot = doc.dataRepresentation() else {
+        guard let doc = document else {
             pushLog("Export failed: couldn't read current document state")
+            return
+        }
+        guard !PDFOps.containsReplacementTextAnnotations(in: doc) else {
+            pushLog("Export blocked: Text export is blocked after Replace Text or Redact Text because the original text layer may still be extractable. Export a sanitized or flattened PDF copy instead.")
+            return
+        }
+        guard !doc.isEncrypted else {
+            pushLog("Export blocked: Text export is blocked for encrypted PDFs. Export a flattened or sanitized copy first.")
             return
         }
         let panel = NSSavePanel()
@@ -1114,6 +2053,12 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         if panel.runModal() == .OK, let url = panel.url {
             isDocumentLoading = true
             loadingStatus = "Exporting text..."
+            guard let snapshotData = doc.dataRepresentation() else {
+                isDocumentLoading = false
+                loadingStatus = nil
+                pushLog("Export failed: couldn't snapshot current document state")
+                return
+            }
 
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 defer {
@@ -1123,30 +2068,138 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
                     }
                 }
 
-                // Create a new PDFDocument instance for background processing
-                guard let backgroundDoc = PDFDocument(data: snapshot) else {
+                do {
+                    guard let snapshot = PDFDocument(data: snapshotData) else {
+                        throw PDFOpsError.missingDocument
+                    }
+                    let fullText = try PDFOps.extractTextForExport(document: snapshot)
+                    try fullText.write(to: url, atomically: true, encoding: .utf8)
+
                     DispatchQueue.main.async {
-                        self?.pushLog("Export failed: couldn't read current document state")
+                        self?.pushLog("Exported text to \(url.lastPathComponent)")
+                        NSWorkspace.shared.activateFileViewerSelecting([url])
                     }
-                    return
-                }
-
-                var fullText = ""
-                for i in 0 ..< backgroundDoc.pageCount {
-                    if let page = backgroundDoc.page(at: i), let text = page.string {
-                        fullText += "--- Page \(i + 1) ---\n\n"
-                        fullText += text
-                        fullText += "\n\n"
+                } catch {
+                    DispatchQueue.main.async {
+                        self?.pushLog("Export failed: \(error.localizedDescription)")
                     }
-                }
-
-                try? fullText.write(to: url, atomically: true, encoding: .utf8)
-
-                DispatchQueue.main.async {
-                    self?.pushLog("Exported text to \(url.lastPathComponent)")
-                    NSWorkspace.shared.activateFileViewerSelecting([url])
                 }
             }
+        }
+    }
+
+    func exportOptimized() {
+        guard let doc = document else {
+            pushLog("Export failed: no document is loaded")
+            return
+        }
+
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.pdf]
+        panel.nameFieldStringValue = (currentURL?.deletingPathExtension().lastPathComponent ?? "Document") + "-optimized.pdf"
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        let snapshotData: Data
+        do {
+            let snapshot = try PDFOps.privacyPreservingSnapshot(document: doc)
+            guard let data = snapshot.dataRepresentation() else {
+                throw PDFOpsError.saveFailed
+            }
+            snapshotData = data
+        } catch {
+            pushLog("Optimize export failed: \(error.localizedDescription)")
+            present(error)
+            return
+        }
+
+        pushLog("Optimizing \(url.lastPathComponent)…")
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                guard let snapshot = PDFDocument(data: snapshotData),
+                      let optimizedData = PDFOps.optimize(document: snapshot)
+                else {
+                    throw PDFOpsError.saveFailed
+                }
+                try optimizedData.write(to: url, options: .atomic)
+                Task { @MainActor [weak self] in
+                    self?.pushLog("Exported optimized copy to \(url.lastPathComponent)")
+                    NSWorkspace.shared.activateFileViewerSelecting([url])
+                }
+            } catch {
+                Task { @MainActor [weak self] in
+                    self?.pushLog("Optimize export failed: \(error.localizedDescription)")
+                    self?.present(error)
+                }
+            }
+        }
+    }
+
+    func exportMetadataCleaned() {
+        guard let doc = document else {
+            pushLog("Export failed: no document is loaded")
+            return
+        }
+
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.pdf]
+        panel.nameFieldStringValue = (currentURL?.deletingPathExtension().lastPathComponent ?? "Document") + "-metadata-clean.pdf"
+
+        if panel.runModal() == .OK, let url = panel.url {
+            do {
+                let cleanedData = try PDFOps.metadataCleanedData(document: doc, sourceURL: currentURL)
+                try cleanedData.write(to: url, options: .atomic)
+                pushLog("Exported metadata-clean copy to \(url.lastPathComponent)")
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+            } catch {
+                pushLog("Metadata-clean export failed: \(error.localizedDescription)")
+                present(error)
+            }
+        }
+    }
+
+    func exportFlattened() {
+        guard let doc = document else {
+            pushLog("Export failed: no document is loaded")
+            return
+        }
+
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.pdf]
+        panel.nameFieldStringValue = (currentURL?.deletingPathExtension().lastPathComponent ?? "Document") + "-flattened.pdf"
+
+        if panel.runModal() == .OK, let url = panel.url {
+            do {
+                let flattenedData = try PDFOps.flattenedData(document: doc)
+                try flattenedData.write(to: url, options: .atomic)
+                pushLog("Exported flattened copy to \(url.lastPathComponent)")
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+            } catch {
+                pushLog("Flattened export failed: \(error.localizedDescription)")
+                present(error)
+            }
+        }
+    }
+
+    func exportEncrypted() {
+        guard let doc = document else {
+            pushLog("Export failed: no document is loaded")
+            return
+        }
+        guard let options = PDFEncryptionExport.requestOptions() else { return }
+
+        do {
+            if let url = try PDFEncryptionExport.writeEncryptedCopy(
+                document: doc,
+                sourceURL: currentURL ?? doc.documentURL,
+                options: options
+            ) {
+                pushLog("Exported encrypted copy to \(url.lastPathComponent)")
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+            }
+        } catch {
+            pushLog("Encrypted export failed: \(error.localizedDescription)")
+            present(error)
         }
     }
 
@@ -1156,7 +2209,10 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         // works best on a stable data representation or copy.
         // But for sanitization options that just change metadata, we can use a copy.
         // Let's use dataRepresentation to be safe and consistent with other exports.
-        guard let data = doc.dataRepresentation(), let snapshotDoc = PDFDocument(data: data) else {
+        let snapshotDoc: PDFDocument
+        do {
+            snapshotDoc = try PDFOps.privacyPreservingSnapshot(document: doc)
+        } catch {
             pushLog("Export failed: couldn't read current document state")
             return
         }
@@ -1262,9 +2318,28 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     }
 
     func exportSelectedPages() {
-        guard let doc = document else { return }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.pdf]
+        panel.nameFieldStringValue = "Selection.pdf"
+        if panel.runModal() == .OK, let url = panel.url {
+            do {
+                let data = try selectedPagesExportData()
+                try data.write(to: url, options: .atomic)
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+                pushLog("Exported \(selectedPageIDs.count) page(s) to \(url.lastPathComponent)")
+            } catch {
+                pushLog("Selected-page export failed: \(error.localizedDescription)")
+                present(error)
+            }
+        }
+    }
+
+    func selectedPagesExportData() throws -> Data {
+        guard let doc = document else { throw PDFOpsError.missingDocument }
         let targets = selectedPageIDs.sorted()
-        guard !targets.isEmpty else { return }
+        guard !targets.isEmpty else {
+            throw PDFOpsError.invalidInput("Select at least one page to export.")
+        }
 
         let exportDocument = PDFDocument()
         for (offset, index) in targets.enumerated() {
@@ -1275,25 +2350,32 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
             }
         }
 
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [.pdf]
-        panel.nameFieldStringValue = "Selection.pdf"
-        if panel.runModal() == .OK, let url = panel.url {
-            exportDocument.write(to: url)
-            NSWorkspace.shared.activateFileViewerSelecting([url])
-            pushLog("Exported \(targets.count) page(s) to \(url.lastPathComponent)")
+        let safeDocument = try PDFOps.privacyPreservingDocumentForExport(exportDocument)
+        guard let data = safeDocument.dataRepresentation() else {
+            throw PDFOpsError.saveFailed
         }
+        return data
     }
 
     func renameOutline(_ row: OutlineRow, title: String) {
-        let sanitized = PDFStringNormalizer.normalize(title, context: "outline rename") ?? ""
+        let sanitized = PDFStringNormalizer.normalizedNonEmpty(title, context: "outline rename") ?? "Untitled"
+        let oldLabel = row.outline.label
         row.outline.label = sanitized
+        registerOutlineRename(row.outline, oldLabel: oldLabel, newLabel: sanitized, actionName: "Rename Bookmark")
         refreshOutline()
-        let loggedTitle = sanitized.isEmpty ? "Untitled" : sanitized
-        pushLog("Renamed bookmark to \"\(loggedTitle)\"")
+        pushLog("Renamed bookmark to \"\(sanitized)\"")
     }
 
     func deleteOutline(_ row: OutlineRow) {
+        guard let doc = document,
+              let parent = row.outline.parent,
+              let index = outlineChildIndex(row.outline, in: parent) else { return }
+        registerOutlineRemoval(row.outline,
+                               parent: parent,
+                               document: doc,
+                               index: index,
+                               createdRoot: false,
+                               actionName: "Delete Bookmark")
         row.outline.removeFromParent()
         refreshOutline()
         pushLog("Removed bookmark")
@@ -1309,18 +2391,122 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         outline.label = sanitizedTitle
         outline.destination = destination
 
+        let parent: PDFOutline
+        let insertionIndex: Int
+        let createdRoot: Bool
         if let root = doc.outlineRoot {
+            parent = root
+            insertionIndex = root.numberOfChildren
+            createdRoot = false
             root.insertChild(outline, at: root.numberOfChildren)
         } else {
             let root = PDFOutline()
             let rootLabel = PDFStringNormalizer.normalizedNonEmpty(doc.documentURL?.lastPathComponent,
                                                                    context: "outline root title") ?? "Bookmarks"
             root.label = rootLabel
+            parent = root
+            insertionIndex = 0
+            createdRoot = true
             root.insertChild(outline, at: 0)
             doc.outlineRoot = root
         }
+        registerOutlineInsertion(outline,
+                                 parent: parent,
+                                 document: doc,
+                                 index: insertionIndex,
+                                 createdRoot: createdRoot,
+                                 actionName: "Add Bookmark")
         refreshOutline()
         pushLog("Added bookmark \"\(outline.label ?? "Untitled")\"")
+    }
+
+    func metadataDraft() -> DocumentMetadataDraft {
+        let attributes = document?.documentAttributes
+        return DocumentMetadataDraft(
+            title: metadataString(for: PDFDocumentAttribute.titleAttribute, in: attributes),
+            author: metadataString(for: PDFDocumentAttribute.authorAttribute, in: attributes),
+            subject: metadataString(for: PDFDocumentAttribute.subjectAttribute, in: attributes),
+            keywords: metadataKeywords(in: attributes),
+            creator: metadataString(for: PDFDocumentAttribute.creatorAttribute, in: attributes),
+            producer: metadataString(for: PDFDocumentAttribute.producerAttribute, in: attributes)
+        )
+    }
+
+    func applyMetadata(_ draft: DocumentMetadataDraft) {
+        guard let doc = document else { return }
+        let oldAttributes = doc.documentAttributes
+        var attributes = doc.documentAttributes ?? [:]
+        setMetadataValue(draft.title, for: PDFDocumentAttribute.titleAttribute, in: &attributes)
+        setMetadataValue(draft.author, for: PDFDocumentAttribute.authorAttribute, in: &attributes)
+        setMetadataValue(draft.subject, for: PDFDocumentAttribute.subjectAttribute, in: &attributes)
+        setMetadataKeywords(draft.keywords, in: &attributes)
+        setMetadataValue(draft.creator, for: PDFDocumentAttribute.creatorAttribute, in: &attributes)
+        setMetadataValue(draft.producer, for: PDFDocumentAttribute.producerAttribute, in: &attributes)
+        doc.documentAttributes = attributes
+        registerMetadataChange(document: doc,
+                               oldAttributes: oldAttributes,
+                               newAttributes: attributes,
+                               actionName: "Edit Metadata")
+        pushLog("Updated document metadata")
+    }
+
+    func clearMetadata() {
+        guard let doc = document else { return }
+        let oldAttributes = doc.documentAttributes
+        doc.documentAttributes = [:]
+        registerMetadataChange(document: doc,
+                               oldAttributes: oldAttributes,
+                               newAttributes: [:],
+                               actionName: "Clear Metadata")
+        pushLog("Cleared document metadata")
+    }
+
+    private func metadataString(for key: PDFDocumentAttribute, in attributes: [AnyHashable: Any]?) -> String {
+        guard let value = metadataValue(for: key, in: attributes) else { return "" }
+        if let string = value as? String { return string }
+        if let string = value as? NSString { return string as String }
+        return String(describing: value)
+    }
+
+    private func metadataKeywords(in attributes: [AnyHashable: Any]?) -> String {
+        guard let value = metadataValue(for: PDFDocumentAttribute.keywordsAttribute, in: attributes) else { return "" }
+        if let values = value as? [String] {
+            return values.joined(separator: ", ")
+        }
+        if let values = value as? [Any] {
+            return values.map { String(describing: $0) }.joined(separator: ", ")
+        }
+        return String(describing: value)
+    }
+
+    private func metadataValue(for key: PDFDocumentAttribute, in attributes: [AnyHashable: Any]?) -> Any? {
+        attributes?[key] ?? attributes?[key.rawValue]
+    }
+
+    private func setMetadataValue(_ value: String,
+                                  for key: PDFDocumentAttribute,
+                                  in attributes: inout [AnyHashable: Any])
+    {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        attributes.removeValue(forKey: key.rawValue)
+        if trimmed.isEmpty {
+            attributes.removeValue(forKey: key)
+        } else {
+            attributes[key] = trimmed
+        }
+    }
+
+    private func setMetadataKeywords(_ value: String, in attributes: inout [AnyHashable: Any]) {
+        let keywords = value
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        attributes.removeValue(forKey: PDFDocumentAttribute.keywordsAttribute.rawValue)
+        if keywords.isEmpty {
+            attributes.removeValue(forKey: PDFDocumentAttribute.keywordsAttribute)
+        } else {
+            attributes[PDFDocumentAttribute.keywordsAttribute] = keywords
+        }
     }
 
     func focus(annotation row: AnnotationRow) {
@@ -1332,16 +2518,23 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     }
 
     func delete(annotation row: AnnotationRow) {
-        row.annotation.page?.removeAnnotation(row.annotation)
+        guard let page = row.annotation.page else { return }
+        registerAnnotationRemoval(row.annotation, on: page, actionName: "Delete Annotation")
+        clearSelectedAnnotationIfNeeded(row.annotation)
+        page.removeAnnotation(row.annotation)
         refreshAnnotations()
         pushLog("Removed annotation")
     }
 
-    func addFormField(kind: FormFieldKind, name: String, rect: CGRect) {
+    func addFormField(kind: FormFieldKind, name: String, rect: CGRect, options: [String] = []) {
         guard let doc = document else { return }
         guard let page = pdfView?.currentPage ?? doc.page(at: 0) else { return }
         let requestedName = PDFStringNormalizer.normalize(name, context: "form field name") ?? ""
         let fieldName = requestedName.isEmpty ? kind.rawValue : requestedName
+        let normalizedOptions = options.compactMap {
+            let trimmed = $0.trimmingCharacters(in: .whitespacesAndNewlines)
+            return PDFStringNormalizer.normalize(trimmed, context: "form choice option")
+        }.filter { !$0.isEmpty }
         let annotation: PDFAnnotation
         switch kind {
         case .text:
@@ -1351,6 +2544,19 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
             annotation.widgetDefaultStringValue = ""
         case .checkbox:
             annotation = PDFFormBuilder.makeCheckbox(name: fieldName, rect: rect)
+        case .radio:
+            annotation = PDFFormBuilder.makeRadio(name: fieldName, rect: rect)
+            annotation.buttonWidgetStateString = "Off"
+        case .dropdown:
+            annotation = PDFFormBuilder.makeChoice(name: fieldName,
+                                                   rect: rect,
+                                                   choices: normalizedOptions.isEmpty ? ["Option"] : normalizedOptions,
+                                                   isList: false)
+        case .list:
+            annotation = PDFFormBuilder.makeChoice(name: fieldName,
+                                                   rect: rect,
+                                                   choices: normalizedOptions.isEmpty ? ["Option"] : normalizedOptions,
+                                                   isList: true)
         case .signature:
             annotation = PDFFormBuilder.makeSignature(name: fieldName, rect: rect)
             annotation.backgroundColor = NSColor.clear
@@ -1370,8 +2576,29 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         }
         annotation.border = border
         page.addAnnotation(annotation)
+        registerAnnotationAddition(annotation, actionName: "Add Form Field")
         refreshAnnotations()
         pushLog("Added \(kind.rawValue)")
+    }
+
+    func addSignatureStamp(image: NSImage, width: CGFloat = 180) {
+        guard let doc = document else { return }
+        guard let page = pdfView?.currentPage ?? doc.page(at: 0) else { return }
+        let pageBounds = page.bounds(for: .cropBox)
+        let safeWidth = max(80, min(width, pageBounds.width * 0.8))
+        let aspectRatio = image.size.width > 0 ? image.size.height / image.size.width : 0.35
+        let safeHeight = max(28, safeWidth * max(aspectRatio, 0.15))
+        let rect = CGRect(x: pageBounds.midX - safeWidth / 2,
+                          y: pageBounds.midY - safeHeight / 2,
+                          width: safeWidth,
+                          height: safeHeight)
+        let annotation = ImageStampAnnotation(bounds: rect, image: image)
+        annotation.contents = "Signature"
+        annotation.userName = "PDFQuickFix Signature"
+        page.addAnnotation(annotation)
+        registerAnnotationAddition(annotation, actionName: "Add Signature")
+        refreshAnnotations()
+        pushLog("Added signature stamp")
     }
 
     func applyWatermark(text: String,
@@ -1383,14 +2610,17 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
                         margin: CGFloat) throws
     {
         guard let document else { throw PDFOpsError.missingDocument }
-        PDFOps.applyWatermark(document: document,
-                              text: text,
-                              fontSize: fontSize,
-                              color: color,
-                              opacity: opacity,
-                              rotation: rotation,
-                              position: position,
-                              margin: margin)
+        let additions = newAnnotations {
+            PDFOps.applyWatermark(document: document,
+                                  text: text,
+                                  fontSize: fontSize,
+                                  color: color,
+                                  opacity: opacity,
+                                  rotation: rotation,
+                                  position: position,
+                                  margin: margin)
+        }
+        registerAnnotationAdditions(additions, actionName: "Apply Watermark")
         refreshAnnotations()
         pushLog("Watermark applied")
     }
@@ -1401,11 +2631,14 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
                            fontSize: CGFloat) throws
     {
         guard let document else { throw PDFOpsError.missingDocument }
-        PDFOps.applyHeaderFooter(document: document,
-                                 header: header,
-                                 footer: footer,
-                                 margin: margin,
-                                 fontSize: fontSize)
+        let additions = newAnnotations {
+            PDFOps.applyHeaderFooter(document: document,
+                                     header: header,
+                                     footer: footer,
+                                     margin: margin,
+                                     fontSize: fontSize)
+        }
+        registerAnnotationAdditions(additions, actionName: "Apply Header/Footer")
         refreshAnnotations()
         pushLog("Header/Footer applied")
     }
@@ -1418,20 +2651,38 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
                            fontSize: CGFloat) throws
     {
         guard let document else { throw PDFOpsError.missingDocument }
-        PDFOps.applyBatesNumbers(document: document,
-                                 prefix: prefix,
-                                 start: start,
-                                 digits: digits,
-                                 placement: placement,
-                                 margin: margin,
-                                 fontSize: fontSize)
+        let additions = newAnnotations {
+            PDFOps.applyBatesNumbers(document: document,
+                                     prefix: prefix,
+                                     start: start,
+                                     digits: digits,
+                                     placement: placement,
+                                     margin: margin,
+                                     fontSize: fontSize)
+        }
+        registerAnnotationAdditions(additions, actionName: "Apply Bates Numbers")
         refreshAnnotations()
         pushLog("Bates numbers applied")
     }
 
     func crop(inset: CGFloat, target: CropTarget) throws {
         guard let document else { throw PDFOpsError.missingDocument }
+        let before = (0 ..< document.pageCount).compactMap { index -> (PDFPage, CGRect, CGRect)? in
+            guard let page = document.page(at: index), target.contains(index: index) else { return nil }
+            return (page, page.bounds(for: .mediaBox), page.bounds(for: .cropBox))
+        }
         PDFOps.crop(document: document, inset: inset, target: target)
+        let changes = before.compactMap { page, oldMediaBox, oldCropBox -> PageBoundsChange? in
+            let newMediaBox = page.bounds(for: .mediaBox)
+            let newCropBox = page.bounds(for: .cropBox)
+            guard newMediaBox != oldMediaBox || newCropBox != oldCropBox else { return nil }
+            return PageBoundsChange(page: page,
+                                    oldMediaBox: oldMediaBox,
+                                    oldCropBox: oldCropBox,
+                                    newMediaBox: newMediaBox,
+                                    newCropBox: newCropBox)
+        }
+        registerPageBoundsChange(changes, actionName: "Crop Pages")
         refreshPages()
         pushLog("Cropped pages")
     }
@@ -1869,3 +3120,5 @@ extension StudioController: FileExportable {}
 extension StudioController: DocumentPrintable {}
 extension StudioController: DocumentClosable {}
 extension StudioController: DocumentHealthPresentable {}
+extension StudioController: DocumentUndoable {}
+extension StudioController: SelectedTextReplaceable {}

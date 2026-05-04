@@ -230,7 +230,9 @@ public enum PDFDocumentSanitizer {
 
         for index in 1 ... totalPages { // CGPDFDocument is 1-based
             if shouldCancel() { throw PDFDocumentSanitizerError.cancelled }
-            guard let page = cgDocument.page(at: index) else { continue }
+            guard let page = cgDocument.page(at: index) else {
+                throw PDFDocumentSanitizerError.pageRenderFailed(page: index, reason: "Sayfa kilitli veya okunamıyor")
+            }
             var pageError: Error?
             autoreleasepool {
                 let mediaBox = page.getBoxRect(.mediaBox)
@@ -454,6 +456,7 @@ public enum PDFDocumentSanitizer {
 
     private static func makeCGPDFDocument(for document: PDFDocument, url: URL?) -> CGPDFDocument? {
         if let url,
+           document.documentURL?.standardizedFileURL == url.standardizedFileURL,
            let provider = CGDataProvider(url: url as CFURL),
            let cgDocument = CGPDFDocument(provider)
         {
@@ -463,6 +466,12 @@ public enum PDFDocumentSanitizer {
            let provider = CGDataProvider(data: data as CFData)
         {
             return CGPDFDocument(provider)
+        }
+        if let url,
+           let provider = CGDataProvider(url: url as CFURL),
+           let cgDocument = CGPDFDocument(provider)
+        {
+            return cgDocument
         }
         return nil
     }

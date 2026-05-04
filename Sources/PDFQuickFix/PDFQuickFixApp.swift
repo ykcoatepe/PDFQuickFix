@@ -1,11 +1,59 @@
 import AppKit
 import SwiftUI
 
+@MainActor
+enum PDFQuickFixSharedState {
+    static let aiSettings = LocalAISettings()
+    static let aiInteractions = AIInteractionStore()
+}
+
+@MainActor
+enum PDFQuickFixWindowKeeper {
+    static var mainWindowController: NSWindowController?
+}
+
+enum AppLaunchWindowPolicy {
+    static let mainWindowTitle = "PDFQuickFix"
+    static let finderReceiptWindowTitle = "Finder Sanitize Receipt"
+
+    enum FallbackTrigger {
+        case initialLaunch
+        case reopen
+        case activation
+    }
+
+    static func shouldAllowDefaultReopen(hasUserFacingWindow: Bool) -> Bool {
+        hasUserFacingWindow
+    }
+
+    static func shouldOpenFallbackWindow(hasUserFacingWindow: Bool,
+                                         trigger: FallbackTrigger = .reopen) -> Bool
+    {
+        guard !hasUserFacingWindow else { return false }
+        switch trigger {
+        case .initialLaunch:
+            return false
+        case .reopen, .activation:
+            return true
+        }
+    }
+
+    static func isUserFacingWindow(title: String,
+                                   isVisible: Bool,
+                                   canBecomeMainOrKey: Bool,
+                                   isMiniaturized: Bool = false) -> Bool
+    {
+        (isVisible || isMiniaturized) &&
+            canBecomeMainOrKey &&
+            (title == mainWindowTitle || title == finderReceiptWindowTitle)
+    }
+}
+
 @main
 struct PDFQuickFixApp: App {
     @NSApplicationDelegateAdaptor(PDFQuickFixAppDelegate.self) private var appDelegate
-    @StateObject private var aiSettings = LocalAISettings()
-    @StateObject private var aiInteractions = AIInteractionStore()
+    @StateObject private var aiSettings = PDFQuickFixSharedState.aiSettings
+    @StateObject private var aiInteractions = PDFQuickFixSharedState.aiInteractions
 
     init() {
         PDFKitWorkarounds.install()
@@ -39,9 +87,84 @@ struct PDFQuickFixApp: App {
 final class PDFQuickFixAppDelegate: NSObject, NSApplicationDelegate {
     private let finderQuickActionService = FinderQuickActionService()
 
+    @MainActor
     func applicationDidFinishLaunching(_: Notification) {
+        NSApp.setActivationPolicy(.regular)
         NSApp.servicesProvider = finderQuickActionService
         NSUpdateDynamicServices()
+    }
+
+    @MainActor
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows _: Bool) -> Bool {
+        let hasUserFacingWindow = visibleUserWindow(in: sender) != nil
+        guard AppLaunchWindowPolicy.shouldAllowDefaultReopen(hasUserFacingWindow: hasUserFacingWindow) else {
+            openMainWindowIfNeeded(sender, activate: true)
+            return false
+        }
+        return true
+    }
+
+    @MainActor
+    func applicationDidBecomeActive(_ notification: Notification) {
+        guard let application = notification.object as? NSApplication else { return }
+        openMainWindowIfNeeded(application, activate: false, trigger: .activation)
+    }
+
+    @MainActor
+    private func openMainWindowIfNeeded(_ application: NSApplication,
+                                        activate: Bool,
+                                        trigger: AppLaunchWindowPolicy.FallbackTrigger = .reopen)
+    {
+        if let window = visibleUserWindow(in: application) {
+            if window.isMiniaturized {
+                window.deminiaturize(nil)
+            }
+            window.makeKeyAndOrderFront(nil)
+            window.orderFrontRegardless()
+        } else if AppLaunchWindowPolicy.shouldOpenFallbackWindow(hasUserFacingWindow: false, trigger: trigger) {
+            openFallbackMainWindow()
+        }
+
+        if activate {
+            application.activate(ignoringOtherApps: true)
+        }
+    }
+
+    @MainActor
+    private func visibleUserWindow(in application: NSApplication) -> NSWindow? {
+        application.windows.first { window in
+            AppLaunchWindowPolicy.isUserFacingWindow(
+                title: window.title,
+                isVisible: window.isVisible,
+                canBecomeMainOrKey: window.canBecomeMain || window.canBecomeKey,
+                isMiniaturized: window.isMiniaturized
+            )
+        }
+    }
+
+    @MainActor
+    private func openFallbackMainWindow() {
+        if let existing = PDFQuickFixWindowKeeper.mainWindowController?.window, existing.isVisible {
+            existing.makeKeyAndOrderFront(nil)
+            existing.orderFrontRegardless()
+            return
+        }
+
+        let rootView = ContentView()
+            .frame(minWidth: 960, minHeight: 640)
+            .environmentObject(PDFQuickFixSharedState.aiSettings)
+            .environmentObject(PDFQuickFixSharedState.aiInteractions)
+        let hostingController = NSHostingController(rootView: rootView)
+        let window = NSWindow(contentViewController: hostingController)
+        window.title = AppLaunchWindowPolicy.mainWindowTitle
+        window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+        window.setContentSize(NSSize(width: 1120, height: 760))
+        window.center()
+        window.isReleasedWhenClosed = false
+        PDFQuickFixWindowKeeper.mainWindowController = NSWindowController(window: window)
+        PDFQuickFixWindowKeeper.mainWindowController?.showWindow(nil)
+        window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
     }
 }
 
@@ -68,11 +191,16 @@ final class FinderQuickActionService: NSObject {
 
 @MainActor
 protocol FileExportable: AnyObject {
+    func saveDocument()
     func saveAs()
     func repairAndSaveAs()
     func printDocument()
     func exportToImages(format: NSBitmapImageRep.FileType)
     func exportToText()
+    func exportOptimized()
+    func exportMetadataCleaned()
+    func exportFlattened()
+    func exportEncrypted()
     func exportSanitized()
 }
 
@@ -120,6 +248,16 @@ extension FocusedValues {
         get { self[DocumentHealthPresentableKey.self] }
         set { self[DocumentHealthPresentableKey.self] = newValue }
     }
+
+    var documentUndoable: DocumentUndoable? {
+        get { self[DocumentUndoableKey.self] }
+        set { self[DocumentUndoableKey.self] = newValue }
+    }
+
+    var selectedTextReplaceable: SelectedTextReplaceable? {
+        get { self[SelectedTextReplaceableKey.self] }
+        set { self[SelectedTextReplaceableKey.self] = newValue }
+    }
 }
 
 // MARK: - New Protocols
@@ -164,6 +302,27 @@ struct DocumentHealthPresentableKey: FocusedValueKey {
     typealias Value = DocumentHealthPresentable
 }
 
+@MainActor
+protocol DocumentUndoable: AnyObject {
+    func undoLastEdit()
+    func redoLastEdit()
+}
+
+struct DocumentUndoableKey: FocusedValueKey {
+    typealias Value = DocumentUndoable
+}
+
+@MainActor
+protocol SelectedTextReplaceable: AnyObject {
+    var canReplaceSelectedText: Bool { get }
+    func replaceSelectedTextWithPrompt()
+    func redactSelectedTextWithConfirmation()
+}
+
+struct SelectedTextReplaceableKey: FocusedValueKey {
+    typealias Value = SelectedTextReplaceable
+}
+
 // MARK: - Commands
 
 struct AppCommands: Commands {
@@ -173,9 +332,24 @@ struct AppCommands: Commands {
     @FocusedValue(\.studioToolSwitchable) var studioToolSwitchable
     @FocusedValue(\.documentClosable) var documentClosable
     @FocusedValue(\.documentHealthPresentable) var documentHealthPresentable
+    @FocusedValue(\.documentUndoable) var documentUndoable
+    @FocusedValue(\.selectedTextReplaceable) var selectedTextReplaceable
     @Environment(\.openWindow) private var openWindow
 
     var body: some Commands {
+        CommandGroup(after: .undoRedo) {
+            Divider()
+            Button("Undo PDF Edit") {
+                documentUndoable?.undoLastEdit()
+            }
+            .disabled(documentUndoable == nil)
+
+            Button("Redo PDF Edit") {
+                documentUndoable?.redoLastEdit()
+            }
+            .disabled(documentUndoable == nil)
+        }
+
         CommandGroup(after: .newItem) {
             Button("Close Document") {
                 documentClosable?.closeDocument()
@@ -184,7 +358,13 @@ struct AppCommands: Commands {
             .disabled(documentClosable == nil)
         }
 
-        CommandGroup(after: .saveItem) {
+        CommandGroup(replacing: .saveItem) {
+            Button("Save") {
+                fileExportable?.saveDocument()
+            }
+            .keyboardShortcut("s", modifiers: .command)
+            .disabled(fileExportable == nil)
+
             Button("Save As…") {
                 fileExportable?.saveAs()
             }
@@ -205,6 +385,22 @@ struct AppCommands: Commands {
 
                 Button("Text") {
                     fileExportable?.exportToText()
+                }
+
+                Button("Optimized PDF…") {
+                    fileExportable?.exportOptimized()
+                }
+
+                Button("Metadata-Clean PDF…") {
+                    fileExportable?.exportMetadataCleaned()
+                }
+
+                Button("Flattened PDF…") {
+                    fileExportable?.exportFlattened()
+                }
+
+                Button("Encrypted PDF…") {
+                    fileExportable?.exportEncrypted()
                 }
 
                 Divider()
@@ -271,6 +467,18 @@ struct AppCommands: Commands {
         }
 
         CommandMenu("Tools") {
+            Button("Replace Selected Text…") {
+                selectedTextReplaceable?.replaceSelectedTextWithPrompt()
+            }
+            .disabled(selectedTextReplaceable?.canReplaceSelectedText != true)
+
+            Button("Redact Selected Text…") {
+                selectedTextReplaceable?.redactSelectedTextWithConfirmation()
+            }
+            .disabled(selectedTextReplaceable?.canReplaceSelectedText != true)
+
+            Divider()
+
             ForEach(StudioTool.allCases) { tool in
                 Button(tool.rawValue) {
                     studioToolSwitchable?.selectedTool = tool

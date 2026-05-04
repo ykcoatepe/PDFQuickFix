@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import PDFKit
+import PDFQuickFixKit
 
 enum PDFOpsError: LocalizedError {
     case missingDocument
@@ -82,6 +83,8 @@ enum CropTarget: String, CaseIterable, Identifiable {
 }
 
 enum PDFOps {
+    static let replacementTextAnnotationUserName = "PDFQuickFixReplaceText"
+
     static func applyWatermark(
         document: PDFDocument,
         text: String,
@@ -222,6 +225,225 @@ enum PDFOps {
     static func optimize(document: PDFDocument) -> Data? {
         // dataRepresentation() rebuilds the PDF and strips transient state,
         // which is often enough to compact simple documents.
-        document.dataRepresentation()
+        guard let exportDocument = try? privacyPreservingDocumentForExport(document) else {
+            return nil
+        }
+        return exportDocument.dataRepresentation()
+    }
+
+    static func metadataCleanedData(document: PDFDocument, sourceURL: URL? = nil) throws -> Data {
+        let workingDocument = try privacyPreservingSnapshot(document: document)
+
+        let options = PDFDocumentSanitizer.Options(
+            rebuildMode: .alwaysRebuildVectorOrData,
+            validationPageLimit: 10,
+            sanitizeAnnotations: false,
+            sanitizeOutline: false,
+            removeOutline: false,
+            scrubMetadata: true
+        )
+        let cleaned = try PDFDocumentSanitizer.sanitize(
+            document: workingDocument,
+            sourceURL: nil,
+            options: options
+        )
+        cleaned.documentAttributes = [:]
+
+        guard let data = cleaned.dataRepresentation() else {
+            throw PDFOpsError.saveFailed
+        }
+        return data
+    }
+
+    static func flattenedData(document: PDFDocument) throws -> Data {
+        let flattened = PDFDocument()
+        flattened.documentAttributes = document.documentAttributes
+
+        for index in 0 ..< document.pageCount {
+            guard let page = document.page(at: index),
+                  let image = renderedPageImage(page, box: .cropBox),
+                  let flattenedPage = PDFPage(image: NSImage(cgImage: image, size: page.bounds(for: .cropBox).size))
+            else {
+                throw PDFOpsError.invalidInput("Could not flatten page \(index + 1).")
+            }
+            flattenedPage.rotation = page.rotation
+            flattened.insert(flattenedPage, at: flattened.pageCount)
+        }
+        flattened.outlineRoot = copyOutlineTree(from: document, to: flattened)
+
+        guard let data = flattened.dataRepresentation() else {
+            throw PDFOpsError.saveFailed
+        }
+        return data
+    }
+
+    static func containsReplacementTextAnnotations(in document: PDFDocument) -> Bool {
+        for index in 0 ..< document.pageCount {
+            guard let page = document.page(at: index) else { continue }
+            if page.annotations.contains(where: { $0.userName == replacementTextAnnotationUserName }) {
+                return true
+            }
+        }
+        return false
+    }
+
+    static func privacyPreservingDocumentForExport(_ document: PDFDocument) throws -> PDFDocument {
+        let detachedSelectionAnnotations = detachSelectionAnnotations(from: document)
+        defer { restoreSelectionAnnotations(detachedSelectionAnnotations) }
+
+        if containsReplacementTextAnnotations(in: document) {
+            let data = try flattenedData(document: document)
+            guard let flattened = PDFDocument(data: data) else {
+                throw PDFOpsError.saveFailed
+            }
+            return flattened
+        }
+
+        if document.isEncrypted {
+            return try unlockedPageCopy(of: document)
+        }
+
+        guard let data = document.dataRepresentation(),
+              let snapshot = PDFDocument(data: data)
+        else {
+            throw PDFOpsError.saveFailed
+        }
+        return snapshot
+    }
+
+    static func privacyPreservingSnapshot(document: PDFDocument) throws -> PDFDocument {
+        let exportDocument = try privacyPreservingDocumentForExport(document)
+        if exportDocument.isEncrypted {
+            return try unlockedPageCopy(of: exportDocument)
+        }
+        guard let data = exportDocument.dataRepresentation(),
+              let snapshot = PDFDocument(data: data)
+        else {
+            throw PDFOpsError.missingDocument
+        }
+        return snapshot
+    }
+
+    private static func unlockedPageCopy(of document: PDFDocument) throws -> PDFDocument {
+        let copy = PDFDocument()
+        copy.documentAttributes = document.documentAttributes
+
+        for index in 0 ..< document.pageCount {
+            guard let page = document.page(at: index),
+                  let copiedPage = page.copy() as? PDFPage
+            else {
+                throw PDFOpsError.missingDocument
+            }
+            copy.insert(copiedPage, at: copy.pageCount)
+        }
+        copy.outlineRoot = copyOutlineTree(from: document, to: copy)
+
+        return copy
+    }
+
+    private static func detachSelectionAnnotations(from document: PDFDocument) -> [(PDFPage, SelectionAnnotation)] {
+        var detached: [(PDFPage, SelectionAnnotation)] = []
+        for index in 0 ..< document.pageCount {
+            guard let page = document.page(at: index) else { continue }
+            for annotation in page.annotations {
+                guard let selectionAnnotation = annotation as? SelectionAnnotation else { continue }
+                page.removeAnnotation(selectionAnnotation)
+                detached.append((page, selectionAnnotation))
+            }
+        }
+        return detached
+    }
+
+    private static func restoreSelectionAnnotations(_ detached: [(PDFPage, SelectionAnnotation)]) {
+        for (page, annotation) in detached {
+            page.addAnnotation(annotation)
+        }
+    }
+
+    private static func copyOutlineTree(from source: PDFDocument, to target: PDFDocument) -> PDFOutline? {
+        guard let sourceRoot = source.outlineRoot else { return nil }
+        let targetRoot = PDFOutline()
+        targetRoot.label = sourceRoot.label
+        copyOutlineChildren(from: sourceRoot, sourceDocument: source, to: targetRoot, targetDocument: target)
+        return targetRoot
+    }
+
+    private static func copyOutlineChildren(from sourceParent: PDFOutline,
+                                            sourceDocument: PDFDocument,
+                                            to targetParent: PDFOutline,
+                                            targetDocument: PDFDocument)
+    {
+        for index in 0 ..< sourceParent.numberOfChildren {
+            guard let sourceChild = sourceParent.child(at: index) else { continue }
+            let targetChild = PDFOutline()
+            targetChild.label = sourceChild.label
+            if let destination = copiedDestination(from: sourceChild, sourceDocument: sourceDocument, targetDocument: targetDocument) {
+                targetChild.destination = destination
+            } else if let action = sourceChild.action?.copy() as? PDFAction {
+                targetChild.action = action
+            }
+            targetParent.insertChild(targetChild, at: targetParent.numberOfChildren)
+            copyOutlineChildren(from: sourceChild, sourceDocument: sourceDocument, to: targetChild, targetDocument: targetDocument)
+        }
+    }
+
+    private static func copiedDestination(from outline: PDFOutline,
+                                          sourceDocument: PDFDocument,
+                                          targetDocument: PDFDocument) -> PDFDestination?
+    {
+        let destination = outline.destination ?? (outline.action as? PDFActionGoTo)?.destination
+        guard let sourcePage = destination?.page else { return nil }
+        let pageIndex = sourceDocument.index(for: sourcePage)
+        guard pageIndex != NSNotFound,
+              let targetPage = targetDocument.page(at: pageIndex)
+        else {
+            return nil
+        }
+        return PDFDestination(page: targetPage, at: destination?.point ?? .zero)
+    }
+
+    static func extractTextForExport(document: PDFDocument) throws -> String {
+        guard !containsReplacementTextAnnotations(in: document) else {
+            throw PDFOpsError.invalidInput(
+                "Text export is blocked after Replace Text or Redact Text because the original text layer may still be extractable. Export a sanitized or flattened PDF copy instead."
+            )
+        }
+
+        var fullText = ""
+        for index in 0 ..< document.pageCount {
+            guard let page = document.page(at: index), let text = page.string else { continue }
+            fullText += "--- Page \(index + 1) ---\n\n"
+            fullText += text
+            fullText += "\n\n"
+        }
+        return fullText
+    }
+
+    private static func renderedPageImage(_ page: PDFPage, box: PDFDisplayBox) -> CGImage? {
+        let bounds = page.bounds(for: box)
+        let renderScale: CGFloat = 2
+        let width = max(Int((bounds.width * renderScale).rounded(.up)), 1)
+        let height = max(Int((bounds.height * renderScale).rounded(.up)), 1)
+        guard let context = CGContext(data: nil,
+                                      width: width,
+                                      height: height,
+                                      bitsPerComponent: 8,
+                                      bytesPerRow: 0,
+                                      space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else {
+            return nil
+        }
+
+        context.scaleBy(x: renderScale, y: renderScale)
+        context.setFillColor(gray: 1, alpha: 1)
+        let outputBounds = CGRect(x: 0, y: 0, width: bounds.width, height: bounds.height)
+        context.fill(outputBounds)
+        context.clip(to: outputBounds)
+        context.saveGState()
+        context.translateBy(x: -bounds.minX, y: -bounds.minY)
+        page.draw(with: .mediaBox, to: context)
+        context.restoreGState()
+        return context.makeImage()
     }
 }
