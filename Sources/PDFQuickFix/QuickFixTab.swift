@@ -311,19 +311,24 @@ struct QuickFixTab: View {
                         ScrollView {
                             Text(aiOutput)
                                 .font(.caption.monospaced())
+                                .foregroundStyle(AppTheme.Colors.paperText)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .textSelection(.enabled)
                         }
                         .frame(minHeight: 160, maxHeight: 280)
 
-                        HStack {
+                        HStack(spacing: 12) {
                             Button("Copy") {
                                 copyAIOutput()
                             }
+                            .buttonStyle(.bordered)
+                            .tint(AppTheme.Colors.support)
 
                             Button("Save...") {
                                 saveAIOutput()
                             }
+                            .buttonStyle(.bordered)
+                            .tint(AppTheme.Colors.support)
                         }
                     }
                     .paperPanelStyle()
