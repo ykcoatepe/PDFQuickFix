@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Fuller Reader/Studio editing suite with save/write-back, password-protected PDF open, search, undo/redo, annotation editing, signature stamps, form design, bookmark editing, metadata cleanup, and persistent measurement tools
+- Safer export workflows for optimized, metadata-clean, flattened, encrypted, image, text, selected-page, and sanitized copies
+- Document Health share-readiness signals, metadata warnings, replacement/redaction overlay warnings, and exportable health reports
+- Local AI redaction-candidate and share-readiness review tasks with grounded JSON output and page-selection support
 - Finder Quick Action service: **PDFQuickFix/Sanitize PDF for Sharing** creates local `-sanitized.pdf` outbound copies from selected PDFs in Finder
 - Finder sanitize receipt window with per-file status and automatic reveal of the first sanitized output
 - Regression coverage for Finder pasteboard PDF filtering, collision-safe output names, and source-preserving sanitize writes
@@ -26,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - AI request timeout setting and summary page selection
 
 ### Changed
+- Reader and Studio now protect export/save paths from leaking transient selection helpers or unsafe replacement/redaction text layers
+- Encrypted-document validation and export paths now prefer unlocked snapshots so locked source files do not block safe outbound copies
 - README and project docs now describe Finder, app-menu, batch, and CLI sanitize surfaces as shipped cleanup workflows
 - Security checks now allow local-only Ollama access (127.0.0.1) while still blocking non-local network use
 - Local OCR now retries prompts and caches results for stability/performance

@@ -132,7 +132,7 @@ If you want to report OCR quality or performance, please include:
 - A short, non-sensitive sample screenshot or description of errors (avoid sharing sensitive content)
 
 ## User Test Plan (New Features)
-Use this checklist to validate the new OCR/AI features end-to-end.
+Use this checklist to validate the reader/editor, export, OCR, and AI features end-to-end.
 
 ### Prerequisites
 - Ollama running locally (`ollama serve`)
@@ -140,6 +140,22 @@ Use this checklist to validate the new OCR/AI features end-to-end.
   - `ollama pull qwen2.5vl:7b` (or `minicpm-v:8b`)
   - Optional: `ollama pull deepseek-ocr:3b`
   - `ollama pull deepseek-r1:8b` (or your preferred text model)
+
+### Reader / Studio editing
+1. Open a normal PDF and a password-protected PDF in Reader or Studio.
+   - Expected: the document opens, search works, and save/save-as keeps the expected source or destination.
+2. Add notes, free text, shapes, links, ink, a signature stamp, and at least one form field.
+   - Expected: undo/redo works and save/reopen keeps only real document annotations.
+3. Replace or redact selected text, then export a flattened or sanitized copy.
+   - Expected: the original text layer is no longer extractable from the exported copy.
+4. Reorder, duplicate, import, delete, and export selected pages in Studio.
+   - Expected: page order and selected-page export match the visible organizer state.
+
+### Export and document health
+1. Export optimized, metadata-clean, flattened, encrypted, image, text, and sanitized copies.
+   - Expected: blocked exports explain why; successful exports are readable and do not leak temporary selection UI.
+2. Open Document Health and export the health report.
+   - Expected: metadata, validation, replacement/redaction overlays, and share-readiness warnings match the document state.
 
 ### OCR (Local + fallback)
 1. Open a scanned PDF with **no redaction/Find→Replace/manual redactions**.
@@ -180,7 +196,7 @@ Use this checklist to validate the new OCR/AI features end-to-end.
 
 ## Notes & limitations
 - Supports standard **AcroForm** fields; **dynamic XFA** forms are not supported by PDFKit.
-- Certificate-based digital signatures (PKCS#7/PAdES) are not included in this starter (visual signing only). Can be added later using SecKey + CMS.
+- Certificate-based digital signatures (PKCS#7/PAdES) are not included in the app yet (visual signing only). They can be added later using SecKey + CMS.
 - Export to PDF/A, stronger compression/downsampling controls, and certificate-based signing/validation are still future work.
 
 ## Architecture updates
@@ -195,7 +211,7 @@ Use this checklist to validate the new OCR/AI features end-to-end.
 - Stronger compression controls (image downsampling, grayscale presets)
 - Template packs and presets for aviation and finance docs
 
-MIT license for the starter. Verify outputs for your compliance needs.
+MIT license. Verify outputs for your compliance needs.
 ## Profiling large PDFs
 
 In Debug builds the app emits signposts and basic performance metrics.
