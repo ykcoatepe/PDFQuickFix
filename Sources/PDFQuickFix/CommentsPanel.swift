@@ -1,3 +1,4 @@
+import AppKit
 import PDFKit
 import SwiftUI
 
@@ -52,6 +53,7 @@ struct CommentsPanel: View {
                     ForEach(filteredAnnotations) { row in
                         CommentRow(row: row,
                                    focus: controller.focus,
+                                   edit: controller.editAnnotation(_:draft:),
                                    delete: controller.delete)
                     }
                 }
@@ -67,6 +69,7 @@ struct CommentsPanel: View {
 private struct CommentRow: View {
     let row: AnnotationRow
     let focus: (AnnotationRow) -> Void
+    let edit: (AnnotationRow, AnnotationEditDraft) -> Void
     let delete: (AnnotationRow) -> Void
 
     var body: some View {
@@ -93,6 +96,15 @@ private struct CommentRow: View {
                         .labelStyle(.titleAndIcon)
                 }
                 .buttonStyle(.borderless)
+                Button {
+                    if let draft = promptForAnnotationEdit(row) {
+                        edit(row, draft)
+                    }
+                } label: {
+                    Label("Edit", systemImage: "pencil")
+                        .labelStyle(.titleAndIcon)
+                }
+                .buttonStyle(.borderless)
                 Button(role: .destructive) {
                     delete(row)
                 } label: {
@@ -103,5 +115,36 @@ private struct CommentRow: View {
             }
         }
         .padding(.vertical, 4)
+    }
+
+    private func promptForAnnotationEdit(_ row: AnnotationRow) -> AnnotationEditDraft? {
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.spacing = 8
+        stack.alignment = .leading
+
+        let field = NSTextField(string: row.annotation.contents ?? "")
+        field.placeholderString = "Annotation text"
+        field.frame = CGRect(x: 0, y: 0, width: 340, height: 24)
+        stack.addArrangedSubview(field)
+
+        var urlField: NSTextField?
+        if row.annotation.url != nil || row.annotation.type == PDFAnnotationSubtype.link.rawValue {
+            let field = NSTextField(string: row.annotation.url?.absoluteString ?? "")
+            field.placeholderString = "https://example.com"
+            field.frame = CGRect(x: 0, y: 0, width: 340, height: 24)
+            urlField = field
+            stack.addArrangedSubview(field)
+        }
+
+        let alert = NSAlert()
+        alert.messageText = "Edit Annotation"
+        alert.informativeText = "Update the note, markup text, or link target for this annotation."
+        alert.accessoryView = stack
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        return AnnotationEditDraft(contents: field.stringValue, urlString: urlField?.stringValue)
     }
 }

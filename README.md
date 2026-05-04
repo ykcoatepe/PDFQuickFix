@@ -1,8 +1,8 @@
 # PDFQuickFix (macOS)
 
-A local, on-device macOS app for **repairing, redacting, sanitizing, organizing, splitting, and merging PDFs** before you share them.
+A local, on-device macOS app for **reading, editing, repairing, redacting, sanitizing, organizing, splitting, merging, and exporting PDFs** before you share them.
 
-PDFQuickFix is best thought of as a **privacy-first PDF cleanup workstation** for sensitive documents. Reader, Studio, Split/Merge, and AI Tools exist to help you inspect a PDF, fix it, remove risky content, and ship a cleaner output without sending files to a cloud service by default.
+PDFQuickFix is best thought of as a **privacy-first PDF reader/editor workstation** for sensitive documents. Reader, Studio, Split/Merge, and AI Tools exist to help you inspect a PDF, edit it, remove risky content, and ship a cleaner output without sending files to a cloud service by default.
 
 ## Best for
 
@@ -14,6 +14,7 @@ PDFQuickFix is best thought of as a **privacy-first PDF cleanup workstation** fo
 
 **Privacy-first cleanup workflows**
 - **Sanitize for Sharing** export for safer one-off outbound copies
+- Export **optimized**, **metadata-clean**, **flattened**, **encrypted**, **image**, **text**, and **selected-page** copies
 - **Finder Quick Action**: right-click PDFs in Finder and choose **Quick Actions → PDFQuickFix/Sanitize PDF for Sharing**
 - **Sanitize Folder** batch workflow for processing a full directory from the app
 - **Privacy / Light / Keep Editable** sanitize profiles for different output goals
@@ -23,19 +24,25 @@ PDFQuickFix is best thought of as a **privacy-first PDF cleanup workstation** fo
 - **OCR reports** with provider usage, fallback counts, and empty OCR pages
 
 **Reader tab**
-- Open / Save As / Print
+- Open / Save / Save As / Print, including password-protected PDFs
 - Search inside PDF
 - Thumbnails sidebar, continuous scroll, zoom
 - **Copilot side panel** for quick summary, ask-this-document, explain-selection, and current-page digest flows
 - **Citation jump buttons** that take answers back to the source page
-- Annotations: **highlight selection**, **notes**, **rectangles**
+- Annotations: **highlight selection**, **notes**, **rectangles**, **free text**, **links**, **lines**, **arrows**, and **ink**
 - **Form filling** (AcroForm) directly in the viewer
 - **Sign**: create a reusable handwritten signature and **stamp** it anywhere
+- **Replace selected text** and **redact selected text** with safer flattened/sanitized export guidance
 - **Manual redaction boxes**: place black boxes, then *Apply Permanent Redactions* (burned into the page bitmap)
 - **OCR Repair**: one-click to add an invisible searchable text layer
 
 **Studio tab**
-- Visual page organizer with **insert / delete / duplicate / reorder / rotate**
+- Visual page organizer with **insert blank pages, import PDFs/images, delete, duplicate, reorder, rotate, and selected-page export**
+- Search, save/write-back, save-as, undo/redo, and encrypted-document open support
+- Editing tools for **text replacement, redaction, comments, free text, notes, links, shapes, lines, arrows, ink, and signature stamps**
+- Forms designer for **text fields, checkboxes, radio buttons, dropdowns, lists, and signature fields**
+- Bookmark/outline editing, metadata editing/clearing, annotation list edit/delete, and document health reports
+- Persistent measurement overlay with unit switching, copy, and clear controls
 - Page thumbnails, drag-and-drop ordering, and quick actions
 - Shared document handoff from Reader for edit/organize flows
 - Large-document guards and background validation during open
@@ -47,7 +54,7 @@ PDFQuickFix is best thought of as a **privacy-first PDF cleanup workstation** fo
 
 **AI Tools tab**
 - **OCR repair** (Local OCR by default, Vision fallback) adds invisible text layer
-- **Local AI tools** (summary, translation, PII scan, field extraction)
+- **Local AI tools** (summary, translation, PII scan, field extraction, redaction candidates, share-readiness review)
 - **Heavy AI workflows** stay here for OCR, extraction, redaction, and longer-running document jobs
 - **Accepts PDF, PNG, and JPEG inputs** (images are converted to searchable PDFs during OCR)
 - **Optional AI auto-crop, deskew, and enhancement** for image inputs (toggle in Options)
@@ -60,7 +67,7 @@ PDFQuickFix is best thought of as a **privacy-first PDF cleanup workstation** fo
 
 - Finder Quick Action: **Quick Actions → PDFQuickFix/Sanitize PDF for Sharing**
 - App menu: **File → Sanitize Folder…**
-- App menu: **File → Export → Sanitize for Sharing…**
+- App menu: **File → Export → Sanitize for Sharing…**, **Optimize…**, **Metadata Clean…**, **Flatten…**, **Encrypt…**, **Export Images…**, **Export Text…**
 - CLI: `pdfquickfix-cli sanitize <input.pdf> <output.pdf>`
 - CLI: `pdfquickfix-cli sanitize-batch <inputDir> <outputDir>`
 
@@ -78,13 +85,26 @@ The Finder service accepts one or more selected PDFs, writes side-by-side `-sani
    ```
 4. Run (**⌘R**) the **PDFQuickFix** scheme.
 
-## Local AI (Ollama) setup
+## Local AI setup
+1. Install a local AI provider:
+   - Ollama for OCR and text tasks.
+   - LM Studio for OpenAI-compatible local text tasks on `127.0.0.1:1234`.
+2. Start the provider.
+   - Ollama: run `ollama serve`.
+   - LM Studio: start the local server from the Developer tab.
+3. For Ollama, pull models:
+   - OCR: `ollama pull qwen2.5vl:7b` (recommended) or `ollama pull minicpm-v:8b`
+   - Optional OCR fallback: `ollama pull deepseek-ocr:3b`
+   - Text tasks (default): `ollama pull deepseek-r1:8b` (or any local model you prefer)
+4. In **Settings → Local AI**, choose **Ollama** or **LM Studio**, click **Refresh Models**, and pick a default model.
+
+### Ollama model setup
 1. Install Ollama and start it.
 2. Pull models:
    - OCR: `ollama pull qwen2.5vl:7b` (recommended) or `ollama pull minicpm-v:8b`
    - Optional OCR fallback: `ollama pull deepseek-ocr:3b`
    - Text tasks (default): `ollama pull deepseek-r1:8b` (or any local model you prefer)
-3. In **Settings → Local AI**, click **Refresh Models** and pick a default model.
+3. In **Settings → Local AI**, choose **Ollama**, click **Refresh Models**, and pick a default model.
 
 ### Notes
 - Local OCR is used **only** for the OCR overlay when no redaction/Find→Replace/manual redactions are active.
@@ -96,8 +116,8 @@ The Finder service accepts one or more selected PDFs, writes side-by-side `-sani
 - Local OCR availability status is shown in **Options** with a Refresh button.
 - Cloud OCR fallback (Google Vision) is opt-in and requires an API key in Options.
 
-## Troubleshooting (Ollama)
-- **No models listed:** make sure Ollama is running and `ollama list` shows your models.
+## Troubleshooting (Local AI)
+- **No models listed:** make sure the selected provider is running. For Ollama, `ollama list` should show your models. For LM Studio, the local server should be enabled and have a loaded model.
 - **Local OCR not used:** confirm `qwen2.5vl:7b` or `minicpm-v:8b` is installed and OCR provider is set to Auto.
 - **Local OCR status says Unavailable:** ensure Ollama is running, then click **Refresh** in Options.
 - **AI tasks say “No local model available”:** open Settings, refresh, and select a default model.
@@ -112,7 +132,7 @@ If you want to report OCR quality or performance, please include:
 - A short, non-sensitive sample screenshot or description of errors (avoid sharing sensitive content)
 
 ## User Test Plan (New Features)
-Use this checklist to validate the new OCR/AI features end-to-end.
+Use this checklist to validate the reader/editor, export, OCR, and AI features end-to-end.
 
 ### Prerequisites
 - Ollama running locally (`ollama serve`)
@@ -120,6 +140,22 @@ Use this checklist to validate the new OCR/AI features end-to-end.
   - `ollama pull qwen2.5vl:7b` (or `minicpm-v:8b`)
   - Optional: `ollama pull deepseek-ocr:3b`
   - `ollama pull deepseek-r1:8b` (or your preferred text model)
+
+### Reader / Studio editing
+1. Open a normal PDF and a password-protected PDF in Reader or Studio.
+   - Expected: the document opens, search works, and save/save-as keeps the expected source or destination.
+2. Add notes, free text, shapes, links, ink, a signature stamp, and at least one form field.
+   - Expected: undo/redo works and save/reopen keeps only real document annotations.
+3. Replace or redact selected text, then export a flattened or sanitized copy.
+   - Expected: the original text layer is no longer extractable from the exported copy.
+4. Reorder, duplicate, import, delete, and export selected pages in Studio.
+   - Expected: page order and selected-page export match the visible organizer state.
+
+### Export and document health
+1. Export optimized, metadata-clean, flattened, encrypted, image, text, and sanitized copies.
+   - Expected: blocked exports explain why; successful exports are readable and do not leak temporary selection UI.
+2. Open Document Health and export the health report.
+   - Expected: metadata, validation, replacement/redaction overlays, and share-readiness warnings match the document state.
 
 ### OCR (Local + fallback)
 1. Open a scanned PDF with **no redaction/Find→Replace/manual redactions**.
@@ -142,14 +178,14 @@ Use this checklist to validate the new OCR/AI features end-to-end.
    - Expected: OCR text is used to produce the AI result.
 4. Optional: enable **Auto-crop & deskew images (AI)** in Options for better OCR on photos.
 
-### AI Tools (Summary / Translate / PII / Extraction)
+### AI Tools (Summary / Translate / PII / Extraction / Review)
 1. In Settings → Local AI, click **Refresh Models** and select a default model.
 2. In the AI Tools tab, under **Local AI Tools**, run **Summary** on a text‑heavy PDF.
    - Expected: Summary output appears and is logged.
    - Optional: enter a page range (e.g. `1-2, 5`) to summarize selected pages only.
 3. Run **Translation** with a target language.
    - Expected: Translated output appears.
-4. Run **PII Scan** and **Field Extraction**.
+4. Run **PII Scan**, **Field Extraction**, **Redaction Candidates**, and **Share Readiness Review**.
    - Expected: JSON output (pretty‑printed when valid).
 
 ### AI Activity Log
@@ -160,8 +196,8 @@ Use this checklist to validate the new OCR/AI features end-to-end.
 
 ## Notes & limitations
 - Supports standard **AcroForm** fields; **dynamic XFA** forms are not supported by PDFKit.
-- Certificate-based digital signatures (PKCS#7/PAdES) are not included in this starter (visual signing only). Can be added later using SecKey + CMS.
-- Export to PDF/A and stronger signing/validation are still future work.
+- Certificate-based digital signatures (PKCS#7/PAdES) are not included in the app yet (visual signing only). They can be added later using SecKey + CMS.
+- Export to PDF/A, stronger compression/downsampling controls, and certificate-based signing/validation are still future work.
 
 ## Architecture updates
 - Shared `QuickFixOptionsModel` / `QuickFixOptionsForm` now centralize the QuickFix tab and sheet option UI + regex/find/replace parsing so logging, validation, and manual redaction handling stay in sync.
@@ -172,10 +208,10 @@ Use this checklist to validate the new OCR/AI features end-to-end.
 - Before/after cleanup report bundle with clearer audit trail
 - Digital ID signing (PAdES-Basic) + validation UI
 - Export to PDF/A
-- Compress/optimize (image downsampling, grayscale, metadata scrub)
+- Stronger compression controls (image downsampling, grayscale presets)
 - Template packs and presets for aviation and finance docs
 
-MIT license for the starter. Verify outputs for your compliance needs.
+MIT license. Verify outputs for your compliance needs.
 ## Profiling large PDFs
 
 In Debug builds the app emits signposts and basic performance metrics.

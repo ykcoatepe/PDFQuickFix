@@ -9,6 +9,7 @@ enum StudioTool: String, CaseIterable, Identifiable {
     case bookmarks = "Bookmarks"
     case comments = "Comments"
     case forms = "Forms"
+    case sign = "Sign"
     case measure = "Measure"
 
     var id: String {
@@ -25,6 +26,8 @@ enum StudioTool: String, CaseIterable, Identifiable {
             "text.bubble"
         case .forms:
             "rectangle.and.pencil.and.ellipsis"
+        case .sign:
+            "signature"
         case .measure:
             "ruler"
         }
@@ -44,11 +47,15 @@ struct StudioView: View, Equatable {
     @Binding var showingHeaderFooterSheet: Bool
     @Binding var showingBatesSheet: Bool
     @Binding var showingCropSheet: Bool
+    @Binding var showingMetadataSheet: Bool
 
     @State private var watermarkOptions = WatermarkOptions()
     @State private var headerFooterOptions = HeaderFooterOptions()
     @State private var batesOptions = BatesOptions()
     @State private var cropOptions = CropOptions()
+    @State private var metadataDraft = DocumentMetadataDraft()
+    @State private var measurementReading: PDFMeasurementReading?
+    @State private var measurementUnit: PDFMeasureUnit = .millimeters
     @State private var alertMessage: String?
 
     static func == (lhs: StudioView, rhs: StudioView) -> Bool {
@@ -60,7 +67,8 @@ struct StudioView: View, Equatable {
             lhs.showingWatermarkSheet == rhs.showingWatermarkSheet &&
             lhs.showingHeaderFooterSheet == rhs.showingHeaderFooterSheet &&
             lhs.showingBatesSheet == rhs.showingBatesSheet &&
-            lhs.showingCropSheet == rhs.showingCropSheet
+            lhs.showingCropSheet == rhs.showingCropSheet &&
+            lhs.showingMetadataSheet == rhs.showingMetadataSheet
     }
 
     var body: some View {
@@ -182,6 +190,23 @@ struct StudioView: View, Equatable {
             }
             .frame(width: 360)
         }
+        .sheet(isPresented: $showingMetadataSheet) {
+            MetadataSheet(draft: $metadataDraft) {
+                controller.applyMetadata(metadataDraft)
+                showingMetadataSheet = false
+            } onClear: {
+                controller.clearMetadata()
+                metadataDraft = controller.metadataDraft()
+            } onCancel: {
+                showingMetadataSheet = false
+            }
+            .frame(width: 460)
+        }
+        .onChange(of: showingMetadataSheet) { isPresented in
+            if isPresented {
+                metadataDraft = controller.metadataDraft()
+            }
+        }
         .alert("Studio",
                isPresented: Binding(
                    get: { alertMessage != nil },
@@ -219,12 +244,15 @@ struct StudioView: View, Equatable {
         .focusedSceneValue(\.studioToolSwitchable, controller)
         .focusedSceneValue(\.documentClosable, controller)
         .focusedSceneValue(\.documentHealthPresentable, controller)
+        .focusedSceneValue(\.documentUndoable, controller)
+        .focusedSceneValue(\.selectedTextReplaceable, controller)
         .sheet(isPresented: $controller.isDocumentHealthPresented) {
             if let summary = controller.documentHealthSummary {
                 DocumentHealthSheet(
                     summary: summary,
                     onRepairAndSaveAs: { controller.repairAndSaveAs() },
                     onExportSanitized: { controller.exportSanitized() },
+                    onExportReport: { controller.exportDocumentHealthReport() },
                     onOpenQuickFix: { selectedTab = .quickFix }
                 )
             } else {
@@ -378,8 +406,9 @@ struct StudioView: View, Equatable {
                         }
 
                         if selectedTool == .measure {
-                            MeasureOverlay()
-                                .padding()
+                            MeasureOverlay(reading: $measurementReading,
+                                           unit: measurementUnit,
+                                           pdfView: controller.pdfView)
                         }
 
                         if controller.isDocumentLoading {
@@ -565,6 +594,47 @@ struct StudioView: View, Equatable {
 
             Spacer()
 
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundColor(AppTheme.Colors.secondaryText)
+                TextField("Find", text: $controller.searchQuery)
+                    .textFieldStyle(.plain)
+                    .frame(width: 140)
+                    .onSubmit {
+                        controller.find(controller.searchQuery)
+                    }
+                    .onChange(of: controller.searchQuery) { query in
+                        controller.updateSearchQueryDebounced(query)
+                    }
+
+                if !controller.searchMatches.isEmpty {
+                    Text("\(controller.currentMatchIndex.map { $0 + 1 } ?? 0)/\(controller.searchMatches.count)")
+                        .font(.caption)
+                        .foregroundColor(AppTheme.Colors.secondaryText)
+                    Button {
+                        controller.findPrev()
+                    } label: {
+                        Image(systemName: "chevron.up")
+                    }
+                    .buttonStyle(.plain)
+                    Button {
+                        controller.findNext()
+                    } label: {
+                        Image(systemName: "chevron.down")
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(AppTheme.Colors.cardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .stroke(AppTheme.Colors.cardBorder, lineWidth: 1)
+            )
+            .disabled(controller.document == nil)
+
             Button {
                 selectedTool = (selectedTool == .measure ? .organize : .measure)
             } label: {
@@ -700,8 +770,10 @@ struct StudioView: View, Equatable {
             CommentsPanel()
         case .forms:
             FormsDesigner()
+        case .sign:
+            SignatureDesigner()
         case .measure:
-            EmptyView()
+            MeasureInspectorPanel(reading: $measurementReading, unit: $measurementUnit)
         }
     }
 
@@ -1102,6 +1174,37 @@ private struct CropSheet: View {
             .pickerStyle(.segmented)
 
             HStack {
+                Spacer()
+                Button("Cancel", action: onCancel)
+                Button("Apply", action: onApply)
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+    }
+}
+
+private struct MetadataSheet: View {
+    @Binding var draft: DocumentMetadataDraft
+    let onApply: () -> Void
+    let onClear: () -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Document Metadata")
+                .font(.title3)
+                .bold()
+
+            TextField("Title", text: $draft.title)
+            TextField("Author", text: $draft.author)
+            TextField("Subject", text: $draft.subject)
+            TextField("Keywords", text: $draft.keywords)
+            TextField("Creator", text: $draft.creator)
+            TextField("Producer", text: $draft.producer)
+
+            HStack {
+                Button("Clear Metadata", role: .destructive, action: onClear)
                 Spacer()
                 Button("Cancel", action: onCancel)
                 Button("Apply", action: onApply)

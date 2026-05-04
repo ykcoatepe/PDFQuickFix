@@ -3,6 +3,7 @@ import Foundation
 @MainActor
 final class LocalAISettings: ObservableObject {
     static let defaultModelKey = "LocalAI.defaultModel"
+    static let selectedProviderKey = "LocalAI.selectedProvider"
     static let persistLogsKey = "LocalAI.persistLogs"
     static let overridePrefix = "LocalAI.override."
     static let requestTimeoutKey = "LocalAI.requestTimeoutSeconds"
@@ -13,9 +14,20 @@ final class LocalAISettings: ObservableObject {
     @Published private(set) var availableModels: [OllamaModelInfo] = []
     @Published private(set) var lastRefreshError: String?
     @Published private(set) var isRefreshing: Bool = false
+    @Published var selectedProvider: LocalAIProvider {
+        didSet {
+            defaults.set(selectedProvider.rawValue, forKey: Self.selectedProviderKey)
+            defaultModel = Self.savedDefaultModel(for: selectedProvider, defaults: defaults)
+            taskOverrides = Self.loadOverrides(for: selectedProvider, defaults: defaults)
+            availableModels = []
+            lastRefreshError = nil
+            hasLoadedModels = false
+        }
+    }
+
     @Published var defaultModel: String {
         didSet {
-            defaults.set(defaultModel, forKey: Self.defaultModelKey)
+            defaults.set(defaultModel, forKey: Self.defaultModelKey(for: selectedProvider))
         }
     }
 
@@ -38,14 +50,22 @@ final class LocalAISettings: ObservableObject {
 
     @Published private(set) var taskOverrides: [LocalAITask: String] = [:]
 
-    private let client: OllamaClient
+    private let ollamaClient: OllamaClient
+    private let lmStudioClient: LMStudioClient
     private let defaults: UserDefaults
     private var hasLoadedModels = false
 
-    init(client: OllamaClient = OllamaClient(), defaults: UserDefaults = .standard) {
-        self.client = client
+    init(client: OllamaClient = OllamaClient(),
+         lmStudioClient: LMStudioClient = LMStudioClient(),
+         defaults: UserDefaults = .standard)
+    {
+        ollamaClient = client
+        self.lmStudioClient = lmStudioClient
         self.defaults = defaults
-        defaultModel = defaults.string(forKey: Self.defaultModelKey) ?? ""
+        let savedProvider = defaults.string(forKey: Self.selectedProviderKey)
+            .flatMap(LocalAIProvider.init(rawValue:)) ?? .ollama
+        selectedProvider = savedProvider
+        defaultModel = Self.savedDefaultModel(for: savedProvider, defaults: defaults)
         persistAIInteractions = defaults.bool(forKey: Self.persistLogsKey)
         if defaults.object(forKey: Self.requestTimeoutKey) != nil {
             requestTimeoutSeconds = defaults.integer(forKey: Self.requestTimeoutKey)
@@ -53,11 +73,7 @@ final class LocalAISettings: ObservableObject {
             requestTimeoutSeconds = Self.defaultRequestTimeoutSeconds
         }
         requestTimeoutSeconds = Self.clampTimeout(requestTimeoutSeconds)
-        for task in LocalAITask.allCases {
-            if let value = defaults.string(forKey: Self.overrideKey(for: task)) {
-                taskOverrides[task] = value
-            }
-        }
+        taskOverrides = Self.loadOverrides(for: savedProvider, defaults: defaults)
     }
 
     func refreshModelsIfNeeded() async {
@@ -76,13 +92,13 @@ final class LocalAISettings: ObservableObject {
         }
 
         do {
-            var models = try await client.listModels()
+            var models = try await modelListingClient().listModels()
             models = models.filter { !Self.isCloudModel($0.name) }
             models.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
             availableModels = models
             normalizeModels()
         } catch {
-            lastRefreshError = "Ollama not reachable on 127.0.0.1:11434."
+            lastRefreshError = "\(selectedProvider.displayName) not reachable on \(selectedProvider.hostLabel)."
         }
     }
 
@@ -100,10 +116,10 @@ final class LocalAISettings: ObservableObject {
     func setOverride(task: LocalAITask, model: String?) {
         if let model {
             taskOverrides[task] = model
-            defaults.set(model, forKey: Self.overrideKey(for: task))
+            defaults.set(model, forKey: Self.overrideKey(for: task, provider: selectedProvider))
         } else {
             taskOverrides.removeValue(forKey: task)
-            defaults.removeObject(forKey: Self.overrideKey(for: task))
+            defaults.removeObject(forKey: Self.overrideKey(for: task, provider: selectedProvider))
         }
     }
 
@@ -122,6 +138,15 @@ final class LocalAISettings: ObservableObject {
         Self.recommendedModelName(models: availableModels)
     }
 
+    func makeTextClient() -> LocalAITextGenerating {
+        switch selectedProvider {
+        case .ollama:
+            OllamaClient(requestTimeout: TimeInterval(requestTimeoutSeconds))
+        case .lmStudio:
+            LMStudioClient(requestTimeout: TimeInterval(requestTimeoutSeconds))
+        }
+    }
+
     private func normalizeModels() {
         let availableNames = availableModelNamesLowercased()
         if !defaultModel.isEmpty, !availableNames.contains(defaultModel.lowercased()) {
@@ -130,7 +155,7 @@ final class LocalAISettings: ObservableObject {
         let invalidTasks = taskOverrides.filter { !availableNames.contains($0.value.lowercased()) }.map(\.key)
         for task in invalidTasks {
             taskOverrides.removeValue(forKey: task)
-            defaults.removeObject(forKey: Self.overrideKey(for: task))
+            defaults.removeObject(forKey: Self.overrideKey(for: task, provider: selectedProvider))
         }
         if defaultModel.isEmpty, let recommended = recommendedModelName {
             defaultModel = recommended
@@ -141,8 +166,37 @@ final class LocalAISettings: ObservableObject {
         Set(availableModels.map { $0.name.lowercased() })
     }
 
-    private static func overrideKey(for task: LocalAITask) -> String {
-        overridePrefix + task.rawValue
+    private func modelListingClient() -> any LocalAIModelListing {
+        switch selectedProvider {
+        case .ollama: ollamaClient
+        case .lmStudio: lmStudioClient
+        }
+    }
+
+    private static func defaultModelKey(for provider: LocalAIProvider) -> String {
+        "\(defaultModelKey).\(provider.rawValue)"
+    }
+
+    private static func savedDefaultModel(for provider: LocalAIProvider, defaults: UserDefaults) -> String {
+        defaults.string(forKey: defaultModelKey(for: provider))
+            ?? (provider == .ollama ? defaults.string(forKey: defaultModelKey) : nil)
+            ?? ""
+    }
+
+    private static func overrideKey(for task: LocalAITask, provider: LocalAIProvider) -> String {
+        "\(overridePrefix)\(provider.rawValue).\(task.rawValue)"
+    }
+
+    private static func loadOverrides(for provider: LocalAIProvider, defaults: UserDefaults) -> [LocalAITask: String] {
+        var overrides: [LocalAITask: String] = [:]
+        for task in LocalAITask.allCases {
+            let providerKey = overrideKey(for: task, provider: provider)
+            let legacyKey = overridePrefix + task.rawValue
+            if let value = defaults.string(forKey: providerKey) ?? defaults.string(forKey: legacyKey) {
+                overrides[task] = value
+            }
+        }
+        return overrides
     }
 
     private static func isCloudModel(_ name: String) -> Bool {

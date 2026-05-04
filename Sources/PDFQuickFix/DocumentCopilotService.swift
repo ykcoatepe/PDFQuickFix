@@ -8,13 +8,13 @@ final class DocumentCopilotService {
     private static let maxRetrievedChunks = 4
 
     private let interactionStore: AIInteractionStore
-    private let client: OllamaTextGenerating
+    private let client: LocalAITextGenerating
     private let maxPromptCharacters: Int
     private let maxChunkCharacters: Int
     private let windowOverlap: Int
 
     init(interactionStore: AIInteractionStore,
-         client: OllamaTextGenerating = OllamaClient(requestTimeout: 120),
+         client: LocalAITextGenerating = OllamaClient(requestTimeout: 120),
          maxPromptCharacters: Int = DocumentCopilotService.defaultMaxPromptCharacters,
          maxChunkCharacters: Int = DocumentCopilotService.defaultMaxChunkCharacters,
          windowOverlap: Int = DocumentCopilotService.defaultWindowOverlap)

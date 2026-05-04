@@ -35,7 +35,7 @@ Version: 2025-11-30 • Owner: CodeForge AI
 4. Security
    • No secrets in repo.
    • App Sandbox enabled (user-selected read/write).
-   • Local processing only (no network).
+   • Local processing by default; local-only client access is allowed for Ollama/LM Studio on loopback hosts.
 
 5. Commit & PR
    • Conventional Commits (`feat:`, `fix:`, `chore:`).

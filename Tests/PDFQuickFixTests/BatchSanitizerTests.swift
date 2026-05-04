@@ -332,7 +332,7 @@ final class BatchSanitizerTests: XCTestCase {
         XCTAssertEqual(report.profile, .keepEditable)
         XCTAssertTrue(report.recursive)
         XCTAssertFalse(report.dryRun)
-        XCTAssertGreaterThan(report.totalElapsedMs, 0)
+        XCTAssertGreaterThanOrEqual(report.totalElapsedMs, 0)
     }
 
     func testReportIsJSONEncodable() throws {

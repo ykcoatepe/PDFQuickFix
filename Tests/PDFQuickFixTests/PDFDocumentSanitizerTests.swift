@@ -102,6 +102,47 @@ final class PDFDocumentSanitizerTests: XCTestCase {
         XCTAssertEqual(sanitized.outlineRoot?.numberOfChildren ?? 0, 0)
     }
 
+    func testSanitizeValidatesUnlockedSnapshotBeforeLockedSourceURL() throws {
+        let plainURL = try TestPDFBuilder.makeSimplePDF(text: "Encrypted sanitize content")
+        let plainDocument = try XCTUnwrap(PDFDocument(url: plainURL))
+        let encryptedData = try XCTUnwrap(PDFSecurity.encrypt(document: plainDocument, userPassword: "user-pass"))
+        let encryptedURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("pdf")
+        try encryptedData.write(to: encryptedURL)
+        defer { try? FileManager.default.removeItem(at: encryptedURL) }
+
+        let encryptedDocument = try XCTUnwrap(PDFDocument(url: encryptedURL))
+        XCTAssertTrue(encryptedDocument.isLocked)
+        XCTAssertTrue(encryptedDocument.unlock(withPassword: "user-pass"))
+
+        let unlockedSnapshot = try PDFOps.privacyPreservingSnapshot(document: encryptedDocument)
+        let sanitized = try PDFDocumentSanitizer.sanitize(
+            document: unlockedSnapshot,
+            sourceURL: encryptedURL,
+            options: .init(rebuildMode: .never, validationPageLimit: 1)
+        )
+
+        XCTAssertEqual(sanitized.pageCount, 1)
+    }
+
+    func testSanitizeUsesURLBackedValidationForSourceDocument() throws {
+        let url = try TestPDFBuilder.makeSimplePDF(text: "URL-backed validation")
+        let document = try XCTUnwrap(TrackingPDFDocument(url: url))
+
+        let sanitized = try PDFDocumentSanitizer.sanitize(
+            document: document,
+            sourceURL: url,
+            options: .init(rebuildMode: .never,
+                           validationPageLimit: 1,
+                           sanitizeAnnotations: false,
+                           sanitizeOutline: false)
+        )
+
+        XCTAssertEqual(sanitized.pageCount, 1)
+        XCTAssertEqual(document.dataRepresentationCallCount, 0)
+    }
+
     // MARK: - Trust Checks
 
     /// Trust check: Verify lightClean removes XMP metadata, not just document attributes.
@@ -135,16 +176,8 @@ final class PDFDocumentSanitizerTests: XCTestCase {
         let hasXPacket = dataString.contains("<?xpacket")
         let hasXMPMeta = dataString.contains("<x:xmpmeta")
 
-        // If XMP is found, log a warning. This test documents the behavior.
-        // If XMP persists, we may need to switch lightClean to PDF context redraw.
-        if hasXPacket || hasXMPMeta {
-            // XMP was detected - document the behavior
-            print("⚠️ XMP metadata detected in lightClean output. Consider switching to PDF context redraw.")
-
-            // For now, we don't fail the test but document that XMP may persist.
-            // If this becomes a strict requirement, uncomment the following:
-            // XCTFail("XMP metadata should be removed by lightClean profile")
-        }
+        XCTAssertFalse(hasXPacket, "XMP packet marker should be removed by lightClean profile")
+        XCTAssertFalse(hasXMPMeta, "XMP metadata block should be removed by lightClean profile")
 
         // At minimum, document attributes should be empty
         XCTAssertTrue(sanitized.documentAttributes?.isEmpty ?? true, "Document attributes should be cleared")
@@ -195,5 +228,14 @@ final class PDFDocumentSanitizerTests: XCTestCase {
         // Verify outline removal persists after reload
         let reloadedOutlineCount = reloaded.outlineRoot?.numberOfChildren ?? 0
         XCTAssertEqual(reloadedOutlineCount, 0, "Outline removal should persist after save/reload cycle")
+    }
+}
+
+private final class TrackingPDFDocument: PDFDocument {
+    private(set) var dataRepresentationCallCount = 0
+
+    override func dataRepresentation() -> Data? {
+        dataRepresentationCallCount += 1
+        return super.dataRepresentation()
     }
 }

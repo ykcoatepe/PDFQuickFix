@@ -7,35 +7,20 @@ enum PDFSecurity {
         document: PDFDocument,
         userPassword: String,
         ownerPassword: String? = nil,
-        keyLength: Int = 256
+        keyLength: Int = 128
     ) -> Data? {
         guard document.pageCount > 0 else { return nil }
+        guard keyLength == 40 || keyLength == 128 else { return nil }
 
-        let data = NSMutableData()
-        guard let consumer = CGDataConsumer(data: data as CFMutableData) else { return nil }
+        let highQualityPrintingPermission = 1 << 1
 
-        let options: [CFString: Any] = [
-            kCGPDFContextUserPassword: userPassword,
-            kCGPDFContextOwnerPassword: ownerPassword ?? userPassword,
-            kCGPDFContextEncryptionKeyLength: keyLength,
-            kCGPDFContextAllowsCopying: false,
-            kCGPDFContextAllowsPrinting: true,
+        let options: [AnyHashable: Any] = [
+            PDFDocumentWriteOption.userPasswordOption: userPassword,
+            PDFDocumentWriteOption.ownerPasswordOption: ownerPassword ?? userPassword,
+            kCGPDFContextEncryptionKeyLength as String: keyLength,
+            PDFDocumentWriteOption.accessPermissionsOption: NSNumber(value: highQualityPrintingPermission),
         ]
 
-        var mediaBox = document.page(at: 0)?.bounds(for: .mediaBox) ?? .zero
-        guard let context = CGContext(consumer: consumer, mediaBox: &mediaBox, options as CFDictionary) else {
-            return nil
-        }
-
-        for pageIndex in 0 ..< document.pageCount {
-            guard let page = document.page(at: pageIndex), let pageRef = page.pageRef else { continue }
-            let box = pageRef.getBoxRect(.mediaBox)
-            context.beginPDFPage([kCGPDFContextMediaBox as String: box] as CFDictionary)
-            context.drawPDFPage(pageRef)
-            context.endPDFPage()
-        }
-
-        context.closePDF()
-        return data as Data
+        return document.dataRepresentation(options: options)
     }
 }

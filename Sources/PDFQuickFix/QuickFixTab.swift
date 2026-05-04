@@ -254,7 +254,7 @@ struct QuickFixTab: View {
                     }
                 }
 
-                if aiTask == .summarize {
+                if aiTask.supportsPageSelection {
                     HStack {
                         Text("Pages")
                         TextField("All (e.g. 1-3, 6)", text: $aiPageSelection)
@@ -311,19 +311,24 @@ struct QuickFixTab: View {
                         ScrollView {
                             Text(aiOutput)
                                 .font(.caption.monospaced())
+                                .foregroundStyle(AppTheme.Colors.paperText)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .textSelection(.enabled)
                         }
                         .frame(minHeight: 160, maxHeight: 280)
 
-                        HStack {
+                        HStack(spacing: 12) {
                             Button("Copy") {
                                 copyAIOutput()
                             }
+                            .buttonStyle(.bordered)
+                            .tint(AppTheme.Colors.support)
 
                             Button("Save...") {
                                 saveAIOutput()
                             }
+                            .buttonStyle(.bordered)
+                            .tint(AppTheme.Colors.support)
                         }
                     }
                     .paperPanelStyle()
@@ -439,7 +444,7 @@ struct QuickFixTab: View {
         Task {
             do {
                 let sourceURL = try await resolveAITaskSourceURL()
-                let selection = task == .summarize ? aiPageSelection : ""
+                let selection = task.supportsPageSelection ? aiPageSelection : ""
                 let text = try await Task.detached(priority: .userInitiated) {
                     try DocumentTextSession(documentURL: sourceURL).extractText(pageSelection: selection)
                 }.value
@@ -450,7 +455,7 @@ struct QuickFixTab: View {
                 aiStatus = "Running \(task.displayName)…"
                 let runner = LocalAITaskRunner(
                     interactionStore: aiInteractions,
-                    client: OllamaClient(requestTimeout: TimeInterval(aiSettings.requestTimeoutSeconds))
+                    client: aiSettings.makeTextClient()
                 )
                 let result = try await runner.run(
                     task: task,

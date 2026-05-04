@@ -17,11 +17,45 @@ struct OllamaModelDetails: Hashable {
     let capabilities: [String]
 }
 
-protocol OllamaTextGenerating {
+protocol LocalAITextGenerating {
     func generateText(model: String, prompt: String, format: String?) async throws -> String
 }
 
-final class OllamaClient: OllamaTextGenerating {
+typealias OllamaTextGenerating = LocalAITextGenerating
+
+protocol LocalAIModelListing {
+    func listModels() async throws -> [OllamaModelInfo]
+}
+
+enum LocalAIProvider: String, CaseIterable, Identifiable, Codable {
+    case ollama
+    case lmStudio
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .ollama: "Ollama"
+        case .lmStudio: "LM Studio"
+        }
+    }
+
+    var hostLabel: String {
+        switch self {
+        case .ollama: "127.0.0.1:11434"
+        case .lmStudio: "127.0.0.1:1234"
+        }
+    }
+
+    var defaultPort: Int {
+        switch self {
+        case .ollama: 11434
+        case .lmStudio: 1234
+        }
+    }
+}
+
+final class OllamaClient: LocalAITextGenerating, LocalAIModelListing {
     private let hostURL: URL
     private let requestTimeout: TimeInterval
 

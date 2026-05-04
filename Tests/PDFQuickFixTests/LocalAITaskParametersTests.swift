@@ -16,4 +16,23 @@ final class LocalAITaskParametersTests: XCTestCase {
         let prompt = LocalAITask.piiDetection.prompt(input: "Test", parameters: LocalAITaskParameters())
         XCTAssertTrue(prompt.expectsJSON)
     }
+
+    func testShareReadinessReviewRequestsGroundedJSON() {
+        let prompt = LocalAITask.shareReadinessReview.prompt(input: "Passport number AB123", parameters: LocalAITaskParameters())
+
+        XCTAssertTrue(prompt.expectsJSON)
+        XCTAssertTrue(prompt.text.contains("Do not override PDFQuickFix's deterministic health status."))
+        XCTAssertTrue(prompt.text.contains("readiness_hint"))
+        XCTAssertTrue(LocalAITask.shareReadinessReview.supportsPageSelection)
+    }
+
+    func testRedactionCandidatesTaskRequestsHumanReviewedJSON() {
+        let prompt = LocalAITask.redactionCandidates.prompt(input: "SSN 123-45-6789", parameters: LocalAITaskParameters())
+
+        XCTAssertTrue(prompt.expectsJSON)
+        XCTAssertTrue(prompt.text.contains("propose redaction candidates for a human editor"))
+        XCTAssertTrue(prompt.text.contains("Do not claim that text has been redacted."))
+        XCTAssertTrue(prompt.text.contains("must_review_manually"))
+        XCTAssertTrue(LocalAITask.redactionCandidates.supportsPageSelection)
+    }
 }

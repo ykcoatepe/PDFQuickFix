@@ -6,7 +6,7 @@ enum LocalAITaskRunnerError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .noAvailableModel:
-            "No local Ollama model is available."
+            "No local AI model is available."
         }
     }
 }
@@ -21,10 +21,10 @@ struct LocalAITaskResult {
 final class LocalAITaskRunner {
     static let maxInputCharacters = 12000
 
-    private let client: OllamaTextGenerating
+    private let client: LocalAITextGenerating
     private let interactionStore: AIInteractionStore
 
-    init(interactionStore: AIInteractionStore, client: OllamaTextGenerating = OllamaClient(requestTimeout: 120)) {
+    init(interactionStore: AIInteractionStore, client: LocalAITextGenerating = OllamaClient(requestTimeout: 120)) {
         self.interactionStore = interactionStore
         self.client = client
     }

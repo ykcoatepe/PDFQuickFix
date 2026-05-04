@@ -11,6 +11,18 @@ struct PageOrganizerView: View {
                 Text("Pages")
                     .font(.headline)
                 Spacer()
+                Menu("Add") {
+                    Button("Blank Page") {
+                        controller.insertBlankPage()
+                    }
+                    .disabled(controller.document == nil)
+
+                    Button("Import PDF or Images…") {
+                        controller.importPagesFromFiles()
+                    }
+                    .disabled(controller.document == nil)
+                }
+                .disabled(controller.document == nil)
                 Button("Duplicate") {
                     controller.duplicateSelectedPages()
                 }

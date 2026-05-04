@@ -45,3 +45,4 @@
 | 2026-02-25 | Replace view-based printing with shared PDFDocument print service + dispatcher fallback | codex/print-routing-fix | Yordam | Complete |
 | 2026-02-25 | Enable sandbox printing entitlement (com.apple.security.print) and redeploy app | codex/print-routing-fix | Yordam | Complete |
 | 2026-03-01 | Fix macOS 26 startup crash (secinit/appsandbox) and harden Reader/Studio open security-scope fallback | codex/split-merge-workbench | Yordam | Complete |
+| 2026-05-04 | Expand Reader/Studio into full PDF reader/editor suite with safer exports and grounded AI review tasks | codex/pdf-reader-editor-ai-suite | Yordam | Complete |
