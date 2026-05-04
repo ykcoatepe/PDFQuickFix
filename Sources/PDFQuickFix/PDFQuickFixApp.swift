@@ -38,6 +38,10 @@ enum AppLaunchWindowPolicy {
         }
     }
 
+    static func activationFallbackTrigger(hasCompletedInitialActivation: Bool) -> FallbackTrigger {
+        hasCompletedInitialActivation ? .activation : .initialLaunch
+    }
+
     static func isUserFacingWindow(title: String,
                                    isVisible: Bool,
                                    canBecomeMainOrKey: Bool,
@@ -86,6 +90,7 @@ struct PDFQuickFixApp: App {
 
 final class PDFQuickFixAppDelegate: NSObject, NSApplicationDelegate {
     private let finderQuickActionService = FinderQuickActionService()
+    private var hasCompletedInitialActivation = false
 
     @MainActor
     func applicationDidFinishLaunching(_: Notification) {
@@ -107,7 +112,11 @@ final class PDFQuickFixAppDelegate: NSObject, NSApplicationDelegate {
     @MainActor
     func applicationDidBecomeActive(_ notification: Notification) {
         guard let application = notification.object as? NSApplication else { return }
-        openMainWindowIfNeeded(application, activate: false, trigger: .activation)
+        let trigger = AppLaunchWindowPolicy.activationFallbackTrigger(
+            hasCompletedInitialActivation: hasCompletedInitialActivation
+        )
+        hasCompletedInitialActivation = true
+        openMainWindowIfNeeded(application, activate: false, trigger: trigger)
     }
 
     @MainActor

@@ -42,6 +42,26 @@ final class AppLaunchWindowPolicyTests: XCTestCase {
         ))
     }
 
+    func testFirstActivationUsesInitialLaunchFallbackPolicy() {
+        let trigger = AppLaunchWindowPolicy.activationFallbackTrigger(hasCompletedInitialActivation: false)
+
+        XCTAssertEqual(trigger, .initialLaunch)
+        XCTAssertFalse(AppLaunchWindowPolicy.shouldOpenFallbackWindow(
+            hasUserFacingWindow: false,
+            trigger: trigger
+        ))
+    }
+
+    func testLaterActivationCanOpenFallbackWindow() {
+        let trigger = AppLaunchWindowPolicy.activationFallbackTrigger(hasCompletedInitialActivation: true)
+
+        XCTAssertEqual(trigger, .activation)
+        XCTAssertTrue(AppLaunchWindowPolicy.shouldOpenFallbackWindow(
+            hasUserFacingWindow: false,
+            trigger: trigger
+        ))
+    }
+
     func testExistingUserFacingWindowDoesNotRequireFallbackWindow() {
         XCTAssertFalse(AppLaunchWindowPolicy.shouldOpenFallbackWindow(hasUserFacingWindow: true))
     }
