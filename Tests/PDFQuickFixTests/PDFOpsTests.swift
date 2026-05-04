@@ -301,7 +301,7 @@ final class PDFOpsTests: XCTestCase {
         XCTAssertEqual(copiedChild.destination?.point.x ?? -1, 20, accuracy: 0.5)
     }
 
-    func testFlattenedDataPreservesPageRotation() throws {
+    func testFlattenedDataDoesNotReapplyPageRotation() throws {
         let url = try TestPDFBuilder.makeSimplePDF(text: "Rotate me", size: CGSize(width: 200, height: 100))
         let document = try XCTUnwrap(PDFDocument(url: url))
         let page = try XCTUnwrap(document.page(at: 0))
@@ -311,7 +311,7 @@ final class PDFOpsTests: XCTestCase {
         let flattenedDocument = try XCTUnwrap(PDFDocument(data: data))
         let flattenedPage = try XCTUnwrap(flattenedDocument.page(at: 0))
 
-        XCTAssertEqual(flattenedPage.rotation, 90)
+        XCTAssertEqual(flattenedPage.rotation, 0)
         XCTAssertEqual(flattenedPage.bounds(for: .cropBox).width, page.bounds(for: .cropBox).width, accuracy: 0.5)
         XCTAssertEqual(flattenedPage.bounds(for: .cropBox).height, page.bounds(for: .cropBox).height, accuracy: 0.5)
     }

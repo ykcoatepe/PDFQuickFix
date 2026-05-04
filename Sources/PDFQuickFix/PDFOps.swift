@@ -266,7 +266,6 @@ enum PDFOps {
             else {
                 throw PDFOpsError.invalidInput("Could not flatten page \(index + 1).")
             }
-            flattenedPage.rotation = page.rotation
             flattened.insert(flattenedPage, at: flattened.pageCount)
         }
         flattened.outlineRoot = copyOutlineTree(from: document, to: flattened)
