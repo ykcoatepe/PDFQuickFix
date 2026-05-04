@@ -7,26 +7,25 @@ public enum BatchPlannerError: LocalizedError {
     case outputNotDirectory(URL)
     case outputInsideInput(input: URL, output: URL)
     case cannotCreateOutput(URL, Error)
-    
+
     public var errorDescription: String? {
         switch self {
-        case .inputDirectoryNotFound(let url):
-            return "Input directory not found: \(url.path)"
-        case .inputNotDirectory(let url):
-            return "Input path is not a directory: \(url.path)"
-        case .outputNotDirectory(let url):
-            return "Output path exists but is not a directory: \(url.path)"
-        case .outputInsideInput(let input, let output):
-            return "Output directory (\(output.path)) cannot be inside input directory (\(input.path)) when recursive mode is enabled"
-        case .cannotCreateOutput(let url, let error):
-            return "Cannot create output directory \(url.path): \(error.localizedDescription)"
+        case let .inputDirectoryNotFound(url):
+            "Input directory not found: \(url.path)"
+        case let .inputNotDirectory(url):
+            "Input path is not a directory: \(url.path)"
+        case let .outputNotDirectory(url):
+            "Output path exists but is not a directory: \(url.path)"
+        case let .outputInsideInput(input, output):
+            "Output directory (\(output.path)) cannot be inside input directory (\(input.path)) when recursive mode is enabled"
+        case let .cannotCreateOutput(url, error):
+            "Cannot create output directory \(url.path): \(error.localizedDescription)"
         }
     }
 }
 
 /// Plans batch sanitization by enumerating input PDFs and computing output paths.
-public struct BatchSanitizePlanner {
-    
+public enum BatchSanitizePlanner {
     /// A single item in the batch plan.
     public struct Item: Sendable, Equatable {
         /// Source PDF URL
@@ -37,7 +36,7 @@ public struct BatchSanitizePlanner {
         public let relativePath: String
         /// True if output exists and overwrite=false
         public let willSkip: Bool
-        
+
         public init(inputURL: URL, outputURL: URL, relativePath: String, willSkip: Bool) {
             self.inputURL = inputURL
             self.outputURL = outputURL
@@ -45,7 +44,7 @@ public struct BatchSanitizePlanner {
             self.willSkip = willSkip
         }
     }
-    
+
     /// Complete batch plan.
     public struct Plan: Sendable {
         public let items: [Item]
@@ -53,19 +52,20 @@ public struct BatchSanitizePlanner {
         public let outputDirectory: URL
         public let recursive: Bool
         public let overwrite: Bool
-        
+
         /// Number of items that will be processed (not skipped)
         public var processableCount: Int {
-            items.filter { !$0.willSkip }.count
+            items.count(where: { !$0.willSkip })
         }
-        
+
         /// Number of items that will be skipped
         public var skippedCount: Int {
-            items.filter { $0.willSkip }.count
+            items.count(where: { $0.willSkip })
         }
-        
+
         public init(items: [Item], inputDirectory: URL, outputDirectory: URL,
-                    recursive: Bool, overwrite: Bool) {
+                    recursive: Bool, overwrite: Bool)
+        {
             self.items = items
             self.inputDirectory = inputDirectory
             self.outputDirectory = outputDirectory
@@ -73,9 +73,9 @@ public struct BatchSanitizePlanner {
             self.overwrite = overwrite
         }
     }
-    
+
     // MARK: - Planning
-    
+
     /// Plans batch sanitization.
     /// - Parameters:
     ///   - inputDir: Directory containing PDFs to process
@@ -91,11 +91,11 @@ public struct BatchSanitizePlanner {
         overwrite: Bool
     ) throws -> Plan {
         let fm = FileManager.default
-        
+
         // Resolve symlinks and standardize paths for comparison
         let resolvedInput = inputDir.standardizedFileURL.resolvingSymlinksInPath()
         let resolvedOutput = outputDir.standardizedFileURL.resolvingSymlinksInPath()
-        
+
         // Validate input directory exists and is a directory
         var isDir: ObjCBool = false
         guard fm.fileExists(atPath: resolvedInput.path, isDirectory: &isDir) else {
@@ -104,14 +104,14 @@ public struct BatchSanitizePlanner {
         guard isDir.boolValue else {
             throw BatchPlannerError.inputNotDirectory(inputDir)
         }
-        
+
         // If output exists, it must be a directory
         if fm.fileExists(atPath: resolvedOutput.path, isDirectory: &isDir) {
             guard isDir.boolValue else {
                 throw BatchPlannerError.outputNotDirectory(outputDir)
             }
         }
-        
+
         // Guard: Reject output inside input when recursive
         if recursive {
             let inputPath = resolvedInput.path.hasSuffix("/") ? resolvedInput.path : resolvedInput.path + "/"
@@ -120,7 +120,7 @@ public struct BatchSanitizePlanner {
                 throw BatchPlannerError.outputInsideInput(input: inputDir, output: outputDir)
             }
         }
-        
+
         // Enumerate PDFs
         let items = try enumeratePDFs(
             in: resolvedInput,
@@ -128,7 +128,7 @@ public struct BatchSanitizePlanner {
             recursive: recursive,
             overwrite: overwrite
         )
-        
+
         return Plan(
             items: items,
             inputDirectory: resolvedInput,
@@ -137,9 +137,9 @@ public struct BatchSanitizePlanner {
             overwrite: overwrite
         )
     }
-    
+
     // MARK: - Private
-    
+
     private static func enumeratePDFs(
         in inputDir: URL,
         outputDir: URL,
@@ -147,16 +147,16 @@ public struct BatchSanitizePlanner {
         overwrite: Bool
     ) throws -> [Item] {
         let fm = FileManager.default
-        
+
         // Use enumerator with safe options
         let options: FileManager.DirectoryEnumerationOptions = [
             .skipsHiddenFiles,
-            .skipsPackageDescendants
+            .skipsPackageDescendants,
         ]
-        
+
         // For non-recursive, we'll filter after enumeration
         // But we still want to skip packages and hidden files at all levels
-        
+
         guard let enumerator = fm.enumerator(
             at: inputDir,
             includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey, .isRegularFileKey],
@@ -169,13 +169,13 @@ public struct BatchSanitizePlanner {
         ) else {
             return []
         }
-        
+
         var items: [Item] = []
         // Standardize input path for consistent prefix matching
         let standardizedInputDir = inputDir.standardizedFileURL.resolvingSymlinksInPath()
         let inputPath = standardizedInputDir.path
         let inputPathPrefix = inputPath.hasSuffix("/") ? inputPath : inputPath + "/"
-        
+
         while let url = enumerator.nextObject() as? URL {
             // Get resource values
             guard let resourceValues = try? url.resourceValues(
@@ -183,7 +183,7 @@ public struct BatchSanitizePlanner {
             ) else {
                 continue
             }
-            
+
             // Skip symlinked directories to avoid loops
             if resourceValues.isSymbolicLink == true {
                 if resourceValues.isDirectory == true {
@@ -191,7 +191,7 @@ public struct BatchSanitizePlanner {
                 }
                 continue
             }
-            
+
             // Skip directories
             if resourceValues.isDirectory == true {
                 // If not recursive, skip subdirectory contents
@@ -200,12 +200,12 @@ public struct BatchSanitizePlanner {
                 }
                 continue
             }
-            
+
             // Only process PDF files
             guard url.pathExtension.lowercased() == "pdf" else {
                 continue
             }
-            
+
             // Compute relative path using standardized URL
             let standardizedURL = url.standardizedFileURL.resolvingSymlinksInPath()
             let absolutePath = standardizedURL.path
@@ -219,14 +219,14 @@ public struct BatchSanitizePlanner {
             } else {
                 relativePath = url.lastPathComponent
             }
-            
+
             // Compute output URL preserving directory structure
             let outputURL = outputDir.appendingPathComponent(relativePath)
-            
+
             // Check if output exists
             let outputExists = fm.fileExists(atPath: outputURL.path)
             let willSkip = outputExists && !overwrite
-            
+
             items.append(Item(
                 inputURL: url,
                 outputURL: outputURL,
@@ -234,10 +234,10 @@ public struct BatchSanitizePlanner {
                 willSkip: willSkip
             ))
         }
-        
+
         // Sort for deterministic ordering
         items.sort { $0.relativePath < $1.relativePath }
-        
+
         return items
     }
 }

@@ -1,14 +1,16 @@
+import AppKit
 import SwiftUI
 
 @main
 struct PDFQuickFixApp: App {
+    @NSApplicationDelegateAdaptor(PDFQuickFixAppDelegate.self) private var appDelegate
     @StateObject private var aiSettings = LocalAISettings()
     @StateObject private var aiInteractions = AIInteractionStore()
 
     init() {
         PDFKitWorkarounds.install()
     }
-    
+
     var body: some Scene {
         WindowGroup {
             ContentView()
@@ -30,6 +32,34 @@ struct PDFQuickFixApp: App {
             AIActivityView()
                 .environmentObject(aiSettings)
                 .environmentObject(aiInteractions)
+        }
+    }
+}
+
+final class PDFQuickFixAppDelegate: NSObject, NSApplicationDelegate {
+    private let finderQuickActionService = FinderQuickActionService()
+
+    func applicationDidFinishLaunching(_: Notification) {
+        NSApp.servicesProvider = finderQuickActionService
+        NSUpdateDynamicServices()
+    }
+}
+
+final class FinderQuickActionService: NSObject {
+    @objc(sanitizeSelectedPDFs:userData:error:)
+    func sanitizeSelectedPDFs(_ pasteboard: NSPasteboard,
+                              userData _: String?,
+                              error: AutoreleasingUnsafeMutablePointer<NSString?>)
+    {
+        let urls = FinderQuickActionSanitizer.pdfFileURLs(from: pasteboard)
+
+        guard !urls.isEmpty else {
+            error.pointee = "Select one or more PDF files in Finder."
+            return
+        }
+
+        Task { @MainActor in
+            FinderQuickActionCoordinator.shared.run(urls: urls)
         }
     }
 }
@@ -70,17 +100,17 @@ extension FocusedValues {
         get { self[DocumentPrintableKey.self] }
         set { self[DocumentPrintableKey.self] = newValue }
     }
-    
+
     var pdfActionable: PDFActionable? {
         get { self[PDFActionableKey.self] }
         set { self[PDFActionableKey.self] = newValue }
     }
-    
+
     var studioToolSwitchable: StudioToolSwitchable? {
         get { self[StudioToolSwitchableKey.self] }
         set { self[StudioToolSwitchableKey.self] = newValue }
     }
-    
+
     var documentClosable: DocumentClosable? {
         get { self[DocumentClosableKey.self] }
         set { self[DocumentClosableKey.self] = newValue }
@@ -144,7 +174,7 @@ struct AppCommands: Commands {
     @FocusedValue(\.documentClosable) var documentClosable
     @FocusedValue(\.documentHealthPresentable) var documentHealthPresentable
     @Environment(\.openWindow) private var openWindow
-    
+
     var body: some Commands {
         CommandGroup(after: .newItem) {
             Button("Close Document") {
@@ -153,41 +183,41 @@ struct AppCommands: Commands {
             .keyboardShortcut("w", modifiers: .command)
             .disabled(documentClosable == nil)
         }
-        
+
         CommandGroup(after: .saveItem) {
             Button("Save As…") {
                 fileExportable?.saveAs()
             }
             .keyboardShortcut("s", modifiers: [.command, .shift])
             .disabled(fileExportable == nil)
-            
+
             Button("Repair & Save As…") {
                 fileExportable?.repairAndSaveAs()
             }
             .disabled(fileExportable == nil)
-            
+
             Menu("Export") {
                 Menu("Images") {
                     Button("JPEG") { fileExportable?.exportToImages(format: .jpeg) }
                     Button("PNG") { fileExportable?.exportToImages(format: .png) }
                     Button("TIFF") { fileExportable?.exportToImages(format: .tiff) }
                 }
-                
+
                 Button("Text") {
                     fileExportable?.exportToText()
                 }
-                
+
                 Divider()
-                
+
                 Button("Sanitize for Sharing…") {
                     fileExportable?.exportSanitized()
                 }
             }
             .disabled(fileExportable == nil)
-            
+
             // Batch operations - always available
             Divider()
-            
+
             Button("Sanitize Folder…") {
                 BatchSanitizeCoordinator.shared.showBatchSanitizePanel()
             }
@@ -203,7 +233,7 @@ struct AppCommands: Commands {
             }
             .keyboardShortcut("p", modifiers: .command)
         }
-        
+
         CommandMenu("View") {
             Button("Document Health…") {
                 documentHealthPresentable?.showDocumentHealth()
@@ -218,28 +248,28 @@ struct AppCommands: Commands {
             }
             .keyboardShortcut("+", modifiers: .command)
             .disabled(pdfActionable == nil)
-            
+
             Button("Zoom Out") {
                 pdfActionable?.zoomOut()
             }
             .keyboardShortcut("-", modifiers: .command)
             .disabled(pdfActionable == nil)
-            
+
             Divider()
-            
+
             Button("Rotate Left") {
                 pdfActionable?.rotateLeft()
             }
             .keyboardShortcut("l", modifiers: .command)
             .disabled(pdfActionable == nil)
-            
+
             Button("Rotate Right") {
                 pdfActionable?.rotateRight()
             }
             .keyboardShortcut("r", modifiers: .command)
             .disabled(pdfActionable == nil)
         }
-        
+
         CommandMenu("Tools") {
             ForEach(StudioTool.allCases) { tool in
                 Button(tool.rawValue) {

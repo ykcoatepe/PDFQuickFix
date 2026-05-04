@@ -1,5 +1,5 @@
-import SwiftUI
 import AppKit
+import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject private var aiInteractions: AIInteractionStore
@@ -7,7 +7,7 @@ struct ContentView: View {
     @StateObject private var documentHub = SharedDocumentHub()
     @StateObject private var readerController = ReaderControllerPro()
     @StateObject private var studioController = StudioController()
-    
+
     // Studio State (Lifted for Toolbar access)
     @State private var showQuickFix: Bool = false
     @State private var quickFixURL: URL?
@@ -15,7 +15,7 @@ struct ContentView: View {
     @State private var showingHeaderFooterSheet = false
     @State private var showingBatesSheet = false
     @State private var showingCropSheet = false
-    
+
     var body: some View {
         VStack(spacing: 0) {
             UnifiedToolbar(
@@ -32,7 +32,7 @@ struct ContentView: View {
                 showingCropSheet: $showingCropSheet
             )
             .environmentObject(documentHub)
-            
+
             ZStack {
                 switch currentMode {
                 case .reader:
@@ -76,22 +76,49 @@ enum AppMode: String, CaseIterable, Identifiable {
     case quickFix = "QuickFix"
     case studio = "Studio"
     case split = "Split"
-    
-    var id: String { rawValue }
+
+    var id: String {
+        rawValue
+    }
 }
 
 struct AppModeSwitcher: View {
     @Binding var currentMode: AppMode
     var modes: [AppMode] = AppMode.switcherModes
-    
+
     var body: some View {
-        Picker("", selection: $currentMode) {
+        HStack(spacing: 6) {
             ForEach(modes) { mode in
-                Text(mode.rawValue).tag(mode)
+                Button {
+                    currentMode = mode
+                } label: {
+                    Text(mode.rawValue)
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundColor(currentMode == mode ? AppTheme.Colors.primaryText : AppTheme.Colors.secondaryText)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .frame(minWidth: 84)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(currentMode == mode ? AppTheme.Colors.accentSoft : Color.clear)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .stroke(currentMode == mode ? AppTheme.Colors.accent.opacity(0.55) : Color.clear, lineWidth: 1)
+                        )
+                }
+                .buttonStyle(.plain)
             }
         }
-        .pickerStyle(.segmented)
-        .frame(minWidth: 260)
+        .padding(4)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(AppTheme.Colors.elevatedBackground)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(AppTheme.Colors.cardBorder, lineWidth: 1)
+        )
     }
 }
 
@@ -100,7 +127,7 @@ extension AppMode {
     static let switcherModes: [AppMode] = [.reader, .quickFix, .studio, .split]
 }
 
-// Shared document coordinator so Reader can hand off the current file to Studio.
+/// Shared document coordinator so Reader can hand off the current file to Studio.
 final class SharedDocumentHub: ObservableObject {
     enum Source { case reader, studio }
 
@@ -123,11 +150,11 @@ struct UnifiedToolbar: View {
     @ObservedObject var readerController: ReaderControllerPro
     @ObservedObject var studioController: StudioController
     @EnvironmentObject var documentHub: SharedDocumentHub
-    
+
     // Reader State
     @Binding var readerSyncEnabled: Bool
     @State private var zoomInput: String = ""
-    
+
     // Studio State
     @Binding var studioSelectedTool: StudioTool
     @Binding var showQuickFix: Bool
@@ -136,7 +163,7 @@ struct UnifiedToolbar: View {
     @Binding var showingHeaderFooterSheet: Bool
     @Binding var showingBatesSheet: Bool
     @Binding var showingCropSheet: Bool
-    
+
     var body: some View {
         HStack(spacing: 0) {
             // Left Controls (Expands to push center)
@@ -146,12 +173,12 @@ struct UnifiedToolbar: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.leading, 16)
-            
+
             // Center: App Mode Switcher (Fixed center)
             AppModeSwitcher(currentMode: $selectedTab)
                 .fixedSize()
                 .layoutPriority(1)
-            
+
             // Right Controls (Expands to push center)
             HStack {
                 Spacer(minLength: 0)
@@ -160,13 +187,18 @@ struct UnifiedToolbar: View {
             .frame(maxWidth: .infinity)
             .padding(.trailing, 16)
         }
-        .frame(height: 52)
-        .background(AppTheme.Colors.cardBackground.ignoresSafeArea())
-        .overlay(Divider(), alignment: .bottom)
+        .frame(height: 56)
+        .background(AppTheme.Colors.sidebarBackground.ignoresSafeArea())
+        .overlay(
+            Rectangle()
+                .fill(AppTheme.Colors.cardBorder)
+                .frame(height: 1),
+            alignment: .bottom
+        )
     }
-    
+
     // MARK: - Left Content
-    
+
     @ViewBuilder
     private var leftContent: some View {
         switch selectedTab {
@@ -178,7 +210,7 @@ struct UnifiedToolbar: View {
             EmptyView()
         }
     }
-    
+
     private var readerLeftControls: some View {
         HStack(spacing: 16) {
             // Sidebar Toggle
@@ -188,13 +220,13 @@ struct UnifiedToolbar: View {
                 }
             }) {
                 Image(systemName: "sidebar.left")
-                    .foregroundColor(readerController.isSidebarVisible ? .accentColor : AppTheme.Colors.primaryText)
+                    .foregroundColor(readerController.isSidebarVisible ? AppTheme.Colors.accent : AppTheme.Colors.primaryText)
             }
             .buttonStyle(.plain)
             .disabled(readerController.document == nil)
-            
+
             Divider().frame(height: 16)
-            
+
             // File Operations
             Group {
                 Button(action: openReaderFile) {
@@ -216,7 +248,7 @@ struct UnifiedToolbar: View {
                 .buttonStyle(.plain)
                 .help("Print…")
                 .disabled(readerController.document == nil)
-                
+
                 Menu {
                     Menu("Images") {
                         Button("JPEG") { readerController.exportToImages(format: .jpeg) }
@@ -230,7 +262,7 @@ struct UnifiedToolbar: View {
                 .menuStyle(.borderlessButton)
                 .frame(width: 20, height: 28)
                 .disabled(readerController.document == nil)
-                
+
                 Button(action: { readerController.closeDocument() }) {
                     Image(systemName: "xmark.circle")
                 }
@@ -238,9 +270,9 @@ struct UnifiedToolbar: View {
                 .help("Close Document")
                 .disabled(readerController.document == nil)
             }
-            
+
             Divider().frame(height: 16)
-            
+
             // Zoom Controls
             HStack(spacing: 8) {
                 Button(action: { readerController.zoomOut() }) {
@@ -248,7 +280,7 @@ struct UnifiedToolbar: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(readerController.document == nil)
-                
+
                 TextField("", text: $zoomInput)
                     .font(.subheadline)
                     .multilineTextAlignment(.center)
@@ -260,16 +292,16 @@ struct UnifiedToolbar: View {
                     }
                     .onSubmit { applyZoom() }
                     .disabled(readerController.document == nil)
-                
+
                 Button(action: { readerController.zoomIn() }) {
                     Image(systemName: "plus.magnifyingglass")
                 }
                 .buttonStyle(.plain)
                 .disabled(readerController.document == nil)
             }
-            
+
             Divider().frame(height: 16)
-            
+
             // Rotation Controls
             HStack(spacing: 8) {
                 Button(action: { readerController.rotateCurrentPageLeft() }) {
@@ -278,7 +310,7 @@ struct UnifiedToolbar: View {
                 .buttonStyle(.plain)
                 .help("Rotate Left")
                 .disabled(readerController.document == nil)
-                
+
                 Button(action: { readerController.rotateCurrentPageRight() }) {
                     Image(systemName: "rotate.right")
                 }
@@ -288,7 +320,7 @@ struct UnifiedToolbar: View {
             }
         }
     }
-    
+
     private var studioLeftControls: some View {
         HStack(spacing: 12) {
             Toggle(isOn: $documentHub.syncEnabled) {
@@ -296,22 +328,22 @@ struct UnifiedToolbar: View {
             }
             .toggleStyle(.button)
             .help(documentHub.syncEnabled ? "Turn off Reader↔Studio sync" : "Turn on Reader↔Studio sync")
-            
+
             Divider().frame(height: 16)
-            
+
             // File Operations
             Group {
                 Button(action: openStudioFile) {
                     Label("Open", systemImage: "folder")
                 }
                 .buttonStyle(GhostButtonStyle())
-                
+
                 Button(action: saveStudioFile) {
                     Label("Save", systemImage: "square.and.arrow.down")
                 }
                 .buttonStyle(GhostButtonStyle())
                 .disabled(studioController.document == nil)
-                
+
                 Button(action: { studioController.saveAs() }) {
                     Label("Save As", systemImage: "square.and.arrow.down.on.square")
                 }
@@ -323,7 +355,7 @@ struct UnifiedToolbar: View {
                 }
                 .buttonStyle(GhostButtonStyle())
                 .disabled(studioController.document == nil)
-                
+
                 Menu {
                     Menu("Images") {
                         Button("JPEG") { studioController.exportToImages(format: .jpeg) }
@@ -337,7 +369,7 @@ struct UnifiedToolbar: View {
                 .menuStyle(.borderlessButton)
                 .frame(height: 28)
                 .disabled(studioController.document == nil)
-                
+
                 Button(action: { studioController.closeDocument() }) {
                     Label("Close", systemImage: "xmark.circle")
                 }
@@ -347,9 +379,9 @@ struct UnifiedToolbar: View {
             }
         }
     }
-    
+
     // MARK: - Right Content
-    
+
     @ViewBuilder
     private var rightContent: some View {
         switch selectedTab {
@@ -358,10 +390,10 @@ struct UnifiedToolbar: View {
         case .studio:
             studioRightControls
         case .split, .quickFix:
-            EmptyView()
+            BatchSanitizeLaunchButton(tone: .ghost)
         }
     }
-    
+
     private var readerRightControls: some View {
         HStack(spacing: 16) {
             // Page Navigation
@@ -382,9 +414,9 @@ struct UnifiedToolbar: View {
                     .foregroundColor(AppTheme.Colors.secondaryText)
             }
             .font(.subheadline)
-            
+
             Divider().frame(height: 16)
-            
+
             // Search
             HStack {
                 Image(systemName: "magnifyingglass")
@@ -396,20 +428,20 @@ struct UnifiedToolbar: View {
                         set: { readerController.searchQuery = $0 }
                     )
                 )
-                    .textFieldStyle(.plain)
-                    .frame(width: 120)
-                    .onSubmit {
-                        readerController.find(readerController.searchQuery)
-                    }
-                    .onChange(of: readerController.searchQuery) { query in
-                        readerController.updateSearchQueryDebounced(query)
-                    }
-                
+                .textFieldStyle(.plain)
+                .frame(width: 120)
+                .onSubmit {
+                    readerController.find(readerController.searchQuery)
+                }
+                .onChange(of: readerController.searchQuery) { query in
+                    readerController.updateSearchQueryDebounced(query)
+                }
+
                 if !readerController.searchMatches.isEmpty {
                     Text("\(readerController.currentMatchIndex.map { $0 + 1 } ?? 0)/\(readerController.searchMatches.count)")
                         .font(.caption)
                         .foregroundColor(AppTheme.Colors.secondaryText)
-                    
+
                     // Navigation arrows
                     HStack(spacing: 2) {
                         Button(action: { readerController.findPrev() }) {
@@ -425,7 +457,7 @@ struct UnifiedToolbar: View {
             .padding(6)
             .background(AppTheme.Colors.background)
             .cornerRadius(6)
-            
+
             Divider().frame(height: 16)
 
             Button(action: { readerController.showDocumentHealth() }) {
@@ -435,7 +467,7 @@ struct UnifiedToolbar: View {
             .buttonStyle(.plain)
             .help("Document Health")
             .disabled(readerController.document == nil)
-            
+
             // Right Panel Toggle
             Button(action: {
                 withAnimation {
@@ -443,13 +475,17 @@ struct UnifiedToolbar: View {
                 }
             }) {
                 Image(systemName: "sidebar.right")
-                    .foregroundColor(readerController.isRightPanelVisible ? .accentColor : AppTheme.Colors.primaryText)
+                    .foregroundColor(readerController.isRightPanelVisible ? AppTheme.Colors.accent : AppTheme.Colors.primaryText)
             }
             .buttonStyle(.plain)
             .disabled(readerController.document == nil)
+
+            Divider().frame(height: 16)
+
+            BatchSanitizeLaunchButton(tone: .ghost)
         }
     }
-    
+
     private var studioRightControls: some View {
         HStack(spacing: 12) {
             Button(action: { studioController.showDocumentHealth() }) {
@@ -473,7 +509,7 @@ struct UnifiedToolbar: View {
             }
             .menuStyle(.borderlessButton)
             .frame(height: 28)
-            
+
             // Edit Tools Menu
             Menu("Edit Tools") {
                 Button("Add FreeText") { EditingTools.addFreeText(in: studioController.pdfView) }
@@ -486,9 +522,9 @@ struct UnifiedToolbar: View {
             .menuStyle(.borderlessButton)
             .disabled(studioController.pdfView == nil)
             .frame(height: 28)
-            
+
             Divider().frame(height: 16)
-            
+
             // QuickFix
             Button(action: {
                 quickFixURL = studioController.currentURL
@@ -498,7 +534,7 @@ struct UnifiedToolbar: View {
             }
             .buttonStyle(GhostButtonStyle())
             .disabled(studioController.currentURL == nil)
-            
+
             // Validate
             Button(action: {
                 studioController.runFullValidation()
@@ -507,11 +543,15 @@ struct UnifiedToolbar: View {
             }
             .buttonStyle(GhostButtonStyle())
             .disabled(studioController.document == nil || studioController.isFullValidationRunning)
+
+            Divider().frame(height: 16)
+
+            BatchSanitizeLaunchButton(tone: .ghost)
         }
     }
-    
+
     // MARK: - Helpers
-    
+
     private var zoomPercentage: String {
         let scale = readerController.zoomScale
         return "\(Int(scale * 100))%"
@@ -534,14 +574,14 @@ struct UnifiedToolbar: View {
             readerController.open(url: url)
         }
     }
-    
+
     private var pageBinding: Binding<Int> {
         Binding<Int>(
             get: { (readerController.currentPageIndex) + 1 },
             set: { readerController.currentPageIndex = max(0, $0 - 1) }
         )
     }
-    
+
     private func openStudioFile() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.pdf]
@@ -551,7 +591,7 @@ struct UnifiedToolbar: View {
             studioController.open(url: url)
         }
     }
-    
+
     private func saveStudioFile() {
         guard let document = studioController.document else { return }
         if let url = studioController.currentURL {

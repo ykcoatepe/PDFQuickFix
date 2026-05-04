@@ -1,5 +1,5 @@
-import Foundation
 import Combine
+import Foundation
 
 /// Summary metrics generated during a QuickFix pass.
 /// Stored in-memory next to the output PDF for user trust/verification.
@@ -82,7 +82,7 @@ final class QuickFixResultStore: ObservableObject {
 
 extension OCRReport {
     var suggestedPreviewPageIndex: Int? {
-        return emptyOCRPageIndices.first
+        emptyOCRPageIndices.first
     }
 }
 

@@ -1,6 +1,6 @@
-import XCTest
 import PDFKit
 @testable import PDFQuickFix
+import XCTest
 
 final class DocumentValidationRunnerTests: XCTestCase {
     func testThresholdConstants() {

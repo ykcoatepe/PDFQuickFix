@@ -1,5 +1,5 @@
-import XCTest
 @testable import PDFQuickFix
+import XCTest
 
 final class DeepSeekOCRParserTests: XCTestCase {
     func testParseRunsExtractsTextAndRects() {
@@ -12,7 +12,7 @@ final class DeepSeekOCRParserTests: XCTestCase {
         XCTAssertEqual(runs.count, 2)
 
         switch runs[0].kind {
-        case .keep(let text):
+        case let .keep(text):
             XCTAssertEqual(text, "Flight: TK1234")
         default:
             XCTFail("Expected keep run")
@@ -36,7 +36,7 @@ final class DeepSeekOCRParserTests: XCTestCase {
         XCTAssertEqual(runs.count, 2)
 
         switch runs[0].kind {
-        case .keep(let text):
+        case let .keep(text):
             XCTAssertEqual(text, "Hello")
         default:
             XCTFail("Expected keep run")

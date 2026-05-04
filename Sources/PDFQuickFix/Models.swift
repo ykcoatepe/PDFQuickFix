@@ -10,10 +10,10 @@ struct RedactionPattern: Identifiable, Hashable {
     let id = UUID()
     var name: String
     var regex: NSRegularExpression
-    
+
     init(name: String, pattern: String, options: NSRegularExpression.Options = [.caseInsensitive]) throws {
         self.name = name
-        self.regex = try NSRegularExpression(pattern: pattern, options: options)
+        regex = try NSRegularExpression(pattern: pattern, options: options)
     }
 }
 
@@ -21,7 +21,9 @@ enum OCRProviderPreference: String, CaseIterable, Identifiable {
     case autoLocalOCR
     case visionOnly
 
-    var id: String { rawValue }
+    var id: String {
+        rawValue
+    }
 }
 
 struct QuickFixOptions {
@@ -37,25 +39,31 @@ struct QuickFixOptions {
 struct DocumentProfile {
     let isLarge: Bool
     let isMassive: Bool
-    
+
     // Feature flags
     let searchEnabled: Bool
     let thumbnailsEnabled: Bool
     let outlineEnabled: Bool
     let studioEnabled: Bool
     let globalAnnotationsEnabled: Bool
-    
-    // Thresholds (aligned with DocumentValidationRunner)
-    private static var largePageThreshold: Int { DocumentValidationRunner.largeDocumentPageThreshold }
-    private static var massivePageThreshold: Int { DocumentValidationRunner.massiveDocumentPageThreshold }
+
+    /// Thresholds (aligned with DocumentValidationRunner)
+    private static var largePageThreshold: Int {
+        DocumentValidationRunner.largeDocumentPageThreshold
+    }
+
+    private static var massivePageThreshold: Int {
+        DocumentValidationRunner.massiveDocumentPageThreshold
+    }
+
     private static let massiveFileSizeThreshold: Int64 = 200 * 1024 * 1024 // 200 MB
-    
+
     static func from(pageCount: Int, fileSizeBytes: Int64? = nil) -> DocumentProfile {
         let isLarge = pageCount > largePageThreshold
         let isMassivePageCount = pageCount >= massivePageThreshold
         let isMassiveSize = (fileSizeBytes ?? 0) >= massiveFileSizeThreshold
         let isMassive = isMassivePageCount || isMassiveSize
-        
+
         // In massive mode, we disable heavy features to prevent UI freezing
         return DocumentProfile(
             isLarge: isLarge,
@@ -72,7 +80,7 @@ struct DocumentProfile {
             globalAnnotationsEnabled: !isMassive
         )
     }
-    
+
     static let empty = DocumentProfile(
         isLarge: false,
         isMassive: false,

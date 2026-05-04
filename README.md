@@ -1,8 +1,26 @@
 # PDFQuickFix (macOS)
 
-A local, on‑device macOS app that **reads & annotates PDFs**, **redacts sensitive data**, performs **inline visual text edits**, and **repairs OCR** — a practical replacement for Adobe Acrobat *Reader* for personal use.
+A local, on-device macOS app for **repairing, redacting, sanitizing, organizing, splitting, and merging PDFs** before you share them.
+
+PDFQuickFix is best thought of as a **privacy-first PDF cleanup workstation** for sensitive documents. Reader, Studio, Split/Merge, and AI Tools exist to help you inspect a PDF, fix it, remove risky content, and ship a cleaner output without sending files to a cloud service by default.
+
+## Best for
+
+- Cleaning up PDFs that contain sensitive personal, travel, finance, or internal business data
+- Preparing safer outbound copies with permanent redaction, metadata cleanup, OCR repair, and batch sanitize workflows
+- Teams or individuals who want **local-first** document processing on macOS, with optional local AI and opt-in cloud fallback only when needed
 
 ## What you get
+
+**Privacy-first cleanup workflows**
+- **Sanitize for Sharing** export for safer one-off outbound copies
+- **Finder Quick Action**: right-click PDFs in Finder and choose **Quick Actions → PDFQuickFix/Sanitize PDF for Sharing**
+- **Sanitize Folder** batch workflow for processing a full directory from the app
+- **Privacy / Light / Keep Editable** sanitize profiles for different output goals
+- **Secure redaction** by patterns (IBAN, TCKN, PNR, TC- tail) + your own regex
+- **Find → Replace** visual edits (white patch + new text)
+- **OCR repair** to add an invisible searchable text layer after cleanup
+- **OCR reports** with provider usage, fallback counts, and empty OCR pages
 
 **Reader tab**
 - Open / Save As / Print
@@ -16,19 +34,37 @@ A local, on‑device macOS app that **reads & annotates PDFs**, **redacts sensit
 - **Manual redaction boxes**: place black boxes, then *Apply Permanent Redactions* (burned into the page bitmap)
 - **OCR Repair**: one-click to add an invisible searchable text layer
 
+**Studio tab**
+- Visual page organizer with **insert / delete / duplicate / reorder / rotate**
+- Page thumbnails, drag-and-drop ordering, and quick actions
+- Shared document handoff from Reader for edit/organize flows
+- Large-document guards and background validation during open
+
+**Split tab**
+- Split PDFs by **max pages**, **number of parts**, **explicit page breaks**, **target size**, or **outline chapters**
+- Merge multiple PDFs with source reordering, deduplication, blank-page insertion, and safe fallback policies
+- Recent split/merge job history plus Finder reveal actions
+
 **AI Tools tab**
-- **Secure redaction** by patterns (IBAN, TCKN, PNR, TC- tail) + your own regex
-- **Find → Replace** visual edits (white patch + new text)
 - **OCR repair** (Local OCR by default, Vision fallback) adds invisible text layer
 - **Local AI tools** (summary, translation, PII scan, field extraction)
 - **Heavy AI workflows** stay here for OCR, extraction, redaction, and longer-running document jobs
 - **Accepts PDF, PNG, and JPEG inputs** (images are converted to searchable PDFs during OCR)
 - **Optional AI auto-crop, deskew, and enhancement** for image inputs (toggle in Options)
-- **OCR report** with provider usage, fallback counts, and empty OCR pages
 - **Progress updates** during QuickFix runs (pages processed)
 - **Visible in the top mode switcher** (Reader | AI Tools | Studio | Split)
 
 > ✅ All processing is **local** by default. When enabled, the app talks only to `127.0.0.1:11434` for Ollama. Optional **cloud OCR fallback** can be enabled in Options.
+
+## Batch and automation
+
+- Finder Quick Action: **Quick Actions → PDFQuickFix/Sanitize PDF for Sharing**
+- App menu: **File → Sanitize Folder…**
+- App menu: **File → Export → Sanitize for Sharing…**
+- CLI: `pdfquickfix-cli sanitize <input.pdf> <output.pdf>`
+- CLI: `pdfquickfix-cli sanitize-batch <inputDir> <outputDir>`
+
+The Finder service accepts one or more selected PDFs, writes side-by-side `-sanitized.pdf` outbound copies, leaves originals untouched, and shows a receipt window before revealing the first output in Finder. The Finder, batch, export, and CLI surfaces use the same sanitize core so you can apply the same privacy workflow interactively or in repeatable local automation.
 
 ## Build (XcodeGen)
 1. Install Xcode 15+ and Command Line Tools.
@@ -125,7 +161,7 @@ Use this checklist to validate the new OCR/AI features end-to-end.
 ## Notes & limitations
 - Supports standard **AcroForm** fields; **dynamic XFA** forms are not supported by PDFKit.
 - Certificate-based digital signatures (PKCS#7/PAdES) are not included in this starter (visual signing only). Can be added later using SecKey + CMS.
-- Page organize (merge/split/reorder) and export to PDF/A are possible next steps.
+- Export to PDF/A and stronger signing/validation are still future work.
 
 ## Architecture updates
 - Shared `QuickFixOptionsModel` / `QuickFixOptionsForm` now centralize the QuickFix tab and sheet option UI + regex/find/replace parsing so logging, validation, and manual redaction handling stay in sync.
@@ -133,11 +169,11 @@ Use this checklist to validate the new OCR/AI features end-to-end.
 - Tests now include `ReaderLoadingTests` that open a simple PDF through the reader/studio controllers and guard the runner, helping trace the freeze you saw when loading documents.
 
 ## Roadmap (optional)
-- Page organizer (insert/delete/move/rotate, merge/split)
-- Batch actions + Finder Quick Action
+- Before/after cleanup report bundle with clearer audit trail
 - Digital ID signing (PAdES-Basic) + validation UI
+- Export to PDF/A
 - Compress/optimize (image downsampling, grayscale, metadata scrub)
-- Template packs for aviation and finance docs
+- Template packs and presets for aviation and finance docs
 
 MIT license for the starter. Verify outputs for your compliance needs.
 ## Profiling large PDFs
@@ -171,6 +207,18 @@ In Debug builds the app emits signposts and basic performance metrics.
 
 
 Use this to compare branches and track regressions when working on large-document performance.
+
+## Documentation map
+- [CHANGELOG.md](CHANGELOG.md) for release notes and user-visible changes
+- [CLAUDE.md](CLAUDE.md) for repo-specific agent and design-system routing
+- [CONTRIBUTING.md](CONTRIBUTING.md) for local setup, checks, and PR expectations
+- [agent.md](agent.md) for repo structure, build commands, and operational notes
+- [DESIGN.md](DESIGN.md) for the shared visual system and UI direction
+- [PRODUCT_THESIS.md](PRODUCT_THESIS.md) for the product wedge and positioning
+- [TODOS.md](TODOS.md) for the active product, design, workflow, and repo backlog
+- [AUTOPLAN_REVIEW.md](AUTOPLAN_REVIEW.md) for the current branch review summary and applied design/product decisions
+- [LOGBOOK.md](LOGBOOK.md) for historical task notes
+- [implementation-plan-ollama-deepseek-ocr-fallback-2026-01-18.md](implementation-plan-ollama-deepseek-ocr-fallback-2026-01-18.md) for the archived OCR implementation plan
 
 ## Development
 For detailed development instructions, architecture notes, and workflows, please refer to [agent.md](agent.md).

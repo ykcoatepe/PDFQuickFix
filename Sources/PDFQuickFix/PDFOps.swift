@@ -1,21 +1,20 @@
+import AppKit
 import Foundation
 import PDFKit
-import AppKit
 
 enum PDFOpsError: LocalizedError {
     case missingDocument
     case invalidInput(String)
     case saveFailed
 
-
     var errorDescription: String? {
         switch self {
         case .missingDocument:
-            return "No PDF document is loaded."
-        case .invalidInput(let message):
-            return message
+            "No PDF document is loaded."
+        case let .invalidInput(message):
+            message
         case .saveFailed:
-            return "Failed to save the document."
+            "Failed to save the document."
         }
     }
 }
@@ -27,25 +26,27 @@ enum WatermarkPosition: String, CaseIterable, Identifiable {
     case bottomLeft = "Bottom Left"
     case bottomRight = "Bottom Right"
 
-    var id: String { rawValue }
+    var id: String {
+        rawValue
+    }
 
     func origin(for textSize: CGSize, in bounds: CGRect, margin: CGFloat) -> CGPoint {
         switch self {
         case .topLeft:
-            return CGPoint(x: bounds.minX + margin,
-                           y: bounds.maxY - margin - textSize.height)
+            CGPoint(x: bounds.minX + margin,
+                    y: bounds.maxY - margin - textSize.height)
         case .topRight:
-            return CGPoint(x: bounds.maxX - margin - textSize.width,
-                           y: bounds.maxY - margin - textSize.height)
+            CGPoint(x: bounds.maxX - margin - textSize.width,
+                    y: bounds.maxY - margin - textSize.height)
         case .center:
-            return CGPoint(x: bounds.midX - textSize.width / 2,
-                           y: bounds.midY - textSize.height / 2)
+            CGPoint(x: bounds.midX - textSize.width / 2,
+                    y: bounds.midY - textSize.height / 2)
         case .bottomLeft:
-            return CGPoint(x: bounds.minX + margin,
-                           y: bounds.minY + margin)
+            CGPoint(x: bounds.minX + margin,
+                    y: bounds.minY + margin)
         case .bottomRight:
-            return CGPoint(x: bounds.maxX - margin - textSize.width,
-                           y: bounds.minY + margin)
+            CGPoint(x: bounds.maxX - margin - textSize.width,
+                    y: bounds.minY + margin)
         }
     }
 }
@@ -54,7 +55,9 @@ enum BatesPlacement: String, CaseIterable, Identifiable {
     case header
     case footer
 
-    var id: String { rawValue }
+    var id: String {
+        rawValue
+    }
 }
 
 enum CropTarget: String, CaseIterable, Identifiable {
@@ -62,16 +65,18 @@ enum CropTarget: String, CaseIterable, Identifiable {
     case evenPages = "Even Pages"
     case oddPages = "Odd Pages"
 
-    var id: String { rawValue }
+    var id: String {
+        rawValue
+    }
 
     func contains(index: Int) -> Bool {
         switch self {
         case .allPages:
-            return true
+            true
         case .evenPages:
-            return index % 2 == 1
+            index % 2 == 1
         case .oddPages:
-            return index % 2 == 0
+            index % 2 == 0
         }
     }
 }
@@ -90,12 +95,12 @@ enum PDFOps {
         guard let watermarkText = PDFStringNormalizer.normalizedNonEmpty(text, context: "watermark text") else { return }
         let font = NSFont.systemFont(ofSize: fontSize, weight: .bold)
         let attributes: [NSAttributedString.Key: Any] = [
-            .font: font
+            .font: font,
         ]
 
         let rotationValue = Int(rotation)
         let rotationKey = PDFAnnotationKey(rawValue: "Rotation")
-        for index in 0..<document.pageCount {
+        for index in 0 ..< document.pageCount {
             guard let page = document.page(at: index) else { continue }
             let bounds = page.bounds(for: .mediaBox)
             let size = (watermarkText as NSString).size(withAttributes: attributes)
@@ -127,7 +132,7 @@ enum PDFOps {
         guard headerText != nil || footerText != nil else { return }
         let font = NSFont.systemFont(ofSize: fontSize, weight: .medium)
         let lineHeight = font.pointSize * 1.4
-        for index in 0..<document.pageCount {
+        for index in 0 ..< document.pageCount {
             guard let page = document.page(at: index) else { continue }
             let bounds = page.bounds(for: .mediaBox)
             let topY = bounds.maxY - margin - font.ascender
@@ -171,19 +176,18 @@ enum PDFOps {
         let sanitizedPrefix = PDFStringNormalizer.normalize(prefix, context: "Bates prefix") ?? ""
         let font = NSFont.monospacedDigitSystemFont(ofSize: fontSize, weight: .regular)
         let lineHeight = font.pointSize * 1.3
-        for index in 0..<document.pageCount {
+        for index in 0 ..< document.pageCount {
             guard let page = document.page(at: index) else { continue }
             let bounds = page.bounds(for: .mediaBox)
             // Build format safely — avoid the "*" width argument which can crash when digits underflow
             let fmt = "%@%0\(max(1, digits))d"
             let number = String(format: fmt, sanitizedPrefix, start + index)
 
-            let y: CGFloat
-            switch placement {
+            let y: CGFloat = switch placement {
             case .header:
-                y = bounds.maxY - margin - font.ascender
+                bounds.maxY - margin - font.ascender
             case .footer:
-                y = bounds.minY + margin
+                bounds.minY + margin
             }
 
             let annotation = PDFAnnotation(bounds: CGRect(x: bounds.maxX - margin - 120, y: y, width: 120, height: lineHeight),
@@ -204,7 +208,7 @@ enum PDFOps {
         target: CropTarget
     ) {
         guard inset > 0 else { return }
-        for index in 0..<document.pageCount {
+        for index in 0 ..< document.pageCount {
             guard target.contains(index: index),
                   let page = document.page(at: index) else { continue }
             let original = page.bounds(for: .mediaBox)

@@ -1,5 +1,5 @@
-import XCTest
 @testable import PDFQuickFix
+import XCTest
 
 @MainActor
 final class QuickFixResultTests: XCTestCase {

@@ -1,5 +1,5 @@
-import XCTest
 @testable import PDFQuickFix
+import XCTest
 
 @MainActor
 final class LocalAITaskRunnerTests: XCTestCase {
@@ -11,7 +11,7 @@ final class LocalAITaskRunnerTests: XCTestCase {
             self.response = response
         }
 
-        func generateText(model: String, prompt: String, format: String?) async throws -> String {
+        func generateText(model _: String, prompt _: String, format: String?) async throws -> String {
             lastFormat = format
             return response
         }
@@ -31,7 +31,7 @@ final class LocalAITaskRunnerTests: XCTestCase {
             modelName: "stub-model"
         )
 
-        let object = try JSONSerialization.jsonObject(with: response.data(using: .utf8)!)
+        let object = try JSONSerialization.jsonObject(with: XCTUnwrap(response.data(using: .utf8)))
         let expectedData = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
         let expected = String(data: expectedData, encoding: .utf8)
 

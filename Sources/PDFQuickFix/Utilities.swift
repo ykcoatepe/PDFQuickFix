@@ -1,11 +1,11 @@
 import AppKit
-import PDFKit
-import Vision
 import CoreGraphics
 import CoreText
+import PDFKit
+import Security
 import SwiftUI
 import UniformTypeIdentifiers
-import Security
+import Vision
 
 enum QuickFixOutputSelectionError: Error {
     case cancelled
@@ -52,8 +52,9 @@ final class OutputDirectoryAccessStore {
             )
             if result.isStale,
                let updated = try? bookmarking.bookmarkData(for: result.url,
-                                                          includingResourceValuesForKeys: nil,
-                                                          relativeTo: nil) {
+                                                           includingResourceValuesForKeys: nil,
+                                                           relativeTo: nil)
+            {
                 cached[index].bookmark = updated
                 save()
             }
@@ -88,7 +89,8 @@ final class OutputDirectoryAccessStore {
 
     private func load() {
         guard let data = defaults.data(forKey: storageKey),
-              let decoded = try? JSONDecoder().decode([OutputDirectoryBookmark].self, from: data) else {
+              let decoded = try? JSONDecoder().decode([OutputDirectoryBookmark].self, from: data)
+        else {
             cached = []
             return
         }
@@ -104,7 +106,8 @@ final class OutputDirectoryAccessStore {
 @MainActor
 func resolveQuickFixOutputSelection(defaultOutputURL: URL,
                                     preferredOutputURL: URL? = nil,
-                                    panelTitle: String = "Save QuickFix Output") throws -> QuickFixOutputSelection {
+                                    panelTitle: String = "Save QuickFix Output") throws -> QuickFixOutputSelection
+{
     let effectiveURL = preferredOutputURL ?? defaultOutputURL
     let directoryURL = effectiveURL.deletingLastPathComponent()
     let fileManager = FileManager.default
@@ -112,14 +115,14 @@ func resolveQuickFixOutputSelection(defaultOutputURL: URL,
     let fileExists = fileManager.fileExists(atPath: effectiveURL.path)
     let fileWritable = fileManager.isWritableFile(atPath: effectiveURL.path)
 
-    if directoryWritable && (!fileExists || fileWritable) {
+    if directoryWritable, !fileExists || fileWritable {
         return QuickFixOutputSelection(url: effectiveURL, access: nil)
     }
 
     if let access = OutputDirectoryAccessStore.shared.access(for: directoryURL) {
         let directoryWritableWithAccess = fileManager.isWritableFile(atPath: directoryURL.path)
         let fileWritableWithAccess = fileManager.isWritableFile(atPath: effectiveURL.path)
-        if directoryWritableWithAccess && (!fileExists || fileWritableWithAccess) {
+        if directoryWritableWithAccess, !fileExists || fileWritableWithAccess {
             return QuickFixOutputSelection(url: effectiveURL, access: access)
         }
     }
@@ -142,7 +145,7 @@ func resolveQuickFixOutputSelection(defaultOutputURL: URL,
 
 extension NSImage {
     var cgImage: CGImage? {
-        var proposedRect = CGRect(origin: .zero, size: self.size)
+        var proposedRect = CGRect(origin: .zero, size: size)
         return self.cgImage(forProposedRect: &proposedRect, context: nil, hints: nil)
     }
 }
@@ -157,11 +160,11 @@ func visionRectToPixelRect(_ bb: CGRect, imageSize: CGSize) -> CGRect {
 }
 
 func pixelsToPoints(_ px: CGFloat, dpi: CGFloat) -> CGFloat {
-    return px * 72.0 / dpi
+    px * 72.0 / dpi
 }
 
 func pointsToPixels(_ pt: CGFloat, dpi: CGFloat) -> CGFloat {
-    return pt * dpi / 72.0
+    pt * dpi / 72.0
 }
 
 struct RecognizedRun {
@@ -170,6 +173,7 @@ struct RecognizedRun {
         case replace(String)
         case skip // redacted
     }
+
     var kind: Kind
     var rectInPixels: CGRect
 }
@@ -195,57 +199,50 @@ struct PageProcessResult {
 
 // MARK: - Design System
 
-enum AppColors {
-    static let primary = Color.accentColor
-    static let secondary = Color.secondary
-    static let background = Color(NSColor.windowBackgroundColor)
-    static let surface = Color(NSColor.controlBackgroundColor)
-    static let surfaceSecondary = Color(NSColor.controlBackgroundColor).opacity(0.5)
-    static let border = Color(NSColor.separatorColor)
-    
-    static let success = Color.green
-    static let warning = Color.orange
-    static let error = Color.red
-    
-    static let gradientStart = Color.accentColor.opacity(0.1)
-    static let gradientEnd = Color.accentColor.opacity(0.05)
-}
-
-enum AppLayout {
-    static let padding: CGFloat = 16
-    static let cornerRadius: CGFloat = 12
-    static let smallCornerRadius: CGFloat = 8
-}
-
 // MARK: - View Modifiers
 
 struct CardModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
-            .padding(AppLayout.padding)
-            .background(AppColors.surface)
-            .cornerRadius(AppLayout.cornerRadius)
-            .shadow(color: Color.black.opacity(0.05), radius: 4, x: 0, y: 2)
+            .padding(AppTheme.Metrics.panelPadding)
+            .background(AppTheme.Colors.cardBackground)
+            .cornerRadius(AppTheme.Metrics.cardCornerRadius)
+            .shadow(color: AppTheme.Shadows.card.opacity(0.7), radius: 6, x: 0, y: 3)
             .overlay(
-                RoundedRectangle(cornerRadius: AppLayout.cornerRadius)
-                    .stroke(AppColors.border, lineWidth: 0.5)
+                RoundedRectangle(cornerRadius: AppTheme.Metrics.cardCornerRadius)
+                    .stroke(AppTheme.Colors.cardBorder, lineWidth: 0.5)
+            )
+    }
+}
+
+struct PaperPanelModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .padding(AppTheme.Metrics.panelPadding)
+            .background(
+                RoundedRectangle(cornerRadius: AppTheme.Metrics.paperPanelCornerRadius, style: .continuous)
+                    .fill(AppTheme.Colors.paperBackground)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: AppTheme.Metrics.paperPanelCornerRadius, style: .continuous)
+                    .stroke(AppTheme.Colors.paperBorder, lineWidth: 1)
             )
     }
 }
 
 struct PrimaryButtonStyle: ButtonStyle {
     var isDisabled: Bool = false
-    
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .padding(.horizontal, 20)
             .padding(.vertical, 10)
-            .background(isDisabled ? Color.gray.opacity(0.3) : AppColors.primary)
+            .background(isDisabled ? Color.gray.opacity(0.3) : AppTheme.Colors.accent)
             .foregroundColor(.white)
-            .cornerRadius(AppLayout.smallCornerRadius)
+            .cornerRadius(AppTheme.Metrics.smallCornerRadius)
             .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
             .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
-            .shadow(color: AppColors.primary.opacity(0.3), radius: 4, x: 0, y: 2)
+            .shadow(color: AppTheme.Colors.accent.opacity(0.3), radius: 4, x: 0, y: 2)
     }
 }
 
@@ -254,12 +251,12 @@ struct SecondaryButtonStyle: ButtonStyle {
         configuration.label
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
-            .background(AppColors.surface)
-            .foregroundColor(.primary)
-            .cornerRadius(AppLayout.smallCornerRadius)
+            .background(AppTheme.Colors.cardBackground)
+            .foregroundColor(AppTheme.Colors.primaryText)
+            .cornerRadius(AppTheme.Metrics.smallCornerRadius)
             .overlay(
-                RoundedRectangle(cornerRadius: AppLayout.smallCornerRadius)
-                    .stroke(AppColors.border, lineWidth: 1)
+                RoundedRectangle(cornerRadius: AppTheme.Metrics.smallCornerRadius)
+                    .stroke(AppTheme.Colors.cardBorder, lineWidth: 1)
             )
             .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
             .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
@@ -271,9 +268,9 @@ struct GhostButtonStyle: ButtonStyle {
         configuration.label
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
-            .background(configuration.isPressed ? AppColors.surfaceSecondary : Color.clear)
-            .foregroundColor(.primary)
-            .cornerRadius(AppLayout.smallCornerRadius)
+            .background(configuration.isPressed ? AppTheme.Colors.elevatedBackground : Color.clear)
+            .foregroundColor(AppTheme.Colors.primaryText)
+            .cornerRadius(AppTheme.Metrics.smallCornerRadius)
             .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
     }
 }
@@ -284,9 +281,13 @@ extension View {
     func cardStyle() -> some View {
         modifier(CardModifier())
     }
-    
+
+    func paperPanelStyle() -> some View {
+        modifier(PaperPanelModifier())
+    }
+
     func appFont(_ style: Font.TextStyle, weight: Font.Weight = .regular) -> some View {
-        self.font(.system(style, design: .rounded).weight(weight))
+        font(.system(style, design: .rounded).weight(weight))
     }
 }
 
@@ -294,20 +295,20 @@ extension View {
 func handlePDFDrop(_ providers: [NSItemProvider], onResolvedURL: @escaping (URL) -> Void) -> Bool {
     guard let provider = providers.first(where: {
         $0.hasItemConformingToTypeIdentifier(UTType.pdf.identifier) ||
-        $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) ||
-        $0.hasItemConformingToTypeIdentifier(UTType.url.identifier)
+            $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) ||
+            $0.hasItemConformingToTypeIdentifier(UTType.url.identifier)
     }) else { return false }
 
     // 1. Try to load as a simple URL (Best for Finder drops)
     if provider.canLoadObject(ofClass: URL.self) {
         _ = provider.loadObject(ofClass: URL.self) { url, error in
-            if let url = url {
+            if let url {
                 // Determine if it's a file URL and if it looks like a PDF
                 // For Finder drops, it's usually a file URL.
                 DispatchQueue.main.async {
                     onResolvedURL(url)
                 }
-            } else if let error = error {
+            } else if let error {
                 print("Drop loadObject failed: \(error)")
             }
         }
@@ -317,8 +318,8 @@ func handlePDFDrop(_ providers: [NSItemProvider], onResolvedURL: @escaping (URL)
     // 2. Fallback: Try loading file representation (works for some apps that don't vend a URL object directly)
     if provider.hasItemConformingToTypeIdentifier(UTType.pdf.identifier) {
         provider.loadFileRepresentation(forTypeIdentifier: UTType.pdf.identifier) { url, error in
-            guard let url = url else { return }
-            
+            guard let url else { return }
+
             // Accessing the URL is only valid within this block for file representations.
             // Copy it to a safe temporary location.
             let tempDir = FileManager.default.temporaryDirectory
@@ -329,7 +330,7 @@ func handlePDFDrop(_ providers: [NSItemProvider], onResolvedURL: @escaping (URL)
                     try FileManager.default.removeItem(at: dst)
                 }
                 try FileManager.default.copyItem(at: url, to: dst)
-                
+
                 DispatchQueue.main.async {
                     onResolvedURL(dst)
                 }
@@ -339,7 +340,7 @@ func handlePDFDrop(_ providers: [NSItemProvider], onResolvedURL: @escaping (URL)
         }
         return true
     }
-    
+
     return false
 }
 
@@ -362,7 +363,8 @@ func documentInputKind(for url: URL) -> DocumentInputKind? {
 
 func handleDocumentDrop(_ providers: [NSItemProvider],
                         allowedTypes: [UTType],
-                        onResolvedURL: @escaping (URL) -> Void) -> Bool {
+                        onResolvedURL: @escaping (URL) -> Void) -> Bool
+{
     func isAllowedURL(_ url: URL) -> Bool {
         guard url.isFileURL else { return false }
         guard let type = UTType(filenameExtension: url.pathExtension) else { return false }
@@ -383,11 +385,11 @@ func handleDocumentDrop(_ providers: [NSItemProvider],
 
     if provider.canLoadObject(ofClass: URL.self) {
         _ = provider.loadObject(ofClass: URL.self) { url, error in
-            if let url = url, isAllowedURL(url) {
+            if let url, isAllowedURL(url) {
                 DispatchQueue.main.async {
                     onResolvedURL(url)
                 }
-            } else if let error = error {
+            } else if let error {
                 print("Drop loadObject failed: \(error)")
             }
         }
@@ -396,7 +398,7 @@ func handleDocumentDrop(_ providers: [NSItemProvider],
 
     if let allowed = allowedTypes.first(where: { provider.hasItemConformingToTypeIdentifier($0.identifier) }) {
         provider.loadFileRepresentation(forTypeIdentifier: allowed.identifier) { url, error in
-            guard let url = url else { return }
+            guard let url else { return }
             guard isAllowedURL(url) else { return }
 
             let tempDir = FileManager.default.temporaryDirectory
@@ -430,15 +432,15 @@ enum ImagePDFConverterError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidURL:
-            return "Invalid image URL."
+            "Invalid image URL."
         case .unsupportedType:
-            return "Only PNG or JPEG images are supported."
+            "Only PNG or JPEG images are supported."
         case .imageLoadFailed:
-            return "Failed to load the image."
+            "Failed to load the image."
         case .pageCreationFailed:
-            return "Failed to create a PDF page from the image."
+            "Failed to create a PDF page from the image."
         case .writeFailed:
-            return "Failed to write the PDF."
+            "Failed to write the PDF."
         }
     }
 }
@@ -447,7 +449,8 @@ enum ImagePDFConverter {
     static func convertImageToPDF(at url: URL,
                                   outputURL: URL? = nil,
                                   preprocess: Bool = false,
-                                  targetDPI: CGFloat? = nil) throws -> (url: URL, didPreprocess: Bool) {
+                                  targetDPI: CGFloat? = nil) throws -> (url: URL, didPreprocess: Bool)
+    {
         guard url.isFileURL else { throw ImagePDFConverterError.invalidURL }
         guard documentInputKind(for: url) == .image else {
             throw ImagePDFConverterError.unsupportedType
@@ -496,7 +499,8 @@ enum ImagePreprocessor {
         let baseCI = CIImage(cgImage: cgImage)
         let correctedCI: CIImage
         if let quad = detectDocumentQuad(in: cgImage),
-           let corrected = applyPerspective(to: baseCI, quad: quad) {
+           let corrected = applyPerspective(to: baseCI, quad: quad)
+        {
             correctedCI = corrected
             didApply = true
         } else {
@@ -525,7 +529,8 @@ enum ImagePreprocessor {
     }
 
     private static func applyPerspective(to image: CIImage,
-                                         quad: VNRectangleObservation) -> CIImage? {
+                                         quad: VNRectangleObservation) -> CIImage?
+    {
         let width = image.extent.width
         let height = image.extent.height
 
@@ -537,7 +542,7 @@ enum ImagePreprocessor {
             "inputTopLeft": CIVector(cgPoint: point(quad.topLeft)),
             "inputTopRight": CIVector(cgPoint: point(quad.topRight)),
             "inputBottomLeft": CIVector(cgPoint: point(quad.bottomLeft)),
-            "inputBottomRight": CIVector(cgPoint: point(quad.bottomRight))
+            "inputBottomRight": CIVector(cgPoint: point(quad.bottomRight)),
         ])
     }
 
@@ -545,18 +550,18 @@ enum ImagePreprocessor {
         let grayscale = image.applyingFilter("CIColorControls", parameters: [
             "inputSaturation": 0.0,
             "inputContrast": 1.2,
-            "inputBrightness": 0.0
+            "inputBrightness": 0.0,
         ])
         let shadow = grayscale.applyingFilter("CIHighlightShadowAdjust", parameters: [
             "inputShadowAmount": 0.6,
-            "inputHighlightAmount": 0.0
+            "inputHighlightAmount": 0.0,
         ])
         let exposure = shadow.applyingFilter("CIExposureAdjust", parameters: [
-            "inputEV": 0.2
+            "inputEV": 0.2,
         ])
         return exposure.applyingFilter("CIUnsharpMask", parameters: [
             "inputIntensity": 0.6,
-            "inputRadius": 1.0
+            "inputRadius": 1.0,
         ])
     }
 }
@@ -592,7 +597,7 @@ extension Animation {
     static var sidebarTransition: Animation {
         .easeOut(duration: 0.25)
     }
-    
+
     /// Standard transition for smaller panels or overlays
     static var panelTransition: Animation {
         .easeOut(duration: 0.2)
@@ -605,7 +610,7 @@ struct VisualEffectView: NSViewRepresentable {
     let material: NSVisualEffectView.Material
     let blendingMode: NSVisualEffectView.BlendingMode
 
-    func makeNSView(context: Context) -> NSVisualEffectView {
+    func makeNSView(context _: Context) -> NSVisualEffectView {
         let view = NSVisualEffectView()
         view.material = material
         view.blendingMode = blendingMode
@@ -613,7 +618,7 @@ struct VisualEffectView: NSViewRepresentable {
         return view
     }
 
-    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
+    func updateNSView(_ nsView: NSVisualEffectView, context _: Context) {
         nsView.material = material
         nsView.blendingMode = blendingMode
     }
@@ -623,8 +628,8 @@ struct VisualEffectView: NSViewRepresentable {
 
 struct PDFThumbnailViewRepresentable: NSViewRepresentable {
     let pdfView: PDFView
-    
-    func makeNSView(context: Context) -> PDFThumbnailView {
+
+    func makeNSView(context _: Context) -> PDFThumbnailView {
         let thumbnailView = PDFThumbnailView()
         thumbnailView.pdfView = pdfView
         thumbnailView.thumbnailSize = CGSize(width: 60, height: 80)
@@ -632,8 +637,8 @@ struct PDFThumbnailViewRepresentable: NSViewRepresentable {
         thumbnailView.backgroundColor = NSColor.controlBackgroundColor
         return thumbnailView
     }
-    
-    func updateNSView(_ nsView: PDFThumbnailView, context: Context) {
+
+    func updateNSView(_ nsView: PDFThumbnailView, context _: Context) {
         nsView.pdfView = pdfView
     }
 }
@@ -647,7 +652,7 @@ enum KeychainStore {
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
             kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
+            kSecMatchLimit as String: kSecMatchLimitOne,
         ]
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
@@ -664,10 +669,10 @@ enum KeychainStore {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: account
+            kSecAttrAccount as String: account,
         ]
         let attributes: [String: Any] = [
-            kSecValueData as String: data
+            kSecValueData as String: data,
         ]
 
         let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
@@ -682,7 +687,7 @@ enum KeychainStore {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: account
+            kSecAttrAccount as String: account,
         ]
         SecItemDelete(query as CFDictionary)
     }

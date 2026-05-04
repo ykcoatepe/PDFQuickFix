@@ -1,5 +1,5 @@
-import XCTest
 @testable import PDFQuickFix
+import XCTest
 
 final class LocalAITaskParametersTests: XCTestCase {
     func testTargetLanguageDefaultsToEnglishWhenBlank() {

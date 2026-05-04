@@ -1,5 +1,5 @@
-import Foundation
 import Darwin
+import Foundation
 
 enum PDFKitWorkarounds {
     private static var hasInstalled = false
@@ -44,7 +44,7 @@ enum PDFKitWorkarounds {
     }
 }
 
-// Execute immediately at module load time so PDFKit sees the flags before initialization.
+/// Execute immediately at module load time so PDFKit sees the flags before initialization.
 private let _pdfKitWorkaroundsInstalled: Void = {
     PDFKitWorkarounds.install()
 }()

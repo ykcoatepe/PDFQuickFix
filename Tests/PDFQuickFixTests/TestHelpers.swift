@@ -1,5 +1,5 @@
-import Foundation
 import AppKit
+import Foundation
 import PDFKit
 
 enum TestPDFBuilder {
@@ -10,7 +10,7 @@ enum TestPDFBuilder {
         NSRect(origin: .zero, size: size).fill()
         let attrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 18, weight: .regular),
-            .foregroundColor: NSColor.black
+            .foregroundColor: NSColor.black,
         ]
         let attributed = NSAttributedString(string: text, attributes: attrs)
         attributed.draw(in: CGRect(x: 20, y: size.height / 2 - 20, width: size.width - 40, height: 40))
@@ -31,11 +31,12 @@ enum TestPDFBuilder {
 
     static func makeMultipagePDF(pageCount: Int,
                                  textPrefix: String = "Page",
-                                 size: CGSize = CGSize(width: 20, height: 20)) throws -> URL {
+                                 size: CGSize = CGSize(width: 20, height: 20)) throws -> URL
+    {
         precondition(pageCount > 0, "pageCount must be positive")
         let document = PDFDocument()
 
-        for index in 0..<pageCount {
+        for index in 0 ..< pageCount {
             autoreleasepool {
                 let image = NSImage(size: size)
                 image.lockFocus()
@@ -43,7 +44,7 @@ enum TestPDFBuilder {
                 NSRect(origin: .zero, size: size).fill()
                 let attrs: [NSAttributedString.Key: Any] = [
                     .font: NSFont.systemFont(ofSize: 8, weight: .regular),
-                    .foregroundColor: NSColor.black
+                    .foregroundColor: NSColor.black,
                 ]
                 let text = "\(textPrefix) \(index + 1)"
                 NSAttributedString(string: text, attributes: attrs)
@@ -98,7 +99,7 @@ extension CGImage {
         guard let data = dataProvider?.data else { return nil }
         guard let bytes: UnsafePointer<UInt8> = CFDataGetBytePtr(data) else { return nil }
         let bytesPerPixel = 4
-        let bytesPerRow = self.bytesPerRow
+        let bytesPerRow = bytesPerRow
         let offset = y * bytesPerRow + x * bytesPerPixel
         let r = CGFloat(bytes[offset]) / 255.0
         let g = CGFloat(bytes[offset + 1]) / 255.0

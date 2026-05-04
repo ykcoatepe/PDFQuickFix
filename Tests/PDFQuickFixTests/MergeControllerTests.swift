@@ -1,5 +1,5 @@
-import XCTest
 @testable import PDFQuickFix
+import XCTest
 
 final class MergeControllerTests: XCTestCase {
     private var suiteName: String!
@@ -26,7 +26,7 @@ final class MergeControllerTests: XCTestCase {
 
         controller.addSourceURLs([
             URL(fileURLWithPath: "/tmp/a.pdf"),
-            URL(fileURLWithPath: "/tmp/b.pdf")
+            URL(fileURLWithPath: "/tmp/b.pdf"),
         ])
         XCTAssertTrue(controller.destinationFolderURL != nil)
         XCTAssertTrue(controller.canMerge)
@@ -40,7 +40,7 @@ final class MergeControllerTests: XCTestCase {
         let controller = MergeController(defaults: defaults)
         controller.addSourceURLs([
             URL(fileURLWithPath: "/tmp/a.pdf"),
-            URL(fileURLWithPath: "/tmp/b.pdf")
+            URL(fileURLWithPath: "/tmp/b.pdf"),
         ])
         controller.outputFileName = "   "
 
@@ -68,7 +68,7 @@ final class MergeControllerTests: XCTestCase {
         let controller = MergeController(defaults: defaults, bookmarking: MockBookmarking())
         controller.addSourceURLs([
             URL(fileURLWithPath: "/tmp/a.pdf"),
-            URL(fileURLWithPath: "/tmp/b.pdf")
+            URL(fileURLWithPath: "/tmp/b.pdf"),
         ])
         controller.destinationFolderURL = URL(fileURLWithPath: "/tmp")
         controller.outputFileName = "Archive.pdf"
@@ -113,7 +113,7 @@ final class MergeControllerTests: XCTestCase {
         let controller = MergeController(defaults: defaults)
         controller.addSourceURLs([
             URL(fileURLWithPath: "/tmp/a.pdf"),
-            URL(fileURLWithPath: "/tmp/b.pdf")
+            URL(fileURLWithPath: "/tmp/b.pdf"),
         ])
         controller.destinationFolderURL = URL(fileURLWithPath: "/tmp")
         controller.outputFileName = "Merged.pdf"
@@ -132,7 +132,7 @@ final class MergeControllerTests: XCTestCase {
             URL(fileURLWithPath: "/tmp/1.pdf"),
             URL(fileURLWithPath: "/tmp/2.pdf"),
             URL(fileURLWithPath: "/tmp/3.pdf"),
-            URL(fileURLWithPath: "/tmp/4.pdf")
+            URL(fileURLWithPath: "/tmp/4.pdf"),
         ]
 
         controller.moveSource(from: IndexSet(integer: 1), to: 3)
@@ -173,18 +173,18 @@ final class MergeControllerTests: XCTestCase {
             try? FileManager.default.removeItem(at: destination)
         }
 
-        let preset = MergeJobPreset(
+        let preset = try MergeJobPreset(
             id: UUID(),
             name: "Bookmark Restore",
             createdAt: Date(),
             settings: MergeJobSettings(
                 sourceURLStrings: ["/tmp/missing-1.pdf", "/tmp/missing-2.pdf"],
                 sourceBookmarkData: [
-                    try bookmarking.bookmarkData(for: source1, includingResourceValuesForKeys: nil, relativeTo: nil),
-                    try bookmarking.bookmarkData(for: source2, includingResourceValuesForKeys: nil, relativeTo: nil)
+                    bookmarking.bookmarkData(for: source1, includingResourceValuesForKeys: nil, relativeTo: nil),
+                    bookmarking.bookmarkData(for: source2, includingResourceValuesForKeys: nil, relativeTo: nil),
                 ],
                 destinationFolderURLString: "/tmp/missing-destination",
-                destinationFolderBookmarkData: try bookmarking.bookmarkData(for: destination, includingResourceValuesForKeys: nil, relativeTo: nil),
+                destinationFolderBookmarkData: bookmarking.bookmarkData(for: destination, includingResourceValuesForKeys: nil, relativeTo: nil),
                 outputFileName: "Merged.pdf",
                 insertBlankPageBetweenDocuments: false,
                 skipUnreadableSources: true,
@@ -204,7 +204,7 @@ final class MergeControllerTests: XCTestCase {
     @MainActor
     private func waitForMerge(_ controller: MergeController, timeout: TimeInterval = 5) {
         let deadline = Date().addingTimeInterval(timeout)
-        while controller.isWorking && Date() < deadline {
+        while controller.isWorking, Date() < deadline {
             RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
         }
         XCTAssertFalse(controller.isWorking)

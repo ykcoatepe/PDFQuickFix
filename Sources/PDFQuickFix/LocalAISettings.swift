@@ -18,11 +18,13 @@ final class LocalAISettings: ObservableObject {
             defaults.set(defaultModel, forKey: Self.defaultModelKey)
         }
     }
+
     @Published var persistAIInteractions: Bool {
         didSet {
             defaults.set(persistAIInteractions, forKey: Self.persistLogsKey)
         }
     }
+
     @Published var requestTimeoutSeconds: Int {
         didSet {
             let clamped = Self.clampTimeout(requestTimeoutSeconds)
@@ -33,6 +35,7 @@ final class LocalAISettings: ObservableObject {
             defaults.set(clamped, forKey: Self.requestTimeoutKey)
         }
     }
+
     @Published private(set) var taskOverrides: [LocalAITask: String] = [:]
 
     private let client: OllamaClient
@@ -42,14 +45,14 @@ final class LocalAISettings: ObservableObject {
     init(client: OllamaClient = OllamaClient(), defaults: UserDefaults = .standard) {
         self.client = client
         self.defaults = defaults
-        self.defaultModel = defaults.string(forKey: Self.defaultModelKey) ?? ""
-        self.persistAIInteractions = defaults.bool(forKey: Self.persistLogsKey)
+        defaultModel = defaults.string(forKey: Self.defaultModelKey) ?? ""
+        persistAIInteractions = defaults.bool(forKey: Self.persistLogsKey)
         if defaults.object(forKey: Self.requestTimeoutKey) != nil {
-            self.requestTimeoutSeconds = defaults.integer(forKey: Self.requestTimeoutKey)
+            requestTimeoutSeconds = defaults.integer(forKey: Self.requestTimeoutKey)
         } else {
-            self.requestTimeoutSeconds = Self.defaultRequestTimeoutSeconds
+            requestTimeoutSeconds = Self.defaultRequestTimeoutSeconds
         }
-        self.requestTimeoutSeconds = Self.clampTimeout(self.requestTimeoutSeconds)
+        requestTimeoutSeconds = Self.clampTimeout(requestTimeoutSeconds)
         for task in LocalAITask.allCases {
             if let value = defaults.string(forKey: Self.overrideKey(for: task)) {
                 taskOverrides[task] = value
@@ -121,7 +124,7 @@ final class LocalAISettings: ObservableObject {
 
     private func normalizeModels() {
         let availableNames = availableModelNamesLowercased()
-        if !defaultModel.isEmpty && !availableNames.contains(defaultModel.lowercased()) {
+        if !defaultModel.isEmpty, !availableNames.contains(defaultModel.lowercased()) {
             defaultModel = ""
         }
         let invalidTasks = taskOverrides.filter { !availableNames.contains($0.value.lowercased()) }.map(\.key)
@@ -174,7 +177,7 @@ final class LocalAISettings: ObservableObject {
     private static func modelSizeHint(_ name: String) -> Int {
         let pattern = #"(\d+)\s*b"#
         if let range = name.range(of: pattern, options: .regularExpression) {
-            let digits = name[range].filter { $0.isNumber }
+            let digits = name[range].filter(\.isNumber)
             return Int(digits) ?? 999
         }
         return 999

@@ -17,7 +17,7 @@ struct DocumentTextSession {
 
     init(documentURL: URL) throws {
         let data = try Data(contentsOf: documentURL)
-        self.document = PDFDocument(data: data) ?? PDFDocument()
+        document = PDFDocument(data: data) ?? PDFDocument()
     }
 
     func extractText(pageSelection: String? = nil) throws -> String {
@@ -35,20 +35,21 @@ struct DocumentTextSession {
     func extractText(scope: Scope) throws -> String {
         switch scope {
         case .wholeDocument:
-            return try extractDocumentText(pageSelection: nil)
-        case .pageSelection(let selection):
-            return try extractDocumentText(pageSelection: selection)
-        case .currentPage(let index):
-            return try extractDocumentText(pageSelection: String(index + 1))
-        case .selection(let text):
-            return text
+            try extractDocumentText(pageSelection: nil)
+        case let .pageSelection(selection):
+            try extractDocumentText(pageSelection: selection)
+        case let .currentPage(index):
+            try extractDocumentText(pageSelection: String(index + 1))
+        case let .selection(text):
+            text
         }
     }
 
     static func parsePageSelection(_ selection: String?, pageCount: Int) throws -> [Int] {
         guard let selection = selection?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !selection.isEmpty else {
-            return Array(0..<pageCount)
+              !selection.isEmpty
+        else {
+            return Array(0 ..< pageCount)
         }
         var selected = Set<Int>()
         for token in selection.split(separator: ",") {
@@ -70,7 +71,7 @@ struct DocumentTextSession {
                 }
                 try validatePage(start, pageCount: pageCount)
                 try validatePage(end, pageCount: pageCount)
-                for page in start...end {
+                for page in start ... end {
                     selected.insert(page - 1)
                 }
             } else {
@@ -100,7 +101,7 @@ struct DocumentTextSession {
     }
 
     private static func validatePage(_ page: Int, pageCount: Int) throws {
-        guard page >= 1 && page <= pageCount else {
+        guard page >= 1, page <= pageCount else {
             throw PDFTextExtractorError.pageOutOfRange(page, pageCount)
         }
     }
@@ -114,14 +115,14 @@ enum PDFTextExtractorError: LocalizedError, Equatable {
 
     var errorDescription: String? {
         switch self {
-        case .invalidPageSelection(let token):
-            return "Invalid page selection: \"\(token)\". Use formats like 1-3, 6."
-        case .pageOutOfRange(let page, let total):
-            return "Page \(page) is out of range. This document has \(total) pages."
+        case let .invalidPageSelection(token):
+            "Invalid page selection: \"\(token)\". Use formats like 1-3, 6."
+        case let .pageOutOfRange(page, total):
+            "Page \(page) is out of range. This document has \(total) pages."
         case .emptyPageSelection:
-            return "No pages selected. Enter a page range like 1-3."
+            "No pages selected. Enter a page range like 1-3."
         case .missingInput:
-            return "Select a document first."
+            "Select a document first."
         }
     }
 }

@@ -2,24 +2,23 @@ import Foundation
 import PDFKit
 
 enum PDFSplitMode {
-    case maxPagesPerPart(Int)      // e.g. 500 pages per part
-    case numberOfParts(Int)        // e.g. split into 10 parts
-    case explicitBreaks([Int])     // 1-based page indices where a new part starts (must include 1)
-    case approxTargetSizeMB(Double)    // approximate target size in megabytes per part
-    case outlineChapters               // split at top-level outline entries
+    case maxPagesPerPart(Int) // e.g. 500 pages per part
+    case numberOfParts(Int) // e.g. split into 10 parts
+    case explicitBreaks([Int]) // 1-based page indices where a new part starts (must include 1)
+    case approxTargetSizeMB(Double) // approximate target size in megabytes per part
+    case outlineChapters // split at top-level outline entries
 }
 
 extension PDFSplitter {
-
     /// Runs splitting on a background queue and calls back on the main queue.
     func splitAsync(options: PDFSplitOptions,
                     progress: ((Int, Int) -> Void)? = nil,
                     shouldCancel: (() -> Bool)? = nil,
-                    completion: @escaping (Result<PDFSplitResult, Error>) -> Void) {
-
+                    completion: @escaping (Result<PDFSplitResult, Error>) -> Void)
+    {
         // Ensure UI-bound progress callbacks execute on the main queue.
         let progressOnMain: ((Int, Int) -> Void)? = progress.map { callback in
-            return { processed, total in
+            { processed, total in
                 DispatchQueue.main.async {
                     callback(processed, total)
                 }
@@ -60,11 +59,11 @@ enum PDFSplitError: Error {
 }
 
 final class PDFSplitter {
-
     /// Synchronous API; call from a background queue for large documents.
     func split(options: PDFSplitOptions,
                progress: ((Int, Int) -> Void)? = nil,
-               shouldCancel: (() -> Bool)? = nil) throws -> PDFSplitResult {
+               shouldCancel: (() -> Bool)? = nil) throws -> PDFSplitResult
+    {
         guard let sourceDoc = PDFDocument(url: options.sourceURL) else {
             throw PDFSplitError.cannotOpenSource
         }
@@ -100,7 +99,7 @@ final class PDFSplitter {
 
     private func makeRanges(pageCount: Int, mode: PDFSplitMode) throws -> [Range<Int>] {
         switch mode {
-        case .maxPagesPerPart(let maxPages):
+        case let .maxPagesPerPart(maxPages):
             guard maxPages > 0 else {
                 throw PDFSplitError.invalidMode("maxPagesPerPart must be > 0")
             }
@@ -108,39 +107,39 @@ final class PDFSplitter {
             var start = 0
             while start < pageCount {
                 let end = min(start + maxPages, pageCount)
-                ranges.append(start..<end)
+                ranges.append(start ..< end)
                 start = end
             }
             return ranges
 
-        case .numberOfParts(let parts):
+        case let .numberOfParts(parts):
             guard parts > 0 else {
                 throw PDFSplitError.invalidMode("numberOfParts must be > 0")
             }
             if parts == 1 {
-                return [0..<pageCount]
+                return [0 ..< pageCount]
             }
             let base = pageCount / parts
             let remainder = pageCount % parts
 
             var ranges: [Range<Int>] = []
             var start = 0
-            for i in 0..<parts {
+            for i in 0 ..< parts {
                 let extra = (i < remainder) ? 1 : 0
                 let length = base + extra
                 if length <= 0 { continue }
                 let end = min(start + length, pageCount)
                 if start < end {
-                    ranges.append(start..<end)
+                    ranges.append(start ..< end)
                 }
                 start = end
             }
             if ranges.isEmpty {
-                ranges = [0..<pageCount]
+                ranges = [0 ..< pageCount]
             }
             return ranges
 
-        case .explicitBreaks(let breaks):
+        case let .explicitBreaks(breaks):
             // breaks are 1-based page indices where a part starts.
             // e.g. [1, 101, 351] → [0..<100], [100..<350], [350..<pageCount]
             let sorted = Array(Set(breaks)).sorted()
@@ -149,29 +148,30 @@ final class PDFSplitter {
             }
             var ranges: [Range<Int>] = []
             var startPage = first
-            for i in 1..<sorted.count {
+            for i in 1 ..< sorted.count {
                 let nextStart = sorted[i]
                 if nextStart <= startPage { continue }
                 let startIndex = startPage - 1
                 let endIndex = min(nextStart - 1, pageCount)
                 if startIndex < endIndex {
-                    ranges.append(startIndex..<endIndex)
+                    ranges.append(startIndex ..< endIndex)
                 }
                 startPage = nextStart
             }
             // last range to end of document
             let finalStartIndex = startPage - 1
             if finalStartIndex < pageCount {
-                ranges.append(finalStartIndex..<pageCount)
+                ranges.append(finalStartIndex ..< pageCount)
             }
             if ranges.isEmpty {
-                ranges = [0..<pageCount]
+                ranges = [0 ..< pageCount]
             }
             return ranges
 
         case .approxTargetSizeMB:
             // Should be transformed to maxPagesPerPart before reaching here.
             throw PDFSplitError.invalidMode("approxTargetSizeMB must be resolved before range calculation")
+
         case .outlineChapters:
             // Should be transformed to explicitBreaks before range calculation.
             throw PDFSplitError.invalidMode("outlineChapters must be resolved before range calculation")
@@ -185,7 +185,8 @@ final class PDFSplitter {
                             sourceURL: URL,
                             destinationDirectory: URL,
                             progress: ((Int, Int) -> Void)? = nil,
-                            shouldCancel: (() -> Bool)? = nil) throws -> [URL] {
+                            shouldCancel: (() -> Bool)? = nil) throws -> [URL]
+    {
         let baseName = sourceURL.deletingPathExtension().lastPathComponent
         let totalParts = ranges.count
         var outputURLs: [URL] = []
@@ -200,7 +201,7 @@ final class PDFSplitter {
             }
             let partIndex = index + 1
             let startPageNumber = range.lowerBound + 1 // 1-based
-            let endPageNumber = range.upperBound       // 1-based
+            let endPageNumber = range.upperBound // 1-based
 
             let partIndexString = String(format: "%02d", partIndex)
             let partCountString = String(format: "%02d", totalParts)
@@ -239,10 +240,11 @@ final class PDFSplitter {
     // MARK: - Mode resolution
 
     private func resolvedMode(for mode: PDFSplitMode,
-                               pageCount: Int,
-                               sourceURL: URL) throws -> PDFSplitMode {
+                              pageCount: Int,
+                              sourceURL: URL) throws -> PDFSplitMode
+    {
         switch mode {
-        case .approxTargetSizeMB(let targetMB):
+        case let .approxTargetSizeMB(targetMB):
             guard targetMB > 0 else {
                 throw PDFSplitError.invalidMode("approxTargetSizeMB must be > 0")
             }
@@ -289,7 +291,7 @@ final class PDFSplitter {
         var startPages: [Int] = []
 
         // Map top-level children to their target page indices.
-        for i in 0..<root.numberOfChildren {
+        for i in 0 ..< root.numberOfChildren {
             guard let child = root.child(at: i) else { continue }
 
             // Prefer outline destination; fall back to action destination if needed.

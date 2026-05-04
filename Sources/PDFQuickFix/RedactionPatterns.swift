@@ -17,8 +17,8 @@ enum DefaultPatterns {
         name: "Aircraft Tail (TC-XYZ)",
         pattern: #"\bTC-[A-Z]{3,4}\b"#
     )
-    
+
     static func defaults() -> [RedactionPattern] {
-        [iban, tckn, pnr, tail].compactMap { $0 }
+        [iban, tckn, pnr, tail].compactMap(\.self)
     }
 }

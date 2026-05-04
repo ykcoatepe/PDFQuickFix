@@ -24,7 +24,8 @@ struct AIInteractionEntry: Identifiable, Codable, Hashable {
          response: String,
          sourceName: String?,
          inputCharacterCount: Int,
-         inputWasTrimmed: Bool) {
+         inputWasTrimmed: Bool)
+    {
         self.id = id
         self.timestamp = timestamp
         self.kind = kind
@@ -44,7 +45,7 @@ struct AIInteractionEntry: Identifiable, Codable, Hashable {
             self.kind = kind
         } else {
             let task = try container.decode(LocalAITask.self, forKey: .task)
-            self.kind = .quickFix(task: task)
+            kind = .quickFix(task: task)
         }
         model = try container.decode(String.self, forKey: .model)
         prompt = try container.decode(String.self, forKey: .prompt)
@@ -75,27 +76,27 @@ enum AIActivityExportFormat: String, CaseIterable, Codable, Hashable {
     var fileExtension: String {
         switch self {
         case .json:
-            return "json"
+            "json"
         case .markdown:
-            return "md"
+            "md"
         }
     }
 
     var displayName: String {
         switch self {
         case .json:
-            return "JSON"
+            "JSON"
         case .markdown:
-            return "Markdown"
+            "Markdown"
         }
     }
 
     var contentType: UTType {
         switch self {
         case .json:
-            return .json
+            .json
         case .markdown:
-            return UTType(filenameExtension: "md") ?? .plainText
+            UTType(filenameExtension: "md") ?? .plainText
         }
     }
 }
@@ -119,7 +120,7 @@ final class AIInteractionStore: ObservableObject {
 
     init(persistToDisk: Bool = UserDefaults.standard.bool(forKey: "LocalAI.persistLogs")) {
         self.persistToDisk = persistToDisk
-        self.fileURL = AIInteractionStore.makeFileURL()
+        fileURL = AIInteractionStore.makeFileURL()
         if persistToDisk {
             load()
         }
@@ -170,7 +171,8 @@ final class AIInteractionStore: ObservableObject {
 
     private func load() {
         guard let data = try? Data(contentsOf: fileURL),
-              let decoded = Self.decodePersistedEntries(from: data) else {
+              let decoded = Self.decodePersistedEntries(from: data)
+        else {
             return
         }
         entries = decoded
@@ -178,7 +180,8 @@ final class AIInteractionStore: ObservableObject {
 
     private func loadPersistedEntries() -> [AIInteractionEntry] {
         guard let data = try? Data(contentsOf: fileURL),
-              let decoded = Self.decodePersistedEntries(from: data) else {
+              let decoded = Self.decodePersistedEntries(from: data)
+        else {
             return []
         }
         return decoded
@@ -203,7 +206,8 @@ final class AIInteractionStore: ObservableObject {
     }
 
     func exportDocument(for entries: [AIInteractionEntry],
-                        format: AIActivityExportFormat) throws -> AIActivityExportDocument {
+                        format: AIActivityExportFormat) throws -> AIActivityExportDocument
+    {
         guard !entries.isEmpty else {
             throw CocoaError(.fileWriteUnknown)
         }
@@ -222,7 +226,8 @@ final class AIInteractionStore: ObservableObject {
     }
 
     static func makeExportFileName(entries: [AIInteractionEntry],
-                                   format: AIActivityExportFormat) -> String {
+                                   format: AIActivityExportFormat) -> String
+    {
         let base = entries.count == 1 ? "ai-activity-\(entries[0].kind.exportSlug)" : "ai-activity-session"
         return "\(base).\(format.fileExtension)"
     }
@@ -314,7 +319,8 @@ final class AIInteractionStore: ObservableObject {
         decoded.reserveCapacity(rawArray.count)
         for item in rawArray {
             guard let itemData = try? JSONSerialization.data(withJSONObject: item),
-                   let entry = try? decoder.decode(AIInteractionEntry.self, from: itemData) else {
+                  let entry = try? decoder.decode(AIInteractionEntry.self, from: itemData)
+            else {
                 continue
             }
             decoded.append(entry)

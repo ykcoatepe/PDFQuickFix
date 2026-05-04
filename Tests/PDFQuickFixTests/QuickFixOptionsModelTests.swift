@@ -1,11 +1,11 @@
-import XCTest
 @testable import PDFQuickFix
+import XCTest
 
 @MainActor
 final class QuickFixOptionsModelTests: XCTestCase {
-    func testMakeParametersThrowsForInvalidCustomRegex() {
+    func testMakeParametersThrowsForInvalidCustomRegex() throws {
         let suiteName = "QuickFixOptionsModelTests-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suiteName)!
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer {
             defaults.removePersistentDomain(forName: suiteName)
         }
@@ -26,9 +26,9 @@ final class QuickFixOptionsModelTests: XCTestCase {
         }
     }
 
-    func testMakeAIImageOCRParametersIgnoresInvalidCustomRegex() {
+    func testMakeAIImageOCRParametersIgnoresInvalidCustomRegex() throws {
         let suiteName = "QuickFixOptionsModelTests-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suiteName)!
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer {
             defaults.removePersistentDomain(forName: suiteName)
         }

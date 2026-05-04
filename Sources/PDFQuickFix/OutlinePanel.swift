@@ -1,5 +1,5 @@
-import SwiftUI
 import PDFKit
+import SwiftUI
 
 struct OutlinePanel: View {
     @EnvironmentObject private var controller: StudioController
@@ -11,7 +11,7 @@ struct OutlinePanel: View {
                 .font(.headline)
 
             HStack(spacing: 8) {
-                TextField("New bookmark title", text: $newBookmarkTitle)
+                TextField("Bookmark label", text: $newBookmarkTitle)
                 Button("Add") {
                     controller.addOutline(title: newBookmarkTitle)
                     newBookmarkTitle = ""
@@ -19,17 +19,29 @@ struct OutlinePanel: View {
                 .disabled(controller.document == nil)
             }
 
-            if controller.isMassiveDocument && controller.outlineRows.isEmpty {
-                Text("Outline loads when opened for very large documents.")
+            if controller.isMassiveDocument, controller.outlineRows.isEmpty {
+                Text("Bookmark outline loads on demand for very large documents.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
 
-            List {
-                ForEach(controller.outlineRows) { row in
-                    OutlineRowView(row: row,
-                                   rename: controller.renameOutline,
-                                   delete: controller.deleteOutline)
+            if controller.outlineRows.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("No bookmarks on this file")
+                        .font(.subheadline.weight(.semibold))
+                    Text("Add bookmarks here to mark sections before cleanup, export, or handoff.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .padding(.top, 8)
+            } else {
+                List {
+                    ForEach(controller.outlineRows) { row in
+                        OutlineRowView(row: row,
+                                       rename: controller.renameOutline,
+                                       delete: controller.deleteOutline)
+                    }
                 }
             }
         }
@@ -48,7 +60,8 @@ private struct OutlineRowView: View {
 
     init(row: OutlineRow,
          rename: @escaping (OutlineRow, String) -> Void,
-         delete: @escaping (OutlineRow) -> Void) {
+         delete: @escaping (OutlineRow) -> Void)
+    {
         self.row = row
         self.rename = rename
         self.delete = delete
@@ -85,11 +98,11 @@ private struct OutlineRowView: View {
 struct ReaderOutlineNode: View {
     let node: PDFOutline
     let controller: ReaderControllerPro
-    
+
     var body: some View {
         let count = node.numberOfChildren
         if count > 0 {
-            let children = (0..<count).compactMap { node.child(at: $0) }
+            let children = (0 ..< count).compactMap { node.child(at: $0) }
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(children, id: \.self) { child in
                     ReaderOutlineRow(child: child, controller: controller)
@@ -103,7 +116,7 @@ struct ReaderOutlineRow: View {
     let child: PDFOutline
     let controller: ReaderControllerPro
     @State private var isExpanded: Bool = false
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 4) {
@@ -122,7 +135,7 @@ struct ReaderOutlineRow: View {
                 } else {
                     Spacer().frame(width: 16, height: 16)
                 }
-                
+
                 Text(child.label ?? "Untitled")
                     .font(.caption)
                     .lineLimit(1)

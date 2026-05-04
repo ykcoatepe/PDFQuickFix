@@ -1,5 +1,5 @@
-import SwiftUI
 import PDFKit
+import SwiftUI
 
 struct FormsDesigner: View {
     @EnvironmentObject private var controller: StudioController
@@ -23,8 +23,8 @@ struct FormsDesigner: View {
             TextField("Field name", text: $fieldName)
 
             HStack {
-                Stepper("Width \(Int(width)) pt", value: $width, in: 80...320, step: 10)
-                Stepper("Height \(Int(height)) pt", value: $height, in: 20...120, step: 4)
+                Stepper("Width \(Int(width)) pt", value: $width, in: 80 ... 320, step: 10)
+                Stepper("Height \(Int(height)) pt", value: $height, in: 20 ... 120, step: 4)
             }
 
             Button {
@@ -36,7 +36,7 @@ struct FormsDesigner: View {
 
             Spacer()
 
-            Text("Fields are placed at the center of the visible page. Adjust position inside the PDF reader after insertion.")
+            Text("Fields are placed at the center of the visible page. Fine-tune placement in the PDF before you export or hand the file off.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }

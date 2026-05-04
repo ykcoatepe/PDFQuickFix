@@ -12,47 +12,47 @@ public enum PDFCoreError: Error, Equatable {
 public class PDFCoreParser {
     private let lexer: PDFCoreLexer
     private let data: Data
-    
-    // Store (objectNumber, stream) for delayed processing
+
+    /// Store (objectNumber, stream) for delayed processing
     private var objStmCandidates: [(Int, PDFCoreStream)] = []
-    
+
     public init(data: Data) {
         self.data = data
-        self.lexer = PDFCoreLexer(data: data)
+        lexer = PDFCoreLexer(data: data)
     }
-    
+
     public func parseDocument() throws -> PDFCoreDocument {
         // 1. Validate Header
         lexer.seek(to: 0)
         guard let header = lexer.readLine(), header.hasPrefix("%PDF-") else {
             throw PDFCoreError.invalidHeader
         }
-        
+
         // 2. Find startxref
         let startXrefOffset = try findStartXref()
-        
+
         // 3. Parse xref chain (Incremental Updates)
         var masterEntries: [PDFCoreObjectRef: Int] = [:]
         var deletedObjects = Set<Int>() // Object numbers freed in newer revisions
         var primaryTrailer: PDFCoreObject?
         var currentOffset = startXrefOffset
         var visitedOffsets = Set<Int>()
-        
+
         while true {
             // Prevent cycles
             if visitedOffsets.contains(currentOffset) { break }
             visitedOffsets.insert(currentOffset)
-            
+
             // Parse this section
             let result = try parseXRef(at: currentOffset)
-            
+
             // Record frees first so older revisions don't revive them
             for freed in result.freedObjects {
                 deletedObjects.insert(freed)
                 // In case a later section listed an offset for the same object number, drop it
                 masterEntries = masterEntries.filter { $0.key.objectNumber != freed }
             }
-            
+
             // Merge entries (keep existing, as we start from newest)
             for (ref, offset) in result.entries {
                 if deletedObjects.contains(ref.objectNumber) { continue }
@@ -60,12 +60,12 @@ public class PDFCoreParser {
                     masterEntries[ref] = offset
                 }
             }
-            
+
             // Keep the first (newest) trailer as primary
             if primaryTrailer == nil {
                 primaryTrailer = result.trailer
             }
-            
+
             // Move to previous
             if let prev = result.prevOffset {
                 currentOffset = prev
@@ -73,100 +73,104 @@ public class PDFCoreParser {
                 break
             }
         }
-        
-        guard let finalTrailer = primaryTrailer, case .dict(let dict) = finalTrailer else {
+
+        guard let finalTrailer = primaryTrailer, case let .dict(dict) = finalTrailer else {
             throw PDFCoreError.invalidTrailer
         }
-        
+
         var rootRef: PDFCoreObjectRef?
-        if case .indirectRef(let obj, let gen) = dict["Root"] {
+        if case let .indirectRef(obj, gen) = dict["Root"] {
             rootRef = PDFCoreObjectRef(objectNumber: obj, generation: gen)
         }
-        
+
         var infoRef: PDFCoreObjectRef?
-        if case .indirectRef(let obj, let gen) = dict["Info"] {
+        if case let .indirectRef(obj, gen) = dict["Info"] {
             infoRef = PDFCoreObjectRef(objectNumber: obj, generation: gen)
         }
-        
+
         // 5. Parse Objects
         var objects: [PDFCoreObjectRef: PDFCoreObject] = [:]
-        
+
         for (objRef, offset) in masterEntries {
             // Safety check for offset
             guard offset < data.count else {
                 throw PDFCoreError.syntax("Object offset out of bounds")
             }
-            
+
             lexer.seek(to: offset)
             // Expect: num gen obj ... endobj
-            guard let t1 = lexer.nextToken(), case .number(let nStr) = t1, Int(nStr) == objRef.objectNumber,
-                  let t2 = lexer.nextToken(), case .number(let genStr) = t2,
-                  let t3 = lexer.nextToken(), case .keyword("obj") = t3 else {
+            guard let t1 = lexer.nextToken(), case let .number(nStr) = t1, Int(nStr) == objRef.objectNumber,
+                  let t2 = lexer.nextToken(), case let .number(genStr) = t2,
+                  let t3 = lexer.nextToken(), case .keyword("obj") = t3
+            else {
                 continue // Skip invalid object start
             }
 
             let obj = try parseObject()
-            
+
             // Check for ObjStm
-            if case .stream(let stream) = obj,
-               case .name(let type) = stream.dictionary["Type"],
-               type == "ObjStm" {
+            if case let .stream(stream) = obj,
+               case let .name(type) = stream.dictionary["Type"],
+               type == "ObjStm"
+            {
                 objStmCandidates.append((objRef.objectNumber, stream))
             }
-            
+
             let headerGen = Int(genStr) ?? objRef.generation
             let ref = PDFCoreObjectRef(objectNumber: objRef.objectNumber, generation: headerGen)
             objects[ref] = obj
         }
-        
+
         // 6. Process Object Streams
         try processObjectStreams(into: &objects)
-        
+
         return PDFCoreDocument(objects: objects, rootRef: rootRef, infoRef: infoRef)
     }
-    
+
     private struct XRefResult {
         let entries: [PDFCoreObjectRef: Int]
         let freedObjects: Set<Int> // object numbers marked free in this section
         let trailer: PDFCoreObject
         let prevOffset: Int?
     }
-    
+
     private func parseXRef(at offset: Int) throws -> XRefResult {
         lexer.seek(to: offset)
         let tokenAtXref = lexer.nextToken()
         lexer.seek(to: offset) // Reset
-        
+
         var entries: [PDFCoreObjectRef: Int] = [:]
         var trailer: PDFCoreObject
         var prevOffset: Int?
         var freed: Set<Int> = []
-        
+
         if case .keyword("xref") = tokenAtXref {
             // Classic XRef Table
             guard let token = lexer.nextToken(), case .keyword("xref") = token else {
                 throw PDFCoreError.invalidXRef
             }
-            
+
             while true {
                 guard let firstToken = lexer.nextToken() else { break }
                 if case .keyword("trailer") = firstToken { break } // End of xref
-                
-                guard case .number(let startStr) = firstToken,
+
+                guard case let .number(startStr) = firstToken,
                       let startObj = Int(startStr),
                       let countToken = lexer.nextToken(),
-                      case .number(let countStr) = countToken,
-                      let count = Int(countStr) else {
+                      case let .number(countStr) = countToken,
+                      let count = Int(countStr)
+                else {
                     throw PDFCoreError.invalidXRef
                 }
-                
-                for i in 0..<count {
-                    guard let offsetToken = lexer.nextToken(), case .number(let offsetStr) = offsetToken,
-                          let genToken = lexer.nextToken(), case .number(let genStr) = genToken,
-                          let typeToken = lexer.nextToken(), case .keyword(let type) = typeToken else {
+
+                for i in 0 ..< count {
+                    guard let offsetToken = lexer.nextToken(), case let .number(offsetStr) = offsetToken,
+                          let genToken = lexer.nextToken(), case let .number(genStr) = genToken,
+                          let typeToken = lexer.nextToken(), case let .keyword(type) = typeToken
+                    else {
                         throw PDFCoreError.invalidXRef
                     }
-                    
+
                     switch type {
                     case "n":
                         if let offset = Int(offsetStr), let gen = Int(genStr) {
@@ -180,48 +184,51 @@ public class PDFCoreParser {
                     }
                 }
             }
-            
+
             // Parse Trailer (Classic)
             guard let trailerToken = lexer.nextToken(), case .dictStart = trailerToken else {
                 throw PDFCoreError.invalidTrailer
             }
             trailer = try parseDictContent()
-            
+
         } else {
             // Assume XRef Stream
             guard let xrefObj = try? parseObjectAt(offset: offset),
-                  case .stream(let stream) = xrefObj else {
+                  case let .stream(stream) = xrefObj
+            else {
                 throw PDFCoreError.invalidXRef
             }
-            
+
             // Validate Type
-            if case .name(let type) = stream.dictionary["Type"], type == "XRef" {
+            if case let .name(type) = stream.dictionary["Type"], type == "XRef" {
                 try parseXRefStream(stream: stream, into: &entries, freed: &freed)
                 trailer = .dict(stream.dictionary)
             } else {
                 throw PDFCoreError.invalidXRef
             }
         }
-        
+
         // Extract /Prev
-        if case .dict(let dict) = trailer,
+        if case let .dict(dict) = trailer,
            let prevObj = dict["Prev"],
-           case .int(let prev) = prevObj {
+           case let .int(prev) = prevObj
+        {
             prevOffset = prev
         }
-        
+
         return XRefResult(entries: entries, freedObjects: freed, trailer: trailer, prevOffset: prevOffset)
     }
-    
+
     private func findStartXref() throws -> Int {
         // Search backwards from end
-        let searchRange = max(0, data.count - 1024)..<data.count
+        let searchRange = max(0, data.count - 1024) ..< data.count
         let chunk = data.subdata(in: searchRange)
         guard let string = String(data: chunk, encoding: .isoLatin1),
-              let range = string.range(of: "startxref", options: .backwards) else {
+              let range = string.range(of: "startxref", options: .backwards)
+        else {
             throw PDFCoreError.missingStartXRef
         }
-        
+
         // Parse offset after startxref
         let suffix = string[range.upperBound...]
         let scanner = Scanner(string: String(suffix))
@@ -230,25 +237,26 @@ public class PDFCoreParser {
         }
         throw PDFCoreError.missingStartXRef
     }
-    
+
     private func parseObject() throws -> PDFCoreObject {
         guard let token = lexer.nextToken() else { throw PDFCoreError.syntax("Unexpected EOF") }
-        
+
         switch token {
-        case .number(let s):
+        case let .number(s):
             // Check if it's an indirect ref: number number R
             let saved = lexer.currentOffset()
-            if let t2 = lexer.nextToken(), case .number(let gStr) = t2,
-               let t3 = lexer.nextToken(), case .keyword("R") = t3 {
+            if let t2 = lexer.nextToken(), case let .number(gStr) = t2,
+               let t3 = lexer.nextToken(), case .keyword("R") = t3
+            {
                 return .indirectRef(object: Int(s) ?? 0, generation: Int(gStr) ?? 0)
             }
             lexer.seek(to: saved)
             return .int(Int(s) ?? 0)
-        case .real(let s):
+        case let .real(s):
             return .real(Double(s) ?? 0.0)
-        case .name(let s):
+        case let .name(s):
             return .name(s)
-        case .string(let s):
+        case let .string(s):
             return .string(s)
         case .keyword("true"):
             return .bool(true)
@@ -261,25 +269,25 @@ public class PDFCoreParser {
         case .dictStart:
             let dictObj = try parseDictContent()
             // Check for stream
-            if case .dict(let dict) = dictObj {
+            if case let .dict(dict) = dictObj {
                 let saved = lexer.currentOffset()
                 if let next = lexer.nextToken(), case .keyword("stream") = next {
                     // It's a stream
                     // Determine length if possible
                     var length: Int? = nil
-                    if let lenObj = dict["Length"], case .int(let l) = lenObj {
+                    if let lenObj = dict["Length"], case let .int(l) = lenObj {
                         length = l
                     }
                     // If Length is indirect, we can't resolve it easily yet without a full object map or a recursive lookup.
                     // For now, if it's indirect, we rely on scanning for endstream.
-                    
+
                     let streamData = lexer.readStreamData(length: length)
-                    
+
                     // Consume 'endstream'
                     if let endToken = lexer.nextToken(), case .keyword("endstream") = endToken {
                         // Good
                     }
-                    
+
                     return .stream(PDFCoreStream(dictionary: dict, data: streamData))
                 }
                 lexer.seek(to: saved)
@@ -292,7 +300,7 @@ public class PDFCoreParser {
             return .null
         }
     }
-    
+
     private func parseArray() throws -> PDFCoreObject {
         var arr: [PDFCoreObject] = []
         while true {
@@ -303,70 +311,72 @@ public class PDFCoreParser {
             // Handle EOF to prevent infinite loop on malformed PDFs
             if case .eof = token { break }
             lexer.seek(to: saved)
-            
+
             let obj = try parseObject()
             arr.append(obj)
         }
         return .array(arr)
     }
-    
+
     private func parseDictContent() throws -> PDFCoreObject {
         var dict: [String: PDFCoreObject] = [:]
         while true {
             guard let keyToken = lexer.nextToken() else { break }
             if case .dictEnd = keyToken { break }
-            
-            guard case .name(let key) = keyToken else {
+
+            guard case let .name(key) = keyToken else {
                 // Unexpected token in dict key position
                 continue
             }
-            
+
             let value = try parseObject()
             dict[key] = value
         }
         return .dict(dict)
     }
-    
+
     private func parseObjectAt(offset: Int) throws -> PDFCoreObject {
         lexer.seek(to: offset)
         // Expect: num gen obj
-        guard let t1 = lexer.nextToken(), case .number(_) = t1,
-              let t2 = lexer.nextToken(), case .number(_) = t2,
-              let t3 = lexer.nextToken(), case .keyword("obj") = t3 else {
+        guard let t1 = lexer.nextToken(), case .number = t1,
+              let t2 = lexer.nextToken(), case .number = t2,
+              let t3 = lexer.nextToken(), case .keyword("obj") = t3
+        else {
             throw PDFCoreError.syntax("Expected object start at offset \(offset)")
         }
         return try parseObject()
     }
-    
+
     private func parseXRefStream(stream: PDFCoreStream, into offsets: inout [PDFCoreObjectRef: Int], freed: inout Set<Int>) throws {
         // 1. Check Filter - accept bare /FlateDecode or single-element array [/FlateDecode]
         let needsDecompress = Self.isFlateDecode(stream.dictionary["Filter"])
         if let filter = stream.dictionary["Filter"], !Self.isSupportedFilter(filter) {
             throw PDFCoreError.unsupportedFeature("xrefFilter: \(filter)")
         }
-        
+
         // 2. Get W (Widths)
-        guard let wObj = stream.dictionary["W"], case .array(let wArr) = wObj, wArr.count >= 3,
-              case .int(let w0) = wArr[0],
-              case .int(let w1) = wArr[1],
-              case .int(let w2) = wArr[2] else {
+        guard let wObj = stream.dictionary["W"], case let .array(wArr) = wObj, wArr.count >= 3,
+              case let .int(w0) = wArr[0],
+              case let .int(w1) = wArr[1],
+              case let .int(w2) = wArr[2]
+        else {
             throw PDFCoreError.invalidXRef
         }
-        
+
         // 3. Get Index (Optional, default [0 Size])
         var index: [Int] = []
-        if let idxObj = stream.dictionary["Index"], case .array(let idxArr) = idxObj {
+        if let idxObj = stream.dictionary["Index"], case let .array(idxArr) = idxObj {
             for item in idxArr {
-                if case .int(let val) = item { index.append(val) }
+                if case let .int(val) = item { index.append(val) }
             }
         } else {
-            if let sizeObj = stream.dictionary["Size"], case .int(let size) = sizeObj {
+            if let sizeObj = stream.dictionary["Size"], case let .int(size) = sizeObj {
                 index = [0, size]
             } else {
                 throw PDFCoreError.invalidXRef
             }
         }
-        
+
         // 4. Decompress Data
         let decompressedData: Data
         if needsDecompress {
@@ -378,29 +388,29 @@ public class PDFCoreParser {
         } else {
             decompressedData = stream.data
         }
-        
+
         // 5. Iterate entries
         let entrySize = w0 + w1 + w2
         var cursor = 0
-        
+
         // Index array is pairs of [startObj, count]
         var idxPtr = 0
         while idxPtr < index.count {
             let startObj = index[idxPtr]
-            let count = index[idxPtr+1]
+            let count = index[idxPtr + 1]
             idxPtr += 2
-            
-            for i in 0..<count {
+
+            for i in 0 ..< count {
                 guard cursor + entrySize <= decompressedData.count else { break }
-                
+
                 let type = readInt(from: decompressedData, at: cursor, width: w0)
                 let field2 = readInt(from: decompressedData, at: cursor + w0, width: w1)
                 let field3 = readInt(from: decompressedData, at: cursor + w0 + w1, width: w2)
-                
+
                 cursor += entrySize
-                
+
                 let objNum = startObj + i
-                
+
                 switch type {
                 case 0: // Free
                     freed.insert(objNum)
@@ -427,27 +437,27 @@ public class PDFCoreParser {
             }
         }
     }
-    
+
     private func readInt(from data: Data, at offset: Int, width: Int) -> Int {
         if width == 0 { return 0 }
         var value = 0
-        for i in 0..<width {
+        for i in 0 ..< width {
             value = (value << 8) | Int(data[offset + i])
         }
         return value
     }
-    
+
     // MARK: - Filter Helpers
-    
+
     /// Check if filter is FlateDecode (bare name or single-element array)
     private static func isFlateDecode(_ filter: PDFCoreObject?) -> Bool {
-        guard let filter = filter else { return false }
-        
+        guard let filter else { return false }
+
         switch filter {
-        case .name(let name):
+        case let .name(name):
             return name == "FlateDecode"
-        case .array(let arr):
-            if arr.count == 1, case .name(let name) = arr[0], name == "FlateDecode" {
+        case let .array(arr):
+            if arr.count == 1, case let .name(name) = arr[0], name == "FlateDecode" {
                 return true
             }
         default:
@@ -455,16 +465,16 @@ public class PDFCoreParser {
         }
         return false
     }
-    
+
     /// Check if filter is supported (nil, FlateDecode, or single-element FlateDecode array)
     private static func isSupportedFilter(_ filter: PDFCoreObject) -> Bool {
         switch filter {
-        case .name(let name):
+        case let .name(name):
             return name == "FlateDecode"
-        case .array(let arr):
+        case let .array(arr):
             // Empty array or single FlateDecode
             if arr.isEmpty { return true }
-            if arr.count == 1, case .name(let name) = arr[0], name == "FlateDecode" {
+            if arr.count == 1, case let .name(name) = arr[0], name == "FlateDecode" {
                 return true
             }
             return false
@@ -472,20 +482,20 @@ public class PDFCoreParser {
             return false
         }
     }
-    
+
     private func processObjectStreams(into objects: inout [PDFCoreObjectRef: PDFCoreObject]) throws {
         for (objNum, stream) in objStmCandidates {
             try decodeObjectStream(stream, objNum: objNum, into: &objects)
         }
     }
-    
+
     private func decodeObjectStream(_ stream: PDFCoreStream, objNum: Int, into objects: inout [PDFCoreObjectRef: PDFCoreObject]) throws {
         // 1. Check Filter - accept bare /FlateDecode or single-element array [/FlateDecode]
         let needsDecompress = Self.isFlateDecode(stream.dictionary["Filter"])
         if let filter = stream.dictionary["Filter"], !Self.isSupportedFilter(filter) {
             throw PDFCoreError.unsupportedFeature("complexObjStm (filter: \(filter))")
         }
-        
+
         // 2. Decompress
         let decompressedData: Data
         if needsDecompress {
@@ -497,40 +507,42 @@ public class PDFCoreParser {
         } else {
             decompressedData = stream.data
         }
-        
+
         // 3. Get /N and /First
-        guard let nObj = stream.dictionary["N"], case .int(let n) = nObj,
-              let firstObj = stream.dictionary["First"], case .int(let first) = firstObj else {
+        guard let nObj = stream.dictionary["N"], case let .int(n) = nObj,
+              let firstObj = stream.dictionary["First"], case let .int(first) = firstObj
+        else {
             // Invalid ObjStm, maybe ignore or throw?
             // Throwing ensures we don't silently fail on corrupt critical data
             throw PDFCoreError.syntax("ObjStm \(objNum) missing /N or /First")
         }
-        
+
         // 4. Parse Index
         // The first `first` bytes contain N pairs of integers.
         // We can use a temporary lexer on the decompressed data.
         let subLexer = PDFCoreLexer(data: decompressedData)
-        
+
         var pairs: [(Int, Int)] = [] // (objNum, offset)
-        for _ in 0..<n {
-            guard let t1 = subLexer.nextToken(), case .number(let numStr) = t1, let oNum = Int(numStr),
-                  let t2 = subLexer.nextToken(), case .number(let offStr) = t2, let oOff = Int(offStr) else {
+        for _ in 0 ..< n {
+            guard let t1 = subLexer.nextToken(), case let .number(numStr) = t1, let oNum = Int(numStr),
+                  let t2 = subLexer.nextToken(), case let .number(offStr) = t2, let oOff = Int(offStr)
+            else {
                 throw PDFCoreError.syntax("ObjStm \(objNum) invalid index")
             }
             pairs.append((oNum, oOff))
         }
-        
+
         // 5. Parse Objects
         for (oNum, oOff) in pairs {
             let absoluteOffset = first + oOff
             guard absoluteOffset < decompressedData.count else {
                 throw PDFCoreError.syntax("ObjStm \(objNum) object offset out of bounds")
             }
-            
+
             // Re-use subLexer or create new one?
             // Lexer is stateful, so we can just seek.
             subLexer.seek(to: absoluteOffset)
-            
+
             // Parse single object
             // Note: Objects in ObjStm are NOT followed by 'endobj' usually, just the object itself.
             // But parseObject() expects to parse one full object.
@@ -540,7 +552,7 @@ public class PDFCoreParser {
             // Actually, parseObject() just parses one token or structure (dict, array, etc).
             // It does NOT look for 'endobj' unless called by parseDocument loop which checks for it.
             // So calling parseObject() here is correct.
-            
+
             if let obj = try? parseObject(with: subLexer) {
                 let ref = PDFCoreObjectRef(objectNumber: oNum, generation: 0)
                 // Only insert if not already present (main body takes precedence)
@@ -550,26 +562,27 @@ public class PDFCoreParser {
             }
         }
     }
-    
-    // Helper to parse using a specific lexer instance
+
+    /// Helper to parse using a specific lexer instance
     private func parseObject(with customLexer: PDFCoreLexer) throws -> PDFCoreObject {
         guard let token = customLexer.nextToken() else { throw PDFCoreError.syntax("Unexpected EOF in ObjStm") }
-        
+
         switch token {
-        case .number(let s):
+        case let .number(s):
             // Check if it's an indirect ref: number number R
             let saved = customLexer.currentOffset()
-            if let t2 = customLexer.nextToken(), case .number(let gStr) = t2,
-               let t3 = customLexer.nextToken(), case .keyword("R") = t3 {
+            if let t2 = customLexer.nextToken(), case let .number(gStr) = t2,
+               let t3 = customLexer.nextToken(), case .keyword("R") = t3
+            {
                 return .indirectRef(object: Int(s) ?? 0, generation: Int(gStr) ?? 0)
             }
             customLexer.seek(to: saved)
             return .int(Int(s) ?? 0)
-        case .real(let s):
+        case let .real(s):
             return .real(Double(s) ?? 0.0)
-        case .name(let s):
+        case let .name(s):
             return .name(s)
-        case .string(let s):
+        case let .string(s):
             return .string(s)
         case .keyword("true"):
             return .bool(true)
@@ -580,16 +593,15 @@ public class PDFCoreParser {
         case .arrayStart:
             return try parseArray(with: customLexer)
         case .dictStart:
-            let dictObj = try parseDictContent(with: customLexer)
-            // Check for stream is NOT allowed in ObjStm (streams cannot be inside ObjStm)
-            return dictObj
+            return try parseDictContent(with: customLexer)
+        // Check for stream is NOT allowed in ObjStm (streams cannot be inside ObjStm)
         case .eof:
             throw PDFCoreError.syntax("Unexpected EOF in ObjStm")
         default:
             return .null
         }
     }
-    
+
     private func parseArray(with customLexer: PDFCoreLexer) throws -> PDFCoreObject {
         var arr: [PDFCoreObject] = []
         while true {
@@ -604,13 +616,13 @@ public class PDFCoreParser {
         }
         return .array(arr)
     }
-    
+
     private func parseDictContent(with customLexer: PDFCoreLexer) throws -> PDFCoreObject {
         var dict: [String: PDFCoreObject] = [:]
         while true {
             guard let keyToken = customLexer.nextToken() else { break }
             if case .dictEnd = keyToken { break }
-            guard case .name(let key) = keyToken else { continue }
+            guard case let .name(key) = keyToken else { continue }
             let value = try parseObject(with: customLexer)
             dict[key] = value
         }

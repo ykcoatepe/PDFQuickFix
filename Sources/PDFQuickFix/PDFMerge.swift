@@ -5,7 +5,9 @@ import PDFQuickFixKit
 enum MergeOutlinePolicy: String, CaseIterable, Identifiable, Codable {
     case addTopLevelPerSource
 
-    var id: String { rawValue }
+    var id: String {
+        rawValue
+    }
 }
 
 enum MergeMetadataPolicy: String, CaseIterable, Identifiable, Codable {
@@ -13,7 +15,9 @@ enum MergeMetadataPolicy: String, CaseIterable, Identifiable, Codable {
     case keepLast
     case clear
 
-    var id: String { rawValue }
+    var id: String {
+        rawValue
+    }
 }
 
 struct PDFMergeOptions {
@@ -45,15 +49,15 @@ enum PDFMergeError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .noPDFsSelected:
-            return "No PDFs selected."
-        case .cannotOpenSource(let url):
-            return "Cannot open PDF source: \(url.lastPathComponent)"
+            "No PDFs selected."
+        case let .cannotOpenSource(url):
+            "Cannot open PDF source: \(url.lastPathComponent)"
         case .noReadableSources:
-            return "None of the selected PDFs could be opened."
-        case .failedToWriteOutput(let url):
-            return "Failed to write merged file to \(url.path)."
+            "None of the selected PDFs could be opened."
+        case let .failedToWriteOutput(url):
+            "Failed to write merged file to \(url.path)."
         case .cancelled:
-            return "Operation cancelled."
+            "Operation cancelled."
         }
     }
 }
@@ -67,7 +71,8 @@ enum PDFMerge {
     static func merge(urls: [URL],
                       outputURL: URL,
                       options: PDFMergeOptions = .default,
-                      shouldCancel: (() -> Bool)? = nil) throws -> PDFMergeResult {
+                      shouldCancel: (() -> Bool)? = nil) throws -> PDFMergeResult
+    {
         let inputURLs = options.deduplicateSources ? deduplicated(urls: urls) : urls
         guard !inputURLs.isEmpty else {
             throw PDFMergeError.noPDFsSelected
@@ -121,7 +126,7 @@ enum PDFMerge {
                     startPageIndex: startPageIndex
                 )
             )
-            for pageIndex in 0..<item.document.pageCount {
+            for pageIndex in 0 ..< item.document.pageCount {
                 if shouldCancel?() == true {
                     throw PDFMergeError.cancelled
                 }
@@ -219,7 +224,7 @@ private extension PDFMerge {
     }
 
     static func loadDocument(at url: URL) throws -> LoadedDocument {
-        LoadedDocument(url: url, document: try PDFDocumentSanitizer.loadDocument(at: url))
+        try LoadedDocument(url: url, document: PDFDocumentSanitizer.loadDocument(at: url))
     }
 
     static func makeBlankPageLikeFirstPage(in document: PDFDocument) -> PDFPage? {
@@ -235,7 +240,8 @@ private extension PDFMerge {
     static func applyMetadata(policy: MergeMetadataPolicy,
                               to baseDocument: PDFDocument,
                               firstReadableAttributes: [AnyHashable: Any],
-                              lastReadableAttributes: [AnyHashable: Any]) {
+                              lastReadableAttributes: [AnyHashable: Any])
+    {
         switch policy {
         case .keepFirst:
             baseDocument.documentAttributes = firstReadableAttributes
@@ -248,7 +254,8 @@ private extension PDFMerge {
 
     static func applyOutline(policy: MergeOutlinePolicy,
                              to baseDocument: PDFDocument,
-                             entries: [OutlineEntry]) {
+                             entries: [OutlineEntry])
+    {
         switch policy {
         case .addTopLevelPerSource:
             let root = PDFOutline()
@@ -293,7 +300,7 @@ private extension PDFMerge {
 
         // Final fallback: write a page-only document.
         let pageOnly = PDFDocument()
-        for pageIndex in 0..<document.pageCount {
+        for pageIndex in 0 ..< document.pageCount {
             guard let page = document.page(at: pageIndex)?.copy() as? PDFPage else { continue }
             pageOnly.insert(page, at: pageOnly.pageCount)
         }
@@ -317,7 +324,7 @@ private extension PDFMerge {
             .producerAttribute,
             .keywordsAttribute,
             .creationDateAttribute,
-            .modificationDateAttribute
+            .modificationDateAttribute,
         ]
 
         for key in keys {
@@ -328,7 +335,8 @@ private extension PDFMerge {
                 if let date = value as? Date {
                     sanitized[key] = date
                 } else if let string = value as? String,
-                          let date = ISO8601DateFormatter().date(from: string) {
+                          let date = ISO8601DateFormatter().date(from: string)
+                {
                     sanitized[key] = date
                 }
             case .keywordsAttribute:

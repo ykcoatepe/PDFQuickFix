@@ -1,6 +1,6 @@
-import XCTest
 import PDFKit
 @testable import PDFQuickFix
+import XCTest
 
 final class PDFMergeTests: XCTestCase {
     var tempDir: URL!
@@ -152,11 +152,11 @@ final class PDFMergeTests: XCTestCase {
     }
 
     @MainActor
-    func testMergeHistorySettingsUsesSelectedOutputFolder() throws {
+    func testMergeHistorySettingsUsesSelectedOutputFolder() {
         let controller = MergeController()
         controller.addSourceURLs([
             URL(fileURLWithPath: "/tmp/a.pdf"),
-            URL(fileURLWithPath: "/tmp/b.pdf")
+            URL(fileURLWithPath: "/tmp/b.pdf"),
         ])
         controller.destinationFolderURL = tempDir.appendingPathComponent("selected", isDirectory: true)
         controller.outputFileName = "Merged.pdf"

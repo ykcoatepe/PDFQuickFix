@@ -21,7 +21,8 @@ final class DocumentValidationRunner: ObservableObject {
     func openDocument(at url: URL,
                       quickValidationPageLimit: Int = 10,
                       progress: ((Int, Int) -> Void)? = nil,
-                      completion: @escaping (Result<PDFDocument, Error>) -> Void) -> UUID {
+                      completion: @escaping (Result<PDFDocument, Error>) -> Void) -> UUID
+    {
         start(kind: .open,
               url: url,
               options: .quickOpen(limit: quickValidationPageLimit),
@@ -33,21 +34,21 @@ final class DocumentValidationRunner: ObservableObject {
     func validateDocument(at url: URL,
                           pageLimit: Int?,
                           progress: ((Int, Int) -> Void)? = nil,
-                          completion: @escaping (Result<PDFDocument, Error>) -> Void) -> UUID {
+                          completion: @escaping (Result<PDFDocument, Error>) -> Void) -> UUID
+    {
         let name: StaticString = (pageLimit != nil) ? "ValidationQuick" : "ValidationFull"
         let sp = PerfLog.begin(name)
         let wrappedCompletion: (Result<PDFDocument, Error>) -> Void = { result in
             PerfLog.end(name, sp)
             completion(result)
         }
-        let options: PDFDocumentSanitizer.Options
-        if let pageLimit {
-            options = PDFDocumentSanitizer.Options(rebuildMode: .never,
-                                                   validationPageLimit: pageLimit,
-                                                   sanitizeAnnotations: false,
-                                                   sanitizeOutline: false)
+        let options = if let pageLimit {
+            PDFDocumentSanitizer.Options(rebuildMode: .never,
+                                         validationPageLimit: pageLimit,
+                                         sanitizeAnnotations: false,
+                                         sanitizeOutline: false)
         } else {
-            options = PDFDocumentSanitizer.Options(rebuildMode: .never, validationPageLimit: nil)
+            PDFDocumentSanitizer.Options(rebuildMode: .never, validationPageLimit: nil)
         }
         return start(kind: .validation, url: url, options: options, progress: progress, completion: wrappedCompletion)
     }
@@ -70,20 +71,21 @@ final class DocumentValidationRunner: ObservableObject {
                        url: URL,
                        options: PDFDocumentSanitizer.Options,
                        progress: ((Int, Int) -> Void)? = nil,
-                       completion: @escaping (Result<PDFDocument, Error>) -> Void) -> UUID {
+                       completion: @escaping (Result<PDFDocument, Error>) -> Void) -> UUID
+    {
         cancel(kind: kind)
         let token = UUID()
         let job = PDFDocumentSanitizer.loadDocumentAsync(at: url,
                                                          options: options,
                                                          progress: { [weak self] processed, total in
                                                              guard let self else { return }
-                                                             guard self.isActive(token: token, kind: kind, url: url) else { return }
+                                                             guard isActive(token: token, kind: kind, url: url) else { return }
                                                              progress?(processed, total)
                                                          },
                                                          completion: { [weak self] result in
                                                              guard let self else { return }
-                                                             guard self.isActive(token: token, kind: kind, url: url) else { return }
-                                                             self.jobs[kind] = nil
+                                                             guard isActive(token: token, kind: kind, url: url) else { return }
+                                                             jobs[kind] = nil
                                                              completion(result)
                                                          })
         jobs[kind] = ActiveJob(token: token, job: job, url: url)
@@ -103,8 +105,13 @@ final class DocumentValidationRunner: ObservableObject {
 }
 
 extension DocumentValidationRunner {
-    static var largeDocumentPageThreshold: Int { 1000 }
-    static var massiveDocumentPageThreshold: Int { 2000 }
+    static var largeDocumentPageThreshold: Int {
+        1000
+    }
+
+    static var massiveDocumentPageThreshold: Int {
+        2000
+    }
 
     static func estimatedPageCount(at url: URL) -> Int? {
         guard let provider = CGDataProvider(url: url as CFURL),

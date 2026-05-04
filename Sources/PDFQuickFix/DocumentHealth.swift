@@ -8,22 +8,22 @@ enum DocumentHealthSeverity: String, Hashable {
     var systemImage: String {
         switch self {
         case .info:
-            return "info.circle"
+            "info.circle"
         case .warning:
-            return "exclamationmark.triangle"
+            "exclamationmark.triangle"
         case .critical:
-            return "exclamationmark.octagon"
+            "exclamationmark.octagon"
         }
     }
 
     var color: Color {
         switch self {
         case .info:
-            return .secondary
+            .secondary
         case .warning:
-            return .orange
+            .orange
         case .critical:
-            return .red
+            .red
         }
     }
 }
@@ -50,7 +50,8 @@ extension DocumentHealthSummary {
                       isMassiveDocument: Bool,
                       skippedQuickValidation: Bool,
                       validationStatus: String?,
-                      quickFixResult: QuickFixResult?) -> DocumentHealthSummary {
+                      quickFixResult: QuickFixResult?) -> DocumentHealthSummary
+    {
         var issues: [DocumentHealthIssue] = []
 
         if isRepaired {

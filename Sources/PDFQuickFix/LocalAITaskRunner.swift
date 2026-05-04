@@ -6,7 +6,7 @@ enum LocalAITaskRunnerError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .noAvailableModel:
-            return "No local Ollama model is available."
+            "No local Ollama model is available."
         }
     }
 }
@@ -33,7 +33,8 @@ final class LocalAITaskRunner {
              text: String,
              parameters: LocalAITaskParameters,
              sourceName: String?,
-             modelName: String?) async throws -> LocalAITaskResult {
+             modelName: String?) async throws -> LocalAITaskResult
+    {
         guard let modelName, !modelName.isEmpty else {
             throw LocalAITaskRunnerError.noAvailableModel
         }
@@ -71,11 +72,13 @@ final class LocalAITaskRunner {
     private func normalize(response: String, expectsJSON: Bool) -> String {
         guard expectsJSON else { return response.trimmingCharacters(in: .whitespacesAndNewlines) }
         guard let data = response.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) else {
+              let object = try? JSONSerialization.jsonObject(with: data)
+        else {
             return response.trimmingCharacters(in: .whitespacesAndNewlines)
         }
         if let pretty = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys]),
-           let prettyString = String(data: pretty, encoding: .utf8) {
+           let prettyString = String(data: pretty, encoding: .utf8)
+        {
             return prettyString
         }
         return response.trimmingCharacters(in: .whitespacesAndNewlines)

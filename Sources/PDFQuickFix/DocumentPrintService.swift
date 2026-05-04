@@ -6,7 +6,8 @@ enum DocumentPrintService {
     static func makePrintOperation(for document: PDFDocument, jobTitle: String?) -> NSPrintOperation? {
         guard let operation = document.printOperation(for: NSPrintInfo.shared,
                                                       scalingMode: .pageScaleDownToFit,
-                                                      autoRotate: true) else {
+                                                      autoRotate: true)
+        else {
             return nil
         }
         operation.jobTitle = jobTitle ?? document.documentURL?.lastPathComponent ?? "PDFQuickFix"
@@ -21,7 +22,8 @@ enum DocumentPrintService {
                       jobTitle: String?,
                       source: String,
                       showUnavailableAlert: Bool = false,
-                      unavailableMessage: String = "Open a PDF in Reader or Studio, or select a printable PDF in QuickFix.") -> Bool {
+                      unavailableMessage: String = "Open a PDF in Reader or Studio, or select a printable PDF in QuickFix.") -> Bool
+    {
         let hasDocument = (document != nil)
         debugLogInvocation(source: source, hasDocument: hasDocument)
 
@@ -56,11 +58,11 @@ enum DocumentPrintService {
     @MainActor
     private static func debugLogInvocation(source: String, hasDocument: Bool) {
         #if DEBUG
-        let keyWindowTitle = NSApp.keyWindow?.title ?? "nil"
-        NSLog("PDFPrint: source=%@ hasDocument=%@ keyWindow=%@",
-              source,
-              hasDocument ? "true" : "false",
-              keyWindowTitle)
+            let keyWindowTitle = NSApp.keyWindow?.title ?? "nil"
+            NSLog("PDFPrint: source=%@ hasDocument=%@ keyWindow=%@",
+                  source,
+                  hasDocument ? "true" : "false",
+                  keyWindowTitle)
         #endif
     }
 }
@@ -77,14 +79,16 @@ enum PrintDispatcher {
 
     @MainActor
     private static func activePrintableDocument() -> (PDFDocument, String?)? {
-        let candidates = [NSApp.keyWindow, NSApp.mainWindow].compactMap { $0 }
+        let candidates = [NSApp.keyWindow, NSApp.mainWindow].compactMap(\.self)
         for window in candidates {
             if let pdfView = pdfView(from: window.firstResponder),
-               let document = pdfView.document {
+               let document = pdfView.document
+            {
                 return (document, document.documentURL?.lastPathComponent ?? "PDFQuickFix")
             }
             if let pdfView = findPDFView(in: window.contentView),
-               let document = pdfView.document {
+               let document = pdfView.document
+            {
                 return (document, document.documentURL?.lastPathComponent ?? "PDFQuickFix")
             }
         }

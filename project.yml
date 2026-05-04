@@ -31,6 +31,18 @@ targets:
         CFBundleVersion: "1"
         CFBundleShortVersionString: "1.0.0"
         LSApplicationCategoryType: public.app-category.productivity
+        NSServices:
+          - NSMenuItem:
+              default: PDFQuickFix/Sanitize PDF for Sharing
+            NSMessage: sanitizeSelectedPDFs
+            NSRequiredContext: {}
+            NSPortName: PDFQuickFix
+            NSSendFileTypes:
+              - public.item
+            NSSendTypes:
+              - NSFilenamesPboardType
+              - NSURLPboardType
+              - public.file-url
     dependencies:
       - target: PDFCore
       - target: PDFQuickFixKit

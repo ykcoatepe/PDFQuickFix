@@ -1,7 +1,7 @@
-import XCTest
 import Combine
 import PDFKit
 @testable import PDFQuickFix
+import XCTest
 
 @MainActor
 final class ReaderLoadingTests: XCTestCase {
@@ -18,7 +18,7 @@ final class ReaderLoadingTests: XCTestCase {
         let expectation = expectation(description: "Reader controller finished loading PDF")
 
         controller.$document
-            .compactMap { $0 }
+            .compactMap(\.self)
             .first()
             .sink { _ in expectation.fulfill() }
             .store(in: &cancellables)
@@ -39,7 +39,7 @@ final class ReaderLoadingTests: XCTestCase {
         let expectation = expectation(description: "Studio controller finished loading PDF")
 
         controller.$document
-            .compactMap { $0 }
+            .compactMap(\.self)
             .first()
             .sink { _ in expectation.fulfill() }
             .store(in: &cancellables)
@@ -61,9 +61,9 @@ final class ReaderLoadingTests: XCTestCase {
         DispatchQueue.main.async {
             runner.openDocument(at: pdfURL, quickValidationPageLimit: 0, completion: { result in
                 switch result {
-                case .success(let doc):
+                case let .success(doc):
                     XCTAssertEqual(doc.pageCount, 1)
-                case .failure(let error):
+                case let .failure(error):
                     XCTFail("Open failed: \(error)")
                 }
                 openExpectation.fulfill()
@@ -75,9 +75,9 @@ final class ReaderLoadingTests: XCTestCase {
         DispatchQueue.main.async {
             runner.validateDocument(at: pdfURL, pageLimit: 1, completion: { result in
                 switch result {
-                case .success(let doc):
+                case let .success(doc):
                     XCTAssertEqual(doc.pageCount, 1)
-                case .failure(let error):
+                case let .failure(error):
                     XCTFail("Validation failed: \(error)")
                 }
                 validationExpectation.fulfill()

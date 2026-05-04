@@ -51,6 +51,16 @@ if grep -q "com.apple.security.network.server" "${PROJECT_YML}"; then
   fail=1
 fi
 
+if ! grep -q "PDFQuickFix.entitlements" "${PROJECT_YML}"; then
+  echo "❌ App target is not wired to PDFQuickFix.entitlements in project.yml"
+  fail=1
+fi
+
+if ! grep -q "com.apple.security.app-sandbox: true" "${PROJECT_YML}"; then
+  echo "❌ App Sandbox is not enabled in project.yml"
+  fail=1
+fi
+
 if grep -q "NSAllowsArbitraryLoads" "${PROJECT_YML}"; then
   echo "❌ ATS allows arbitrary loads configured in project.yml: NSAllowsArbitraryLoads (${PROJECT_YML})"
   fail=1

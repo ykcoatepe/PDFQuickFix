@@ -5,9 +5,9 @@
 
 # Xcode
 build/
-build_nobase/
-build_noent/
+build_*/
 DerivedData/
+*.profraw
 *.xcworkspace
 xcuserdata/
 *.xccheckout

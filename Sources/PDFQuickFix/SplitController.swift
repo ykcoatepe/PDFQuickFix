@@ -1,6 +1,6 @@
-import Foundation
-import Combine
 import AppKit
+import Combine
+import Foundation
 import PDFQuickFixKit
 
 enum SplitUIMode: Int, CaseIterable, Codable {
@@ -12,11 +12,11 @@ enum SplitUIMode: Int, CaseIterable, Codable {
 
     var title: String {
         switch self {
-        case .maxPagesPerFile: return "By max pages"
-        case .numberOfParts: return "By parts"
-        case .approxSizeMB: return "By size"
-        case .explicitBreaks: return "By page breaks"
-        case .outlineChapters: return "By chapters"
+        case .maxPagesPerFile: "By max pages"
+        case .numberOfParts: "By parts"
+        case .approxSizeMB: "By size"
+        case .explicitBreaks: "By page breaks"
+        case .outlineChapters: "By chapters"
         }
     }
 }
@@ -29,11 +29,11 @@ enum SplitControllerError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .cancelled:
-            return "Operation cancelled."
-        case .noPDFsInFolder(let url):
-            return "No PDF files were found in \(url.lastPathComponent)."
-        case .invalidSettings(let message):
-            return message
+            "Operation cancelled."
+        case let .noPDFsInFolder(url):
+            "No PDF files were found in \(url.lastPathComponent)."
+        case let .invalidSettings(message):
+            message
         }
     }
 }
@@ -193,8 +193,8 @@ final class SplitController: ObservableObject {
 
         let destination = destinationURL ?? source.deletingLastPathComponent()
         let settings = currentSettings()
-        let sourceAccess = self.sourceAccess
-        let destinationAccess = self.destinationAccess
+        let sourceAccess = sourceAccess
+        let destinationAccess = destinationAccess
 
         isWorking = true
         status = "Splitting…"
@@ -207,7 +207,7 @@ final class SplitController: ObservableObject {
             _ = sourceAccess
             _ = destinationAccess
             do {
-                let result = try self.executeSplit(
+                let result = try executeSplit(
                     settings: settings,
                     sourceURL: source,
                     destinationURL: destination,
@@ -242,7 +242,8 @@ final class SplitController: ObservableObject {
                                           sourceURL: URL,
                                           destinationURL: URL,
                                           shouldCancel: @escaping () -> Bool,
-                                          progress: ((Int, Int) -> Void)?) throws -> SplitExecutionResult {
+                                          progress: ((Int, Int) -> Void)?) throws -> SplitExecutionResult
+    {
         if shouldCancel() { throw SplitControllerError.cancelled }
 
         let destination = destinationURL
@@ -319,7 +320,8 @@ final class SplitController: ObservableObject {
 
     private func finishSplit(result: SplitExecutionResult,
                              destinationURL: URL,
-                             settings: SplitJobSettings) {
+                             settings: SplitJobSettings)
+    {
         isWorking = false
         currentTask = nil
         lastOutputFiles = result.outputFiles
@@ -393,15 +395,15 @@ final class SplitController: ObservableObject {
     private nonisolated func describeMode(from settings: SplitJobSettings) -> String {
         switch settings.mode {
         case .maxPagesPerFile:
-            return "max \(settings.maxPagesPerFile) pages"
+            "max \(settings.maxPagesPerFile) pages"
         case .numberOfParts:
-            return "\(settings.numberOfParts) parts"
+            "\(settings.numberOfParts) parts"
         case .approxSizeMB:
-            return "~\(settings.approxSizeMB) MB"
+            "~\(settings.approxSizeMB) MB"
         case .explicitBreaks:
-            return "page breaks: \(settings.explicitBreaksText)"
+            "page breaks: \(settings.explicitBreaksText)"
         case .outlineChapters:
-            return "outline chapters"
+            "outline chapters"
         }
     }
 
@@ -447,32 +449,31 @@ final class SplitController: ObservableObject {
     }
 
     private nonisolated func batchWarning(for fileURL: URL, error: Error) -> String {
-        let detail: String
-        switch error {
+        let detail: String = switch error {
         case let splitError as PDFSplitError:
             switch splitError {
             case .cannotOpenSource:
-                detail = "unreadable or invalid PDF"
+                "unreadable or invalid PDF"
             case .noPages:
-                detail = "PDF has no pages"
-            case .invalidMode(let message):
-                detail = message
-            case .writeFailed(let outputURL):
-                detail = "failed to write \(outputURL.lastPathComponent)"
+                "PDF has no pages"
+            case let .invalidMode(message):
+                message
+            case let .writeFailed(outputURL):
+                "failed to write \(outputURL.lastPathComponent)"
             case .cancelled:
-                detail = "operation cancelled"
+                "operation cancelled"
             }
         case let controllerError as SplitControllerError:
             switch controllerError {
             case .cancelled:
-                detail = "operation cancelled"
+                "operation cancelled"
             case .noPDFsInFolder:
-                detail = "no PDFs found in folder"
-            case .invalidSettings(let message):
-                detail = message
+                "no PDFs found in folder"
+            case let .invalidSettings(message):
+                message
             }
         default:
-            detail = error.localizedDescription
+            error.localizedDescription
         }
         return "Skipped \(fileURL.lastPathComponent): \(detail)."
     }
@@ -490,8 +491,9 @@ final class SplitController: ObservableObject {
     private func access(from bookmarkData: Data?) -> SecurityScopedAccess? {
         guard let bookmarkData,
               let result = try? bookmarking.resolveBookmarkData(bookmarkData,
-                                                               options: .withSecurityScope,
-                                                               relativeTo: nil) else {
+                                                                options: .withSecurityScope,
+                                                                relativeTo: nil)
+        else {
             return nil
         }
         return SecurityScopedAccess(url: result.url)

@@ -9,7 +9,7 @@ protocol Bookmarking {
     ///   - relativeTo: The URL relative to which the bookmark is made (optional).
     /// - Returns: The bookmark data.
     func bookmarkData(for url: URL, includingResourceValuesForKeys keys: Set<URLResourceKey>?, relativeTo relativeURL: URL?) throws -> Data
-    
+
     /// Resolves bookmark data into a URL.
     /// - Parameters:
     ///   - data: The bookmark data.
@@ -29,7 +29,7 @@ struct SystemBookmarking: Bookmarking {
         // The standard API call usually handles this if the file is security scoped.
         try url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: keys, relativeTo: relativeURL)
     }
-    
+
     func resolveBookmarkData(_ data: Data, options: URL.BookmarkResolutionOptions, relativeTo relativeURL: URL?) throws -> (url: URL, isStale: Bool) {
         var isStale = false
         let url = try URL(resolvingBookmarkData: data, options: options, relativeTo: relativeURL, bookmarkDataIsStale: &isStale)
@@ -42,18 +42,18 @@ struct SystemBookmarking: Bookmarking {
 final class SecurityScopedAccess: @unchecked Sendable {
     let url: URL
     private var isAccessing: Bool = false
-    
+
     init(url: URL) {
         self.url = url
-        self.isAccessing = url.startAccessingSecurityScopedResource()
+        isAccessing = url.startAccessingSecurityScopedResource()
     }
-    
+
     deinit {
         if isAccessing {
             url.stopAccessingSecurityScopedResource()
         }
     }
-    
+
     /// Explicitly stops accessing if needed before deinit.
     func stopAccess() {
         if isAccessing {

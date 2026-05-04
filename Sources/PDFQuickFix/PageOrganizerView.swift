@@ -1,5 +1,5 @@
-import SwiftUI
 import PDFKit
+import SwiftUI
 import UniformTypeIdentifiers
 
 struct PageOrganizerView: View {
@@ -99,7 +99,8 @@ struct PageOrganizerView: View {
                         .onDrag {
                             let provider = NSItemProvider()
                             provider.registerDataRepresentation(forTypeIdentifier: UTType.plainText.identifier,
-                                                                 visibility: .all) { completion in
+                                                                visibility: .all)
+                            { completion in
                                 let payload = Data("\(snapshot.index)".utf8)
                                 completion(payload, nil)
                                 return nil
@@ -121,7 +122,7 @@ struct PageOrganizerView: View {
                     }
                 }
 
-                if controller.pageSnapshots.isEmpty && !controller.isThumbnailsLoading {
+                if controller.pageSnapshots.isEmpty, !controller.isThumbnailsLoading {
                     Text("No pages to show.")
                         .foregroundStyle(.secondary)
                         .padding()

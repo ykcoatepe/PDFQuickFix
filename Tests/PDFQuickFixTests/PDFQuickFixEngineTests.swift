@@ -1,6 +1,6 @@
-import XCTest
 import PDFKit
 @testable import PDFQuickFix
+import XCTest
 
 final class PDFQuickFixEngineTests: XCTestCase {
     func testManualRedactionProducesBlackBox() throws {
@@ -36,7 +36,8 @@ final class PDFQuickFixEngineTests: XCTestCase {
         )
 
         guard let outDoc = PDFDocument(url: outputURL),
-              let outPage = outDoc.page(at: 0) else {
+              let outPage = outDoc.page(at: 0)
+        else {
             XCTFail("Unable to load processed PDF")
             return
         }

@@ -34,7 +34,8 @@ final class OllamaClient: OllamaTextGenerating {
         guard isLocalHost(hostURL) else { throw OllamaClientError.invalidHost }
         let data = try await request(path: "/api/tags", body: nil)
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let models = json["models"] as? [[String: Any]] else {
+              let models = json["models"] as? [[String: Any]]
+        else {
             throw OllamaClientError.invalidResponse
         }
 
@@ -63,7 +64,7 @@ final class OllamaClient: OllamaTextGenerating {
         var payload: [String: Any] = [
             "model": model,
             "prompt": prompt,
-            "stream": false
+            "stream": false,
         ]
         if let format {
             payload["format"] = format
@@ -72,7 +73,8 @@ final class OllamaClient: OllamaTextGenerating {
         let body = try JSONSerialization.data(withJSONObject: payload)
         let data = try await request(path: "/api/generate", body: body)
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let response = json["response"] as? String else {
+              let response = json["response"] as? String
+        else {
             throw OllamaClientError.invalidResponse
         }
         return response
@@ -85,7 +87,7 @@ final class OllamaClient: OllamaTextGenerating {
             "model": model,
             "prompt": prompt,
             "images": images,
-            "stream": false
+            "stream": false,
         ]
         if let format {
             payload["format"] = format
@@ -94,7 +96,8 @@ final class OllamaClient: OllamaTextGenerating {
         let body = try JSONSerialization.data(withJSONObject: payload)
         let data = try await request(path: "/api/generate", body: body)
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let response = json["response"] as? String else {
+              let response = json["response"] as? String
+        else {
             throw OllamaClientError.invalidResponse
         }
         return response
@@ -131,7 +134,8 @@ final class OllamaClient: OllamaTextGenerating {
             return capabilities
         }
         if let details = json["details"] as? [String: Any],
-           let capabilities = details["capabilities"] as? [String] {
+           let capabilities = details["capabilities"] as? [String]
+        {
             return capabilities
         }
         return []
