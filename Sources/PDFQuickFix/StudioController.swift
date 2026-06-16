@@ -1470,21 +1470,34 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         }
     }
 
-    func refreshOutline(preserving preservedOutlines: [PDFOutline] = []) {
+    func refreshOutline(preserving preservedOutlines: [PDFOutline]? = nil) {
         if deferOutlineLoad, isMassiveDocument { return }
         deferOutlineLoad = false
         let limit = isMassiveDocument ? PDFOutlineLoader.massiveDocumentRowLimit : nil
         let result = PDFOutlineLoader.rows(from: document?.outlineRoot, limit: limit)
         var rows = result.rows
-        if !preservedOutlines.isEmpty {
+        let outlinesToPreserve = preservedOutlines ?? outlineRows.map(\.outline)
+        if !outlinesToPreserve.isEmpty {
             var visibleIDs = Set(rows.map { ObjectIdentifier($0.outline) })
-            for outline in preservedOutlines where !visibleIDs.contains(ObjectIdentifier(outline)) {
+            for outline in outlinesToPreserve
+                where !visibleIDs.contains(ObjectIdentifier(outline)) && outlineBelongsToCurrentDocument(outline)
+            {
                 rows.append(OutlineRow(outline: outline, depth: outlineDepth(outline)))
                 visibleIDs.insert(ObjectIdentifier(outline))
             }
         }
         outlineRows = rows
         isOutlineTruncated = result.isTruncated
+    }
+
+    private func outlineBelongsToCurrentDocument(_ outline: PDFOutline) -> Bool {
+        guard let root = document?.outlineRoot else { return false }
+        var parent = outline.parent
+        while let current = parent {
+            if current === root { return true }
+            parent = current.parent
+        }
+        return false
     }
 
     private func outlineDepth(_ outline: PDFOutline) -> Int {

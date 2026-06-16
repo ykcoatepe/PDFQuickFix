@@ -147,6 +147,17 @@ final class LargeDocumentHandlingTests: XCTestCase {
         XCTAssertEqual(controller.outlineRows.last?.outline.label, "Added Bookmark")
         XCTAssertEqual(controller.outlineRows.count, PDFOutlineLoader.massiveDocumentRowLimit + 1)
         XCTAssertTrue(controller.isOutlineTruncated)
+
+        controller.refreshOutline()
+
+        let addedRow = try XCTUnwrap(controller.outlineRows.last)
+        XCTAssertEqual(addedRow.outline.label, "Added Bookmark")
+        XCTAssertEqual(controller.outlineRows.count, PDFOutlineLoader.massiveDocumentRowLimit + 1)
+
+        controller.renameOutline(addedRow, title: "Renamed Bookmark")
+
+        XCTAssertEqual(controller.outlineRows.last?.outline.label, "Renamed Bookmark")
+        XCTAssertEqual(controller.outlineRows.count, PDFOutlineLoader.massiveDocumentRowLimit + 1)
     }
 
     private func makeDocumentWithOutline(pageCount: Int, outlineCount: Int, labelPrefix: String = "Chapter") throws -> PDFDocument {
