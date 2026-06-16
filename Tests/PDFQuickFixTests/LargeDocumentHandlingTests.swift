@@ -132,6 +132,23 @@ final class LargeDocumentHandlingTests: XCTestCase {
         XCTAssertTrue(controller.isOutlineTruncated)
     }
 
+    func testStudioKeepsAddedBookmarkVisibleWhenMassiveOutlineIsCapped() throws {
+        let controller = StudioController()
+        let document = try makeDocumentWithOutline(pageCount: DocumentValidationRunner.massiveDocumentPageThreshold,
+                                                   outlineCount: PDFOutlineLoader.massiveDocumentRowLimit)
+
+        controller.setDocument(document)
+        controller.loadOutlineIfNeeded()
+        XCTAssertEqual(controller.outlineRows.count, PDFOutlineLoader.massiveDocumentRowLimit)
+
+        controller.addOutline(title: "Added Bookmark")
+
+        XCTAssertEqual(document.outlineRoot?.numberOfChildren, PDFOutlineLoader.massiveDocumentRowLimit + 1)
+        XCTAssertEqual(controller.outlineRows.last?.outline.label, "Added Bookmark")
+        XCTAssertEqual(controller.outlineRows.count, PDFOutlineLoader.massiveDocumentRowLimit + 1)
+        XCTAssertTrue(controller.isOutlineTruncated)
+    }
+
     private func makeDocumentWithOutline(pageCount: Int, outlineCount: Int, labelPrefix: String = "Chapter") throws -> PDFDocument {
         let document = PDFDocument()
         for _ in 0 ..< pageCount {

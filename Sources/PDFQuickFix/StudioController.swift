@@ -1470,13 +1470,31 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         }
     }
 
-    func refreshOutline() {
+    func refreshOutline(preserving preservedOutlines: [PDFOutline] = []) {
         if deferOutlineLoad, isMassiveDocument { return }
         deferOutlineLoad = false
         let limit = isMassiveDocument ? PDFOutlineLoader.massiveDocumentRowLimit : nil
         let result = PDFOutlineLoader.rows(from: document?.outlineRoot, limit: limit)
-        outlineRows = result.rows
+        var rows = result.rows
+        if !preservedOutlines.isEmpty {
+            var visibleIDs = Set(rows.map { ObjectIdentifier($0.outline) })
+            for outline in preservedOutlines where !visibleIDs.contains(ObjectIdentifier(outline)) {
+                rows.append(OutlineRow(outline: outline, depth: outlineDepth(outline)))
+                visibleIDs.insert(ObjectIdentifier(outline))
+            }
+        }
+        outlineRows = rows
         isOutlineTruncated = result.isTruncated
+    }
+
+    private func outlineDepth(_ outline: PDFOutline) -> Int {
+        var depth = 0
+        var parent = outline.parent
+        while let current = parent, current !== document?.outlineRoot {
+            depth += 1
+            parent = current.parent
+        }
+        return depth
     }
 
     func loadOutlineIfNeeded() {
@@ -2398,7 +2416,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
                                  index: insertionIndex,
                                  createdRoot: createdRoot,
                                  actionName: "Add Bookmark")
-        refreshOutline()
+        refreshOutline(preserving: [outline])
         pushLog("Added bookmark \"\(outline.label ?? "Untitled")\"")
     }
 
