@@ -25,6 +25,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
     @Published var outlineRows: [OutlineRow] = []
     @Published var hasLoadedOutline: Bool = false
     @Published var isOutlineTruncated: Bool = false
+    @Published var outlineResetToken: Int = 0
     @Published var annotationRows: [AnnotationRow] = []
 
     func toggleRightPanel() {
@@ -274,9 +275,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         }
         currentPageIndex = 0
         searchMatches.removeAll()
-        outlineRows = []
-        hasLoadedOutline = false
-        isOutlineTruncated = false
+        invalidateOutlineCache()
         refreshAnnotationsForReader()
         validationStatus = nil
         validationMode = .idle
@@ -346,9 +345,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         requiresUnlockedValidation = false
         searchMatches.removeAll()
         currentMatchIndex = nil
-        outlineRows = []
-        hasLoadedOutline = false
-        isOutlineTruncated = false
+        invalidateOutlineCache()
         validationStatus = nil
         isFullValidationRunning = false
         validationMode = .idle
@@ -416,6 +413,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
             pdfView?.document = flattened
             currentSelectionTextState = nil
             clearEditUndoStacks()
+            invalidateOutlineCache()
             refreshAnnotationsForReader(includeMassiveDocument: true)
             return true
         } catch {
@@ -809,6 +807,13 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         outlineRows = result.rows
         isOutlineTruncated = result.isTruncated
         hasLoadedOutline = true
+    }
+
+    func invalidateOutlineCache() {
+        outlineRows = []
+        hasLoadedOutline = false
+        isOutlineTruncated = false
+        outlineResetToken &+= 1
     }
 
     func focus(annotation row: AnnotationRow) {
@@ -2313,9 +2318,16 @@ struct ReaderSidebarLeft: View {
             }
         )
         .onChange(of: selection) { newValue in
-            if newValue == 1, !controller.isMassiveDocument {
-                controller.loadOutlineIfNeeded()
-            }
+            loadOutlineWhenVisible(selection: newValue)
+        }
+        .onChange(of: controller.outlineResetToken) { _ in
+            loadOutlineWhenVisible(selection: selection)
+        }
+    }
+
+    private func loadOutlineWhenVisible(selection: Int) {
+        if selection == 1, !controller.isMassiveDocument {
+            controller.loadOutlineIfNeeded()
         }
     }
 }

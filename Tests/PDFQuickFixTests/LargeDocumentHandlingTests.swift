@@ -95,6 +95,27 @@ final class LargeDocumentHandlingTests: XCTestCase {
         XCTAssertTrue(controller.isOutlineTruncated)
     }
 
+    func testReaderInvalidatesCachedOutlineWhenDocumentIsReplaced() throws {
+        let controller = ReaderControllerPro()
+        let first = try makeDocumentWithOutline(pageCount: 1, outlineCount: 1, labelPrefix: "Old")
+        let replacement = try makeDocumentWithOutline(pageCount: 1, outlineCount: 1, labelPrefix: "New")
+        controller.document = first
+
+        controller.loadOutlineIfNeeded()
+        XCTAssertEqual(controller.outlineRows.first?.outline.label, "Old 1")
+
+        let resetToken = controller.outlineResetToken
+        controller.document = replacement
+        controller.invalidateOutlineCache()
+
+        XCTAssertTrue(controller.outlineRows.isEmpty)
+        XCTAssertFalse(controller.hasLoadedOutline)
+        XCTAssertGreaterThan(controller.outlineResetToken, resetToken)
+
+        controller.loadOutlineIfNeeded()
+        XCTAssertEqual(controller.outlineRows.first?.outline.label, "New 1")
+    }
+
     func testStudioDefersThenCapsMassiveOutlineLoading() throws {
         let controller = StudioController()
         let document = try makeDocumentWithOutline(pageCount: DocumentValidationRunner.massiveDocumentPageThreshold,
@@ -111,7 +132,7 @@ final class LargeDocumentHandlingTests: XCTestCase {
         XCTAssertTrue(controller.isOutlineTruncated)
     }
 
-    private func makeDocumentWithOutline(pageCount: Int, outlineCount: Int) throws -> PDFDocument {
+    private func makeDocumentWithOutline(pageCount: Int, outlineCount: Int, labelPrefix: String = "Chapter") throws -> PDFDocument {
         let document = PDFDocument()
         for _ in 0 ..< pageCount {
             document.insert(PDFPage(), at: document.pageCount)
@@ -121,7 +142,7 @@ final class LargeDocumentHandlingTests: XCTestCase {
         let destinationPage = try XCTUnwrap(document.page(at: 0))
         for index in 0 ..< outlineCount {
             let item = PDFOutline()
-            item.label = "Chapter \(index + 1)"
+            item.label = "\(labelPrefix) \(index + 1)"
             item.destination = PDFDestination(page: destinationPage, at: .zero)
             root.insertChild(item, at: root.numberOfChildren)
         }
