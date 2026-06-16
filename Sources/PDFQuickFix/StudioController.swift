@@ -95,6 +95,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
 
     @Published var selectedPageIDs: Set<Int> = []
     @Published var outlineRows: [OutlineRow] = []
+    @Published var isOutlineTruncated: Bool = false
     @Published var annotationRows: [AnnotationRow] = []
     var formFieldRows: [AnnotationRow] {
         annotationRows.filter { Self.isFormFieldAnnotation($0.annotation) }
@@ -463,6 +464,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         isFullValidationRunning = false
         pageSnapshots = []
         outlineRows = []
+        isOutlineTruncated = false
         annotationRows = []
         selectedPageIDs = []
         selectedAnnotation = nil
@@ -1314,6 +1316,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         refreshPages()
         if deferOutlineLoad {
             outlineRows = []
+            isOutlineTruncated = false
         } else {
             refreshOutline()
         }
@@ -1470,31 +1473,10 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     func refreshOutline() {
         if deferOutlineLoad, isMassiveDocument { return }
         deferOutlineLoad = false
-        guard let doc = document else {
-            outlineRows = []
-            return
-        }
-        guard let root = doc.outlineRoot else {
-            outlineRows = []
-            return
-        }
-
-        var rows: [OutlineRow] = []
-        func walk(item: PDFOutline, depth: Int) {
-            rows.append(OutlineRow(outline: item, depth: depth))
-            for childIndex in 0 ..< item.numberOfChildren {
-                if let child = item.child(at: childIndex) {
-                    walk(item: child, depth: depth + 1)
-                }
-            }
-        }
-
-        for childIndex in 0 ..< root.numberOfChildren {
-            if let child = root.child(at: childIndex) {
-                walk(item: child, depth: 0)
-            }
-        }
-        outlineRows = rows
+        let limit = isMassiveDocument ? PDFOutlineLoader.massiveDocumentRowLimit : nil
+        let result = PDFOutlineLoader.rows(from: document?.outlineRoot, limit: limit)
+        outlineRows = result.rows
+        isOutlineTruncated = result.isTruncated
     }
 
     func loadOutlineIfNeeded() {

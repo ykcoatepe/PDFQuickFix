@@ -22,6 +22,9 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
     @Published var copilotResponse: DocumentCopilotResponse?
     @Published var copilotError: String?
     @Published var isCopilotRunning: Bool = false
+    @Published var outlineRows: [OutlineRow] = []
+    @Published var hasLoadedOutline: Bool = false
+    @Published var isOutlineTruncated: Bool = false
     @Published var annotationRows: [AnnotationRow] = []
 
     func toggleRightPanel() {
@@ -271,6 +274,9 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         }
         currentPageIndex = 0
         searchMatches.removeAll()
+        outlineRows = []
+        hasLoadedOutline = false
+        isOutlineTruncated = false
         refreshAnnotationsForReader()
         validationStatus = nil
         validationMode = .idle
@@ -340,6 +346,9 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         requiresUnlockedValidation = false
         searchMatches.removeAll()
         currentMatchIndex = nil
+        outlineRows = []
+        hasLoadedOutline = false
+        isOutlineTruncated = false
         validationStatus = nil
         isFullValidationRunning = false
         validationMode = .idle
@@ -791,6 +800,15 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
             return
         }
         refreshAnnotationsForReader(includeMassiveDocument: force)
+    }
+
+    func loadOutlineIfNeeded() {
+        guard !hasLoadedOutline else { return }
+        let limit = isMassiveDocument ? PDFOutlineLoader.massiveDocumentRowLimit : nil
+        let result = PDFOutlineLoader.rows(from: document?.outlineRoot, limit: limit)
+        outlineRows = result.rows
+        isOutlineTruncated = result.isTruncated
+        hasLoadedOutline = true
     }
 
     func focus(annotation row: AnnotationRow) {
@@ -2248,18 +2266,35 @@ struct ReaderSidebarLeft: View {
                         .background(AppTheme.Colors.sidebarBackground)
                 } else {
                     // Outline
-                    if let root = controller.document?.outlineRoot {
-                        List {
-                            ReaderOutlineNode(node: root, controller: controller)
+                    if controller.isMassiveDocument, !controller.hasLoadedOutline {
+                        VStack(spacing: 8) {
+                            Spacer()
+                            Text("Outline loading deferred for performance")
+                                .foregroundColor(AppTheme.Colors.secondaryText)
+                            Button("Load Outline") {
+                                controller.loadOutlineIfNeeded()
+                            }
+                            .controlSize(.small)
+                            Spacer()
                         }
-                        .listStyle(.sidebar)
+                        .padding()
+                    } else if controller.hasLoadedOutline, !controller.outlineRows.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            if controller.isOutlineTruncated {
+                                Label("Showing the first \(PDFOutlineLoader.massiveDocumentRowLimit) outline items", systemImage: "list.bullet.rectangle")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .padding(.horizontal, 8)
+                            }
+                            OutlineTreeView(rows: controller.outlineRows, pdfView: controller.pdfView)
+                        }
                     } else {
                         VStack {
                             Spacer()
                             VStack(spacing: 6) {
-                                Text("No outline on this file")
+                                Text(controller.hasLoadedOutline ? "No outline on this file" : "Outline loading deferred")
                                     .foregroundColor(AppTheme.Colors.secondaryText)
-                                Text("Chapter navigation will appear here when the PDF includes bookmarks.")
+                                Text(controller.hasLoadedOutline ? "Chapter navigation will appear here when the PDF includes bookmarks." : "Chapter navigation loads when this tab is opened.")
                                     .font(.caption)
                                     .foregroundColor(AppTheme.Colors.secondaryText)
                                     .multilineTextAlignment(.center)
@@ -2277,6 +2312,11 @@ struct ReaderSidebarLeft: View {
                     .ignoresSafeArea()
             }
         )
+        .onChange(of: selection) { newValue in
+            if newValue == 1, !controller.isMassiveDocument {
+                controller.loadOutlineIfNeeded()
+            }
+        }
     }
 }
 
