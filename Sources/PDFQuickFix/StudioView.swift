@@ -576,7 +576,14 @@ struct StudioView: View, Equatable {
             .padding(16)
             .cardStyle()
         } else {
-            OutlineTreeView(rows: controller.outlineRows, pdfView: controller.pdfView)
+            VStack(alignment: .leading, spacing: 8) {
+                if controller.isOutlineTruncated {
+                    Label("Showing the first \(PDFOutlineLoader.massiveDocumentRowLimit) outline items", systemImage: "list.bullet.rectangle")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                OutlineTreeView(rows: controller.outlineRows, pdfView: controller.pdfView)
+            }
         }
     }
 

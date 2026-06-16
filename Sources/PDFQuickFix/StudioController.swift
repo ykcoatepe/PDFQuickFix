@@ -95,6 +95,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
 
     @Published var selectedPageIDs: Set<Int> = []
     @Published var outlineRows: [OutlineRow] = []
+    @Published var isOutlineTruncated: Bool = false
     @Published var annotationRows: [AnnotationRow] = []
     var formFieldRows: [AnnotationRow] {
         annotationRows.filter { Self.isFormFieldAnnotation($0.annotation) }
@@ -463,6 +464,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         isFullValidationRunning = false
         pageSnapshots = []
         outlineRows = []
+        isOutlineTruncated = false
         annotationRows = []
         selectedPageIDs = []
         selectedAnnotation = nil
@@ -1314,6 +1316,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         refreshPages()
         if deferOutlineLoad {
             outlineRows = []
+            isOutlineTruncated = false
         } else {
             refreshOutline()
         }
@@ -1467,34 +1470,44 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         }
     }
 
-    func refreshOutline() {
+    func refreshOutline(preserving preservedOutlines: [PDFOutline]? = nil) {
         if deferOutlineLoad, isMassiveDocument { return }
         deferOutlineLoad = false
-        guard let doc = document else {
-            outlineRows = []
-            return
-        }
-        guard let root = doc.outlineRoot else {
-            outlineRows = []
-            return
-        }
-
-        var rows: [OutlineRow] = []
-        func walk(item: PDFOutline, depth: Int) {
-            rows.append(OutlineRow(outline: item, depth: depth))
-            for childIndex in 0 ..< item.numberOfChildren {
-                if let child = item.child(at: childIndex) {
-                    walk(item: child, depth: depth + 1)
-                }
-            }
-        }
-
-        for childIndex in 0 ..< root.numberOfChildren {
-            if let child = root.child(at: childIndex) {
-                walk(item: child, depth: 0)
+        let limit = isMassiveDocument ? PDFOutlineLoader.massiveDocumentRowLimit : nil
+        let result = PDFOutlineLoader.rows(from: document?.outlineRoot, limit: limit)
+        var rows = result.rows
+        let outlinesToPreserve = preservedOutlines ?? outlineRows.map(\.outline)
+        if !outlinesToPreserve.isEmpty {
+            var visibleIDs = Set(rows.map { ObjectIdentifier($0.outline) })
+            for outline in outlinesToPreserve
+                where !visibleIDs.contains(ObjectIdentifier(outline)) && outlineBelongsToCurrentDocument(outline)
+            {
+                rows.append(OutlineRow(outline: outline, depth: outlineDepth(outline)))
+                visibleIDs.insert(ObjectIdentifier(outline))
             }
         }
         outlineRows = rows
+        isOutlineTruncated = result.isTruncated
+    }
+
+    private func outlineBelongsToCurrentDocument(_ outline: PDFOutline) -> Bool {
+        guard let root = document?.outlineRoot else { return false }
+        var parent = outline.parent
+        while let current = parent {
+            if current === root { return true }
+            parent = current.parent
+        }
+        return false
+    }
+
+    private func outlineDepth(_ outline: PDFOutline) -> Int {
+        var depth = 0
+        var parent = outline.parent
+        while let current = parent, current !== document?.outlineRoot {
+            depth += 1
+            parent = current.parent
+        }
+        return depth
     }
 
     func loadOutlineIfNeeded() {
@@ -2416,7 +2429,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
                                  index: insertionIndex,
                                  createdRoot: createdRoot,
                                  actionName: "Add Bookmark")
-        refreshOutline()
+        refreshOutline(preserving: [outline])
         pushLog("Added bookmark \"\(outline.label ?? "Untitled")\"")
     }
 
