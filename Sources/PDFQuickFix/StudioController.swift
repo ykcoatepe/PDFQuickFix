@@ -1476,7 +1476,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         let limit = isMassiveDocument ? PDFOutlineLoader.massiveDocumentRowLimit : nil
         let result = PDFOutlineLoader.rows(from: document?.outlineRoot, limit: limit)
         var rows = result.rows
-        let outlinesToPreserve = preservedOutlines ?? outlineRows.map(\.outline)
+        let outlinesToPreserve = outlineRows.map(\.outline) + (preservedOutlines ?? [])
         if !outlinesToPreserve.isEmpty {
             var visibleIDs = Set(rows.map { ObjectIdentifier($0.outline) })
             for outline in outlinesToPreserve

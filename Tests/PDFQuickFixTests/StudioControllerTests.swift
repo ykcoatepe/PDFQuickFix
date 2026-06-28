@@ -747,6 +747,43 @@ final class StudioControllerTests: XCTestCase {
         XCTAssertEqual(document.outlineRoot?.child(at: 0)?.label, "Intro")
     }
 
+    func testAddOutlinePreservesExistingVisibleBookmarksBeyondMassiveDocumentCap() throws {
+        let controller = StudioController()
+        let document = makeSolidColorDocument(colors: [.red])
+        let page = try XCTUnwrap(document.page(at: 0))
+        let root = PDFOutline()
+        root.label = "Bookmarks"
+
+        for index in 0 ..< PDFOutlineLoader.massiveDocumentRowLimit {
+            let outline = PDFOutline()
+            outline.label = "Loaded \(index)"
+            outline.destination = PDFDestination(page: page, at: .zero)
+            root.insertChild(outline, at: root.numberOfChildren)
+        }
+
+        let firstAdded = PDFOutline()
+        firstAdded.label = "First added"
+        firstAdded.destination = PDFDestination(page: page, at: .zero)
+        root.insertChild(firstAdded, at: root.numberOfChildren)
+        document.outlineRoot = root
+
+        controller.document = document
+        controller.isMassiveDocument = true
+        controller.refreshOutline(preserving: [firstAdded])
+        XCTAssertTrue(controller.outlineRows.contains { $0.outline === firstAdded })
+
+        let secondAdded = PDFOutline()
+        secondAdded.label = "Second added"
+        secondAdded.destination = PDFDestination(page: page, at: .zero)
+        root.insertChild(secondAdded, at: root.numberOfChildren)
+
+        controller.refreshOutline(preserving: [secondAdded])
+
+        XCTAssertEqual(controller.outlineRows.count, PDFOutlineLoader.massiveDocumentRowLimit + 2)
+        XCTAssertTrue(controller.outlineRows.contains { $0.outline === firstAdded })
+        XCTAssertTrue(controller.outlineRows.contains { $0.outline === secondAdded })
+    }
+
     func testRenameAndDeleteOutlineUpdatesBookmarkRows() throws {
         let controller = StudioController()
         let document = makeSolidColorDocument(colors: [.red])
