@@ -90,6 +90,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.yordamkocatepe.PDFQuickFixCLI
         CODE_SIGN_IDENTITY: "-"
         GENERATE_INFOPLIST_FILE: YES
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path @executable_path/Frameworks @executable_path/../Frameworks"
   PDFQuickFixTests:
     type: bundle.unit-test
     platform: macOS
