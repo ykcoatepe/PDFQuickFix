@@ -5,6 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOG_DIR="${XCODEBUILD_LOG_DIR:-${ROOT_DIR}/build/logs}"
 CLANG_WRAPPER="${ROOT_DIR}/scripts/clang-wrapper.sh"
 
+export AUTO_ACTIVATED_VENV="${AUTO_ACTIVATED_VENV:-0}"
+
 compiler_overrides=()
 if [[ "${XCODEBUILD_USE_CLANG_WRAPPER:-1}" != "0" && -x "${CLANG_WRAPPER}" ]]; then
     # Xcode 26.4 can deadlock during compiler macro probing when clang is invoked with
