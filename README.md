@@ -70,6 +70,7 @@ PDFQuickFix is best thought of as a **privacy-first PDF reader/editor workstatio
 - App menu: **File → Export → Sanitize for Sharing…**, **Optimize…**, **Metadata Clean…**, **Flatten…**, **Encrypt…**, **Export Images…**, **Export Text…**
 - CLI: `pdfquickfix-cli sanitize <input.pdf> <output.pdf>`
 - CLI: `pdfquickfix-cli sanitize-batch <inputDir> <outputDir>`
+- Guide: [Sanitize for Sharing](docs/sanitize-for-sharing.md)
 
 The Finder service accepts one or more selected PDFs, writes side-by-side `-sanitized.pdf` outbound copies, leaves originals untouched, and shows a receipt window before revealing the first output in Finder. The Finder, batch, export, and CLI surfaces use the same sanitize core so you can apply the same privacy workflow interactively or in repeatable local automation.
 
