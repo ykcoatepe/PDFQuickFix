@@ -361,7 +361,7 @@ struct QuickFixOptionsForm: View {
                 return
             }
             let image = await MainActor.run {
-                Self.makeQuickVerifyImage()
+                QuickVerifyOCRSample.makeImage()
             }
             guard let image else {
                 await MainActor.run {
@@ -379,9 +379,9 @@ struct QuickFixOptionsForm: View {
 
             do {
                 let runs = try provider.recognizeTextLines(cgImage: image)
-                let text = Self.extractText(from: runs).lowercased()
+                let text = QuickVerifyOCRSample.extractText(from: runs)
                 let hasText = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                let looksCorrect = text.contains("ocr") || text.contains("test")
+                let looksCorrect = QuickVerifyOCRSample.looksCorrect(text)
                 await MainActor.run {
                     quickVerifySucceeded = hasText
                     if hasText {
@@ -409,41 +409,4 @@ struct QuickFixOptionsForm: View {
         return localOCRRegistry.recommendedModelName ?? ""
     }
 
-    private static func makeQuickVerifyImage() -> CGImage? {
-        let size = CGSize(width: 960, height: 260)
-        let image = NSImage(size: size)
-        image.lockFocus()
-        NSColor.white.setFill()
-        NSBezierPath(rect: NSRect(origin: .zero, size: size)).fill()
-
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.alignment = .center
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 64, weight: .bold),
-            .foregroundColor: NSColor.black,
-            .paragraphStyle: paragraph,
-        ]
-        let textRect = NSRect(x: 0, y: (size.height - 80) / 2, width: size.width, height: 80)
-        "OCR TEST 1234".draw(in: textRect, withAttributes: attrs)
-
-        image.unlockFocus()
-        guard let data = image.tiffRepresentation,
-              let rep = NSBitmapImageRep(data: data)
-        else {
-            return nil
-        }
-        return rep.cgImage
-    }
-
-    private nonisolated static func extractText(from runs: [RecognizedRun]) -> String {
-        runs.compactMap { run -> String? in
-            switch run.kind {
-            case let .keep(text), let .replace(text):
-                return text
-            case .skip:
-                return nil
-            }
-        }
-        .joined(separator: " ")
-    }
 }

@@ -6,7 +6,7 @@ PROJECT := $(APP).xcodeproj
 USER ?= $(shell id -un)
 export USER
 
-.PHONY: bootstrap generate security-check build run clean dmg debug release
+.PHONY: bootstrap generate security-check build run clean dmg debug release smoke-ocr-fallback
 
 bootstrap:
 	brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
@@ -53,3 +53,6 @@ ci-cloud:
 
 sanity-fast:
 	./scripts/ci_run.sh
+
+smoke-ocr-fallback:
+	./scripts/smoke_ocr_fallback.sh
