@@ -70,6 +70,7 @@ PDFQuickFix is best thought of as a **privacy-first PDF reader/editor workstatio
 - App menu: **File → Export → Sanitize for Sharing…**, **Optimize…**, **Metadata Clean…**, **Flatten…**, **Encrypt…**, **Export Images…**, **Export Text…**
 - CLI: `pdfquickfix-cli sanitize <input.pdf> <output.pdf>`
 - CLI: `pdfquickfix-cli sanitize-batch <inputDir> <outputDir>`
+- Guide: [Sanitize for Sharing](docs/sanitize-for-sharing.md)
 
 The Finder service accepts one or more selected PDFs, writes side-by-side `-sanitized.pdf` outbound copies, leaves originals untouched, and shows a receipt window before revealing the first output in Finder. The Finder, batch, export, and CLI surfaces use the same sanitize core so you can apply the same privacy workflow interactively or in repeatable local automation.
 
@@ -169,6 +170,11 @@ Use this checklist to validate the reader/editor, export, OCR, and AI features e
    - Expected: Automatic fallback to Vision; no crash.
 6. Enable **Cloud OCR fallback** and provide a valid Google Vision API key.
    - Expected: If local OCR fails, cloud OCR runs and output remains searchable.
+
+Repeatable smoke harness:
+- `make smoke-ocr-fallback` proves the local-failure → real Vision fallback path using the same **OCR TEST 1234** sample as Quick Verify.
+- `PDFQF_RUN_LIVE_OCR_SMOKE=1 PDFQF_OCR_MODEL=qwen2.5vl:7b make smoke-ocr-fallback` also proves the real local OCR Quick Verify path. Ollama must be running and the model must be installed.
+- `PDFQF_RUN_CLOUD_OCR_SMOKE=1 PDFQF_GOOGLE_VISION_API_KEY=... make smoke-ocr-fallback` also proves the real Google Vision cloud fallback. This requires a valid Google Vision API key and network access.
 
 ### OCR from Images (PNG/JPEG)
 1. In AI Tools, click **Choose PDF or Image…** and select a PNG or JPEG.

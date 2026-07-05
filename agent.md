@@ -12,6 +12,7 @@ Version: 2025-11-30 • Owner: CodeForge AI
 1. Structure & Naming
    • `Sources/PDFQuickFix/`: SwiftUI macOS app, PDF tooling, utilities.
    • `Sources/PDFQuickFixCLI/`: Local CLI entrypoints for sanitize and batch sanitize workflows.
+   • `docs/`: User-facing guides and implementation plans/specs.
    • `libs/pdfcore/`: Core PDF parsing logic (COS objects, Lexer, Parser).
    • `libs/pdfquickfix-kit/`: Repair and recovery services.
    • `scripts/`: Shell helpers (`build.sh`, `setup.sh`, `ci_run.sh`).

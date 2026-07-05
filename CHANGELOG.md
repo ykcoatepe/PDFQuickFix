@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Finder Quick Action service: **PDFQuickFix/Sanitize PDF for Sharing** creates local `-sanitized.pdf` outbound copies from selected PDFs in Finder
 - Finder sanitize receipt window with per-file status and automatic reveal of the first sanitized output
 - Regression coverage for Finder pasteboard PDF filtering, collision-safe output names, and source-preserving sanitize writes
+- Sanitize for Sharing guide covering Finder, app export, batch, CLI, profiles, and output review checks
 - Local Ollama OCR overlay with automatic Vision fallback for redaction-safe flows
 - QuickFix OCR provider selector (auto Local OCR vs Vision only)
 - Local OCR model selection (qwen2.5vl/minicpm-v) with optional DeepSeek fallback
