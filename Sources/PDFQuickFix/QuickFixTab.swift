@@ -437,7 +437,7 @@ struct QuickFixTab: View {
                         log += "📄 Pages: \(document.pageCount)\n"
                     }
                 }
-                var result = try model.runQuickFixResult(
+                let processedResult = try model.runQuickFixResult(
                     inputURL: prepared.sourceURL,
                     outputURL: temporaryOutputURL,
                     isTemporaryOutput: true,
@@ -448,13 +448,16 @@ struct QuickFixTab: View {
                         }
                     }
                 )
+                let result: QuickFixResult
                 if prepared.cleanupURL != nil {
                     let snapshotName = inputURL.deletingPathExtension().lastPathComponent + "-converted.pdf"
-                    result = result.retainingSourceSnapshot(
+                    result = processedResult.retainingSourceSnapshot(
                         at: prepared.sourceURL,
                         displayFileName: snapshotName
                     )
                     retainedPreparedSource = true
+                } else {
+                    result = processedResult
                 }
                 await MainActor.run {
                     quickFixResult = result

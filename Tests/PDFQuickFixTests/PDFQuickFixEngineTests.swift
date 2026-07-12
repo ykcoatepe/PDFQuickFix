@@ -111,4 +111,40 @@ final class PDFQuickFixEngineTests: XCTestCase {
         XCTAssertEqual(result.cleanupComparison?.sourcePageCount, 1)
         XCTAssertEqual(result.cleanupComparison?.outputPageCount, 1)
     }
+
+    func testEvidenceUsesResolvedRepairSourceWhenOriginalIsUnreadable() throws {
+        let originalURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("pdf")
+        let repairedURL = try TestPDFBuilder.makeSimplePDF(text: "Recovered source", size: CGSize(width: 200, height: 200))
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("pdf")
+        try Data("not-readable-by-pdfkit".utf8).write(to: originalURL)
+        defer {
+            try? FileManager.default.removeItem(at: originalURL)
+            try? FileManager.default.removeItem(at: repairedURL)
+            try? FileManager.default.removeItem(at: outputURL)
+        }
+
+        let engine = PDFQuickFixEngine(
+            options: QuickFixOptions(doOCR: false, dpi: 72, redactionPadding: 0),
+            languages: ["en-US"],
+            repairSourceURL: { _ in repairedURL }
+        )
+
+        let result = try engine.processResult(
+            inputURL: originalURL,
+            outputURL: outputURL,
+            redactionPatterns: [],
+            customRegexes: [],
+            findReplace: [],
+            manualRedactions: [:]
+        )
+
+        XCTAssertEqual(result.sourceURL, repairedURL)
+        XCTAssertTrue(result.isTemporarySource)
+        XCTAssertEqual(result.cleanupEvidence?.source.sha256.count, 64)
+        XCTAssertEqual(result.cleanupEvidence?.source.fileName, originalURL.deletingPathExtension().lastPathComponent + "-repaired.pdf")
+    }
 }
