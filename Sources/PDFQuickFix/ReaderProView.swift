@@ -47,6 +47,10 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
     @Published var skippedQuickValidation: Bool = false
     private var requiresUnlockedValidation: Bool = false
     @Published var isDocumentHealthPresented: Bool = false
+    @Published var cleanupReview: CleanupReview? {
+        didSet { oldValue?.removeTemporarySource() }
+    }
+
     @Published private(set) var currentSelectionTextState: String?
 
     weak var pdfView: PDFView? {
@@ -1446,6 +1450,10 @@ extension ReaderControllerPro: FileExportable {
             return
         }
         let sendableSnapshot = SendablePDFDocument(document: snapshotDoc)
+        guard let evidenceSourceData = snapshotDoc.dataRepresentation() else {
+            log = "Export failed: couldn't preserve comparison snapshot"
+            return
+        }
 
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.pdf]
@@ -1506,6 +1514,7 @@ extension ReaderControllerPro: FileExportable {
             loadingStatus = "Sanitizing..."
 
             let sourceURL = currentURL
+            let sourceFileName = sourceURL?.lastPathComponent ?? doc.documentURL?.lastPathComponent ?? "Document.pdf"
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 defer {
                     Task { @MainActor [weak self] in
@@ -1531,8 +1540,30 @@ extension ReaderControllerPro: FileExportable {
                         throw NSError(domain: "PDFQuickFix", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to save sanitized document"])
                     }
 
+                    var cleanupReview: CleanupReview?
+                    var reviewWarning: String?
+                    do {
+                        guard let evidenceSourceDocument = PDFDocument(data: evidenceSourceData) else {
+                            throw CleanupEvidenceError.unreadablePDF(fileName: sourceFileName)
+                        }
+                        cleanupReview = try CleanupReviewBuilder.build(
+                            sourceDocument: evidenceSourceDocument,
+                            sourceFileName: sourceFileName,
+                            outputURL: destination,
+                            profile: profile
+                        )
+                    } catch {
+                        reviewWarning = error.localizedDescription
+                    }
+
                     Task { @MainActor [weak self] in
+                        if let cleanupReview {
+                            self?.cleanupReview = cleanupReview
+                        }
                         self?.log = "Exported sanitized (\(profile.rawValue)) to \(destination.lastPathComponent)"
+                        if let reviewWarning {
+                            self?.log += ". Cleanup review unavailable: \(reviewWarning)"
+                        }
                         NSWorkspace.shared.activateFileViewerSelecting([destination])
                     }
                 } catch {
@@ -1781,6 +1812,9 @@ struct ReaderProView: View, Equatable {
                     Text("No active document.")
                         .padding(24)
                 }
+            }
+            .sheet(item: $controller.cleanupReview) { review in
+                CleanupExportReviewSheet(review: review)
             }
             .onAppear {
                 syncFromHub()

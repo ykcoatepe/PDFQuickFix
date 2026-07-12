@@ -2,6 +2,15 @@
 import XCTest
 
 final class QuickFixTabTests: XCTestCase {
+    func testCleanupEvidenceSuggestedFileNameUsesOutputBaseName() {
+        let outputURL = URL(fileURLWithPath: "/tmp/contract-fixed.pdf")
+
+        XCTAssertEqual(
+            QuickFixTab.cleanupEvidenceSuggestedFileName(outputURL: outputURL),
+            "contract-fixed-cleanup-evidence.json"
+        )
+    }
+
     func testExistingCachedOCRURLReturnsNilWhenFileIsMissing() {
         let missingURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)

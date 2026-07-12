@@ -25,6 +25,8 @@ struct QuickFixTab: View {
     @State private var aiPageSelection: String = ""
     @State private var aiImageOCRURL: URL?
     @State private var isSavingQuickFixResult: Bool = false
+    @State private var isPresentingCleanupEvidence: Bool = false
+    @State private var isPresentingCleanupComparison: Bool = false
     @StateObject private var printCoordinator = QuickFixPrintCoordinator()
 
     var body: some View {
@@ -56,6 +58,23 @@ struct QuickFixTab: View {
             await aiSettings.refreshModelsIfNeeded()
         }
         .focusedSceneValue(\.documentPrintable, printCoordinator.hasPrintableDocument ? printCoordinator : nil)
+        .sheet(isPresented: $isPresentingCleanupEvidence) {
+            if let evidence = quickFixResult?.cleanupEvidence {
+                CleanupEvidenceSheet(evidence: evidence)
+            }
+        }
+        .sheet(isPresented: $isPresentingCleanupComparison) {
+            if let result = quickFixResult,
+               let sourceURL = result.sourceURL,
+               let comparison = result.cleanupComparison
+            {
+                CleanupComparisonSheet(
+                    sourceURL: sourceURL,
+                    outputURL: result.displayOutputURL,
+                    comparison: comparison
+                )
+            }
+        }
     }
 
     private var quickFixPane: some View {
@@ -186,6 +205,36 @@ struct QuickFixTab: View {
                             Label(quickFixResult.isTemporaryOutput ? "Save before handoff" : "Ready to review", systemImage: "checkmark.circle.fill")
                                 .font(.caption)
                                 .foregroundStyle(AppTheme.Colors.support)
+                        }
+
+                        Divider()
+
+                        HStack {
+                            Button("Review Evidence") {
+                                isPresentingCleanupEvidence = true
+                            }
+                            .buttonStyle(SecondaryButtonStyle())
+                            .disabled(quickFixResult.cleanupEvidence == nil)
+
+                            Button("Compare Before & After") {
+                                isPresentingCleanupComparison = true
+                            }
+                            .buttonStyle(SecondaryButtonStyle())
+                            .disabled(!canPresentComparison(quickFixResult))
+
+                            Button("Export Evidence…") {
+                                exportCleanupEvidence()
+                            }
+                            .buttonStyle(SecondaryButtonStyle())
+                            .disabled(quickFixResult.isTemporaryOutput || quickFixResult.cleanupEvidence == nil)
+
+                            Spacer()
+
+                            if let evidence = quickFixResult.cleanupEvidence {
+                                Label(evidenceVerdictTitle(evidence.verdict), systemImage: evidenceVerdictIcon(evidence.verdict))
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(evidenceVerdictColor(evidence.verdict))
+                            }
                         }
                     }
                     .cardStyle()
@@ -345,6 +394,7 @@ struct QuickFixTab: View {
         panel.allowsMultipleSelection = false
         panel.allowedContentTypes = [.pdf, .png, .jpeg]
         if panel.runModal() == .OK {
+            cleanupTransientOutputs()
             inputURL = panel.url
             quickFixResult = nil
         }
@@ -368,8 +418,9 @@ struct QuickFixTab: View {
                     preprocessImages: preprocessImages,
                     targetDPI: targetDPI
                 )
+                var retainedPreparedSource = false
                 defer {
-                    if let cleanupURL = prepared.cleanupURL {
+                    if !retainedPreparedSource, let cleanupURL = prepared.cleanupURL {
                         try? FileManager.default.removeItem(at: cleanupURL)
                     }
                 }
@@ -386,7 +437,7 @@ struct QuickFixTab: View {
                         log += "📄 Pages: \(document.pageCount)\n"
                     }
                 }
-                let result = try model.runQuickFixResult(
+                let processedResult = try model.runQuickFixResult(
                     inputURL: prepared.sourceURL,
                     outputURL: temporaryOutputURL,
                     isTemporaryOutput: true,
@@ -397,6 +448,17 @@ struct QuickFixTab: View {
                         }
                     }
                 )
+                let result: QuickFixResult
+                if prepared.cleanupURL != nil {
+                    let snapshotName = inputURL.deletingPathExtension().lastPathComponent + "-converted.pdf"
+                    result = processedResult.retainingSourceSnapshot(
+                        at: prepared.sourceURL,
+                        displayFileName: snapshotName
+                    )
+                    retainedPreparedSource = true
+                } else {
+                    result = processedResult
+                }
                 await MainActor.run {
                     quickFixResult = result
                     QuickFixResultStore.shared.set(result, sourceURL: inputURL)
@@ -600,6 +662,66 @@ struct QuickFixTab: View {
         NSWorkspace.shared.open(quickFixResult.displayOutputURL)
     }
 
+    private func exportCleanupEvidence() {
+        guard let result = quickFixResult,
+              !result.isTemporaryOutput,
+              let evidence = result.cleanupEvidence
+        else {
+            return
+        }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.json]
+        panel.canCreateDirectories = true
+        panel.nameFieldStringValue = Self.cleanupEvidenceSuggestedFileName(outputURL: result.displayOutputURL)
+        panel.directoryURL = result.displayOutputURL.deletingLastPathComponent()
+        if panel.runModal() == .OK, let url = panel.url {
+            do {
+                try CleanupEvidenceWriter.writeJSON(evidence, to: url)
+                log += "🧾 Evidence saved → \(url.path)\n"
+            } catch {
+                log += "❌ Evidence export failed: \(error.localizedDescription)\n"
+            }
+        }
+    }
+
+    static func cleanupEvidenceSuggestedFileName(outputURL: URL) -> String {
+        "\(outputURL.deletingPathExtension().lastPathComponent)-cleanup-evidence.json"
+    }
+
+    private func canPresentComparison(_ result: QuickFixResult) -> Bool {
+        guard let sourceURL = result.sourceURL,
+              result.cleanupComparison != nil
+        else {
+            return false
+        }
+        return FileManager.default.fileExists(atPath: sourceURL.path)
+            && FileManager.default.fileExists(atPath: result.displayOutputURL.path)
+    }
+
+    private func evidenceVerdictTitle(_ verdict: CleanupEvidenceVerdict) -> String {
+        switch verdict {
+        case .passed: "Passed"
+        case .reviewRequired: "Review required"
+        case .failed: "Failed"
+        }
+    }
+
+    private func evidenceVerdictIcon(_ verdict: CleanupEvidenceVerdict) -> String {
+        switch verdict {
+        case .passed: "checkmark.shield.fill"
+        case .reviewRequired: "exclamationmark.triangle.fill"
+        case .failed: "xmark.shield.fill"
+        }
+    }
+
+    private func evidenceVerdictColor(_ verdict: CleanupEvidenceVerdict) -> Color {
+        switch verdict {
+        case .passed: AppTheme.Colors.success
+        case .reviewRequired: AppTheme.Colors.warning
+        case .failed: .red
+        }
+    }
+
     private static func quickFixSuggestedFileName(inputURL: URL?) -> String {
         let base = inputURL?.deletingPathExtension().lastPathComponent ?? "QuickFix"
         return "\(base)-fixed.pdf"
@@ -612,6 +734,12 @@ struct QuickFixTab: View {
         }
         if let result = quickFixResult, result.isTemporaryOutput {
             try? FileManager.default.removeItem(at: result.outputURL)
+        }
+        if let result = quickFixResult,
+           result.isTemporarySource,
+           let sourceURL = result.sourceURL
+        {
+            try? FileManager.default.removeItem(at: sourceURL)
         }
     }
 
@@ -652,8 +780,14 @@ struct QuickFixTab: View {
         }
     }
 
-    private func availableReportsSummary(for _: QuickFixResult) -> String {
-        let reports = ["Redaction", "OCR"]
+    private func availableReportsSummary(for result: QuickFixResult) -> String {
+        var reports = ["Redaction", "OCR"]
+        if result.cleanupEvidence != nil {
+            reports.append("Evidence")
+        }
+        if result.cleanupComparison != nil {
+            reports.append("Before/After")
+        }
         return reports.joined(separator: ", ")
     }
 

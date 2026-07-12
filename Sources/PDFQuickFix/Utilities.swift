@@ -195,6 +195,7 @@ struct PageProcessResult {
     var ocrRunCount: Int
     var localOCREligible: Bool
     var localOCRSucceeded: Bool
+    var redactedTextCandidates: [String]
 }
 
 // MARK: - Design System
