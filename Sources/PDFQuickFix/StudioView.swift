@@ -260,6 +260,9 @@ struct StudioView: View, Equatable {
                     .padding(24)
             }
         }
+        .sheet(item: $controller.cleanupReview) { review in
+            CleanupExportReviewSheet(review: review)
+        }
     }
 
     private var workbenchHeader: some View {

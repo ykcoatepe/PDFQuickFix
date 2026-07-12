@@ -28,6 +28,8 @@ Use Sanitize for Sharing when you need a safer outbound copy of a PDF while keep
 4. Save sanitized outputs outside the source folder when running recursive batch jobs.
 5. Open the output and verify page count, readability, searchability expectations, and redaction coverage before sharing.
 
+Reader and Studio open a cleanup review after a successful single-file sanitized export. Use **Evidence** to inspect the selected profile, source/output hashes, file facts, removed metadata labels, and overall verdict. Use **Before / After** to move through changed pages and inspect the source snapshot beside the exported copy. **Export Evidence…** writes a privacy-safe JSON receipt; it stores counts, hashes, labels, and status only, never extracted document text or metadata values.
+
 ## CLI Examples
 
 Create a rasterized outbound copy:
@@ -70,6 +72,7 @@ pdfquickfix-cli sanitize-batch ~/Documents/PDFs ~/Documents/Sanitized --preset s
 - Confirm `privacy-clean` outputs are intentionally not searchable.
 - For `light-clean` or `keep-editable`, search for a few known safe terms and a few sensitive terms before sending.
 - Keep the CLI JSON report or Finder receipt with the handoff record when working in batches.
+- For Reader, Studio, or QuickFix exports, keep the Cleanup Evidence JSON receipt when the handoff needs a verifiable local audit record.
 
 ## Boundaries
 

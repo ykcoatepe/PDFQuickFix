@@ -22,6 +22,8 @@ PDFQuickFix is best thought of as a **privacy-first PDF reader/editor workstatio
 - **Find → Replace** visual edits (white patch + new text)
 - **OCR repair** to add an invisible searchable text layer after cleanup
 - **OCR reports** with provider usage, fallback counts, and empty OCR pages
+- **Cleanup Evidence** receipts with source/output hashes, file facts, cleanup profile, verification counters, and a Passed/Review/Failed verdict
+- **Before / After Cleanup** review with changed-page navigation, side-by-side previews, text-layer change detection, and removed metadata labels
 
 **Reader tab**
 - Open / Save / Save As / Print, including password-protected PDFs
@@ -59,6 +61,7 @@ PDFQuickFix is best thought of as a **privacy-first PDF reader/editor workstatio
 - **Accepts PDF, PNG, and JPEG inputs** (images are converted to searchable PDFs during OCR)
 - **Optional AI auto-crop, deskew, and enhancement** for image inputs (toggle in Options)
 - **Progress updates** during QuickFix runs (pages processed)
+- **Output Packet** actions to review cleanup evidence, compare before/after pages, and export a privacy-safe JSON receipt
 - **Visible in the top mode switcher** (Reader | QuickFix | Studio | Split)
 
 > ✅ All processing is **local** by default. When enabled, the app talks only to `127.0.0.1:11434` for Ollama. Optional **cloud OCR fallback** can be enabled in Options.

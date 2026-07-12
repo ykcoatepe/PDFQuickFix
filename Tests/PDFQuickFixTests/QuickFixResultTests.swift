@@ -1,3 +1,4 @@
+import PDFKit
 @testable import PDFQuickFix
 import XCTest
 
@@ -34,6 +35,70 @@ final class QuickFixResultTests: XCTestCase {
         XCTAssertEqual(saved.previewPageIndex, 4)
         XCTAssertEqual(saved.redactionReport.pagesWithRedactions, [1, 4])
         XCTAssertEqual(saved.ocrReport.emptyOCRPageIndices, [4])
+    }
+
+    func testSavedCopyPreservesCleanupEvidenceAndComparison() throws {
+        let sourceURL = try TestPDFBuilder.makeSimplePDF(text: "Source", size: CGSize(width: 200, height: 200))
+        let tempURL = try TestPDFBuilder.makeSimplePDF(text: "Output", size: CGSize(width: 200, height: 200))
+        let savedURL = URL(fileURLWithPath: "/tmp/quickfix-evidence-saved.pdf")
+        let comparison = try CleanupComparisonEngine().compare(
+            source: XCTUnwrap(PDFDocument(url: sourceURL)),
+            output: XCTUnwrap(PDFDocument(url: tempURL))
+        )
+        let evidence = try CleanupEvidenceGenerator.generate(
+            sourceURL: sourceURL,
+            outputURL: tempURL,
+            comparison: comparison.evidenceSummary,
+            verdict: .reviewRequired
+        )
+        let result = QuickFixResult(
+            outputURL: tempURL,
+            isTemporaryOutput: true,
+            previewPageIndex: 0,
+            redactionReport: RedactionReport(
+                pagesWithRedactions: [],
+                totalRedactionRectCount: 0,
+                suppressedOCRRunCount: 0
+            ),
+            ocrReport: OCRReport(
+                totalPages: 1,
+                localOCRPages: 0,
+                cloudOCRPages: 0,
+                visionOCRPages: 0,
+                ocrDisabledPages: 1,
+                emptyOCRPages: 0,
+                emptyOCRPageIndices: [],
+                localOCRFallbackCount: 0
+            ),
+            sourceURL: sourceURL,
+            cleanupEvidence: evidence,
+            cleanupComparison: comparison
+        )
+
+        let saved = result.savedCopy(outputURL: savedURL)
+
+        XCTAssertEqual(saved.sourceURL, sourceURL)
+        XCTAssertEqual(saved.cleanupEvidence?.source, evidence.source)
+        XCTAssertEqual(saved.cleanupEvidence?.output.fileName, savedURL.lastPathComponent)
+        XCTAssertEqual(saved.cleanupEvidence?.output.sha256, evidence.output.sha256)
+        XCTAssertEqual(saved.cleanupComparison, comparison)
+    }
+
+    func testConvertedImageSnapshotIsRetainedAcrossSave() {
+        let snapshotURL = URL(fileURLWithPath: "/tmp/photo-converted.pdf")
+        let result = QuickFixResult(
+            outputURL: URL(fileURLWithPath: "/tmp/output.pdf"),
+            isTemporaryOutput: true,
+            previewPageIndex: nil,
+            redactionReport: RedactionReport(pagesWithRedactions: [], totalRedactionRectCount: 0, suppressedOCRRunCount: 0),
+            ocrReport: OCRReport(totalPages: 1, localOCRPages: 0, cloudOCRPages: 0, visionOCRPages: 0, ocrDisabledPages: 0, emptyOCRPages: 0, emptyOCRPageIndices: [], localOCRFallbackCount: 0)
+        )
+        .retainingSourceSnapshot(at: snapshotURL, displayFileName: "photo-converted.pdf")
+
+        let saved = result.savedCopy(outputURL: URL(fileURLWithPath: "/tmp/saved.pdf"))
+
+        XCTAssertEqual(saved.sourceURL, snapshotURL)
+        XCTAssertTrue(saved.isTemporarySource)
     }
 
     func testResultStoreAliasesPreviousOutputURL() {

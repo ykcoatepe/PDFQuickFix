@@ -23,12 +23,37 @@ struct OCRReport: Hashable {
     let localOCRFallbackCount: Int
 }
 
-struct QuickFixResult: Hashable {
+struct QuickFixResult {
     let outputURL: URL
     let isTemporaryOutput: Bool
     let previewPageIndex: Int?
     let redactionReport: RedactionReport
     let ocrReport: OCRReport
+    let sourceURL: URL?
+    let isTemporarySource: Bool
+    let cleanupEvidence: CleanupEvidence?
+    let cleanupComparison: CleanupComparisonResult?
+
+    init(outputURL: URL,
+         isTemporaryOutput: Bool,
+         previewPageIndex: Int?,
+         redactionReport: RedactionReport,
+         ocrReport: OCRReport,
+         sourceURL: URL? = nil,
+         isTemporarySource: Bool = false,
+         cleanupEvidence: CleanupEvidence? = nil,
+         cleanupComparison: CleanupComparisonResult? = nil)
+    {
+        self.outputURL = outputURL
+        self.isTemporaryOutput = isTemporaryOutput
+        self.previewPageIndex = previewPageIndex
+        self.redactionReport = redactionReport
+        self.ocrReport = ocrReport
+        self.sourceURL = sourceURL
+        self.isTemporarySource = isTemporarySource
+        self.cleanupEvidence = cleanupEvidence
+        self.cleanupComparison = cleanupComparison
+    }
 
     var displayOutputURL: URL {
         outputURL
@@ -40,7 +65,27 @@ struct QuickFixResult: Hashable {
             isTemporaryOutput: false,
             previewPageIndex: previewPageIndex,
             redactionReport: redactionReport,
-            ocrReport: ocrReport
+            ocrReport: ocrReport,
+            sourceURL: sourceURL,
+            isTemporarySource: isTemporarySource,
+            cleanupEvidence: cleanupEvidence?.replacingOutputFileName(with: newOutputURL.lastPathComponent),
+            cleanupComparison: cleanupComparison
+        )
+    }
+
+    func retainingSourceSnapshot(at snapshotURL: URL,
+                                 displayFileName: String) -> QuickFixResult
+    {
+        QuickFixResult(
+            outputURL: outputURL,
+            isTemporaryOutput: isTemporaryOutput,
+            previewPageIndex: previewPageIndex,
+            redactionReport: redactionReport,
+            ocrReport: ocrReport,
+            sourceURL: snapshotURL,
+            isTemporarySource: true,
+            cleanupEvidence: cleanupEvidence?.replacingSourceFileName(with: displayFileName),
+            cleanupComparison: cleanupComparison
         )
     }
 }

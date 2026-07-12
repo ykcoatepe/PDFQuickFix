@@ -80,6 +80,7 @@ final class PDFQuickFixEngine {
         var emptyOCRPages = 0
         var emptyOCRPageIndices: [Int] = []
         var localOCRFallbackCount = 0
+        var redactedTextCandidates: [String] = []
         let localOCRProvider = options.ocrProvider == .autoLocalOCR
             ? (localOCRProviderOverride ?? selectLocalOCRProvider(preferredModel: options.localOCRModel))
             : nil
@@ -124,6 +125,7 @@ final class PDFQuickFixEngine {
             if result.localOCREligible, !result.localOCRSucceeded {
                 localOCRFallbackCount += 1
             }
+            redactedTextCandidates.append(contentsOf: result.redactedTextCandidates)
 
             processedPages.append(result)
             progress?(i + 1, pageCount)
@@ -144,12 +146,75 @@ final class PDFQuickFixEngine {
             emptyOCRPageIndices: emptyOCRPageIndices,
             localOCRFallbackCount: localOCRFallbackCount
         )
+        guard let outputDocument = PDFDocument(url: outURL) else {
+            throw CleanupEvidenceError.unreadablePDF(fileName: outURL.lastPathComponent)
+        }
+        let comparison = try CleanupComparisonEngine().compare(
+            source: doc,
+            output: outputDocument,
+            isCancelled: { shouldCancel?() == true }
+        )
+        let redactionVerification: CleanupRedactionVerification = if totalRedactionRectCount == 0 {
+            CleanupEvidenceGenerator.verifyRedactions(
+                candidates: [],
+                outputExtractedText: outputDocument.string ?? ""
+            )
+        } else if redactedTextCandidates.isEmpty {
+            CleanupRedactionVerification(
+                status: .reviewRequired,
+                checkedCandidateCount: 0,
+                detectedCandidateCount: 0
+            )
+        } else {
+            CleanupEvidenceGenerator.verifyRedactions(
+                candidates: redactedTextCandidates,
+                outputExtractedText: outputDocument.string ?? ""
+            )
+        }
+        var evidenceWarnings: [String] = []
+        if comparison.sourcePageCount != comparison.outputPageCount {
+            evidenceWarnings.append("Source and output page counts differ.")
+        }
+        if emptyOCRPages > 0 {
+            evidenceWarnings.append("One or more pages produced no OCR text.")
+        }
+        if redactionVerification.status == .reviewRequired {
+            evidenceWarnings.append("Redaction verification requires manual review.")
+        }
+        let evidenceVerdict: CleanupEvidenceVerdict = if comparison.sourcePageCount != comparison.outputPageCount {
+            .failed
+        } else if evidenceWarnings.isEmpty {
+            .passed
+        } else {
+            .reviewRequired
+        }
+        let evidence = try CleanupEvidenceGenerator.generate(
+            sourceURL: inputURL,
+            outputURL: outURL,
+            quickFixTelemetry: CleanupQuickFixTelemetry(
+                redactionRectangleCount: totalRedactionRectCount,
+                suppressedOCRRunCount: suppressedOCRRunCount,
+                localOCRPageCount: localOCRPages,
+                cloudOCRPageCount: cloudOCRPages,
+                visionOCRPageCount: visionOCRPages,
+                ocrDisabledPageCount: ocrDisabledPages,
+                emptyOCRPageCount: emptyOCRPages,
+                localOCRFallbackCount: localOCRFallbackCount
+            ),
+            comparison: comparison.evidenceSummary,
+            redactionVerification: redactionVerification,
+            verdict: evidenceVerdict,
+            warnings: evidenceWarnings
+        )
         return QuickFixResult(
             outputURL: outURL,
             isTemporaryOutput: isTemporaryOutput ?? (outputURL == nil),
             previewPageIndex: pagesWithRedactions.first ?? emptyOCRPageIndices.first,
             redactionReport: report,
-            ocrReport: ocrReport
+            ocrReport: ocrReport,
+            sourceURL: inputURL,
+            cleanupEvidence: evidence,
+            cleanupComparison: comparison
         )
     }
 
@@ -238,6 +303,7 @@ final class PDFQuickFixEngine {
         var visionTextRuns: [RecognizedRun] = []
         var suppressedOCRRunsByRedactionMatches = 0
         var didApplyVision = false
+        var redactedTextCandidates: [String] = []
 
         for rect in manualRedactions {
             let converted = CGRect(
@@ -263,9 +329,12 @@ final class PDFQuickFixEngine {
                 var redactionRanges: [NSRange] = []
                 for rx in allRegexes {
                     rx.enumerateMatches(in: text, options: [], range: fullRange) { m, _, _ in
-                        if let r = m?.range { redactionRanges.append(r) }
+                        if let r = m?.range {
+                            redactionRanges.append(r)
+                        }
                     }
                 }
+                redactedTextCandidates.append(contentsOf: Self.matchedRedactionCandidates(in: text, regexes: allRegexes))
                 // ranges for replacements
                 var replacements: [(range: NSRange, replacement: String)] = []
                 for rule in findReplace {
@@ -449,7 +518,24 @@ final class PDFQuickFixEngine {
                                  ocrSource: ocrSource,
                                  ocrRunCount: overlayRuns.count,
                                  localOCREligible: localEligible,
-                                 localOCRSucceeded: localSucceeded)
+                                 localOCRSucceeded: localSucceeded,
+                                 redactedTextCandidates: redactedTextCandidates)
+    }
+
+    static func matchedRedactionCandidates(in text: String,
+                                           regexes: [NSRegularExpression]) -> [String]
+    {
+        let fullRange = NSRange(location: 0, length: text.utf16.count)
+        return regexes.flatMap { regex in
+            regex.matches(in: text, range: fullRange).compactMap { match in
+                guard match.range.length > 0,
+                      let range = Range(match.range, in: text)
+                else {
+                    return nil
+                }
+                return String(text[range])
+            }
+        }
     }
 
     private func ruleReplacement(text _: String, repl: String) -> String {
@@ -553,7 +639,9 @@ final class PDFQuickFixEngine {
                 case let .replace(s): text = s
                 case .skip: continue
                 }
-                if text.isEmpty { continue }
+                if text.isEmpty {
+                    continue
+                }
 
                 let fontSize = max(8, rect.height * 0.85)
                 let font = CTFontCreateWithName("Helvetica" as CFString, fontSize, nil)

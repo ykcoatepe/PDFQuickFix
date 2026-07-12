@@ -118,6 +118,10 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     @Published var selectedTool: StudioTool = .organize
     @Published var isRepaired: Bool = false
     @Published var isDocumentHealthPresented: Bool = false
+    @Published var cleanupReview: CleanupReview? {
+        didSet { oldValue?.removeTemporarySource() }
+    }
+
     @Published private(set) var currentSelectionText: String?
     private let passwordProvider: PDFPasswordProvider
 
@@ -2230,6 +2234,10 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
             pushLog("Export failed: couldn't read current document state")
             return
         }
+        guard let evidenceSourceData = snapshotDoc.dataRepresentation() else {
+            pushLog("Export failed: couldn't preserve comparison snapshot")
+            return
+        }
 
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.pdf]
@@ -2291,6 +2299,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
             loadingStatus = "Sanitizing..."
 
             let sourceURL = currentURL
+            let sourceFileName = sourceURL?.lastPathComponent ?? "Document.pdf"
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 defer {
                     DispatchQueue.main.async {
@@ -2317,8 +2326,31 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
                         throw PDFOpsError.saveFailed
                     }
 
+                    var cleanupReview: CleanupReview?
+                    var reviewWarning: String?
+                    do {
+                        guard let evidenceSourceDocument = PDFDocument(data: evidenceSourceData) else {
+                            throw CleanupEvidenceError.unreadablePDF(fileName: sourceFileName)
+                        }
+                        cleanupReview = try CleanupReviewBuilder.build(
+                            sourceDocument: evidenceSourceDocument,
+                            sourceFileName: sourceFileName,
+                            outputURL: destination,
+                            profile: profile
+                        )
+                    } catch {
+                        reviewWarning = error.localizedDescription
+                    }
+
                     DispatchQueue.main.async {
-                        self?.pushLog("Exported sanitized (\(profile.rawValue)) to \(destination.lastPathComponent)")
+                        if let cleanupReview {
+                            self?.cleanupReview = cleanupReview
+                        }
+                        var message = "Exported sanitized (\(profile.rawValue)) to \(destination.lastPathComponent)"
+                        if let reviewWarning {
+                            message += ". Cleanup review unavailable: \(reviewWarning)"
+                        }
+                        self?.pushLog(message)
                         NSWorkspace.shared.activateFileViewerSelecting([destination])
                     }
                 } catch {
