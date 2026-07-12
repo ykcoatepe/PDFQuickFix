@@ -13,6 +13,7 @@ final class PDFRenderServiceCancellationTests: XCTestCase {
     override func tearDown() {
         service.cancelAll()
         service.identityComputationHook = nil
+        service.renderExecutionHook = nil
         super.tearDown()
     }
 
@@ -74,6 +75,33 @@ final class PDFRenderServiceCancellationTests: XCTestCase {
         XCTAssertEqual(identityStarted.wait(timeout: .now() + 2), .success)
         service.cancelAll()
         releaseIdentity.signal()
+        wait(for: [completion], timeout: 2)
+        XCTAssertNil(rendered)
+        XCTAssertEqual(service.debugInfo().trackedOperationsCount, 0)
+    }
+
+    func testCancelAllCompletesRenderThatWasAlreadyExecuting() throws {
+        let renderStarted = DispatchSemaphore(value: 0)
+        let releaseRender = DispatchSemaphore(value: 0)
+        service.renderExecutionHook = {
+            renderStarted.signal()
+            _ = releaseRender.wait(timeout: .now() + 2)
+        }
+        let completion = expectation(description: "cancelled render completes")
+        var rendered: CGImage?
+
+        service.image(
+            for: PDFRenderRequest(kind: .thumbnail, pageIndex: 0, scaleBucket: 120, size: CGSize(width: 120, height: 120)),
+            documentURL: nil,
+            documentData: try makePDFData(gray: 0.5)
+        ) { image in
+            rendered = image
+            completion.fulfill()
+        }
+
+        XCTAssertEqual(renderStarted.wait(timeout: .now() + 2), .success)
+        service.cancelAll()
+        releaseRender.signal()
         wait(for: [completion], timeout: 2)
         XCTAssertNil(rendered)
         XCTAssertEqual(service.debugInfo().trackedOperationsCount, 0)

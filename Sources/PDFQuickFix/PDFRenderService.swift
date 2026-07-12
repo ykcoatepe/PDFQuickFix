@@ -52,6 +52,7 @@ final class PDFRenderService {
         /// Hook for tests/diagnostics to observe render requests (thumbnail throttling, etc.).
         var requestObserver: ((PDFRenderRequest) -> Void)?
         var identityComputationHook: (() -> Void)?
+        var renderExecutionHook: (() -> Void)?
     #endif
 
     private init() {
@@ -158,6 +159,10 @@ final class PDFRenderService {
             guard let self else { return }
             let signpostID = PerfLog.begin("RenderImage")
 
+            #if DEBUG
+                renderExecutionHook?()
+            #endif
+
             let image: CGImage? = switch request.kind {
             case .thumbnail:
                 Self.renderThumbnail(request: request, url: documentURL, data: documentData)
@@ -171,6 +176,9 @@ final class PDFRenderService {
                   operations[key]?.token == token
             else {
                 lock.unlock()
+                DispatchQueue.main.async {
+                    completion(nil)
+                }
                 return
             }
             if let image {
