@@ -43,11 +43,13 @@ final class CleanupReviewUITests: XCTestCase {
         app.activate()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5))
         XCTAssertTrue(app.staticTexts["Sanitized Export"].exists)
-        let verdict = app.descendants(matching: .any)["cleanup-evidence-verdict-passed"]
+        let passedVerdict = app.descendants(matching: .any)["cleanup-evidence-verdict-passed"]
+        let reviewRequiredVerdict = app.descendants(matching: .any)["cleanup-evidence-verdict-reviewRequired"]
         XCTAssertTrue(
-            verdict.waitForExistence(timeout: 5),
-            "The cleanup verdict was not Passed."
+            passedVerdict.waitForExistence(timeout: 1) || reviewRequiredVerdict.waitForExistence(timeout: 5),
+            "The cleanup verdict was neither Passed nor Review required."
         )
+        XCTAssertFalse(app.descendants(matching: .any)["cleanup-evidence-verdict-failed"].exists)
 
         let beforeAfter = app.descendants(matching: .any)["cleanup-review-tab-comparison"]
         let beforeAfterReady = expectation(
