@@ -21,6 +21,7 @@ struct CleanupEvidenceSheet: View {
                 Label(verdictTitle, systemImage: verdictIcon)
                     .font(.headline)
                     .foregroundStyle(verdictColor)
+                    .accessibilityLabel(verdictTitle)
                     .accessibilityIdentifier("cleanup-evidence-verdict")
             }
 
