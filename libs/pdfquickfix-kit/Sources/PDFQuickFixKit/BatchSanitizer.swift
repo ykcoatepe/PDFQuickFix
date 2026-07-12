@@ -7,6 +7,7 @@ import PDFKit
 public enum BatchSanitizer {
     public typealias ProgressHandler = (BatchSanitizeProgress) -> Void
     public typealias CancellationChecker = () -> Bool
+    public typealias DocumentWriter = (PDFDocument, URL) -> Bool
 
     /// Runs batch sanitization on a planned set of files.
     /// - Parameters:
@@ -21,7 +22,8 @@ public enum BatchSanitizer {
         profile: SanitizeProfile,
         dryRun: Bool,
         progress: ProgressHandler? = nil,
-        shouldCancel: CancellationChecker? = nil
+        shouldCancel: CancellationChecker? = nil,
+        writer: DocumentWriter = { document, url in document.write(to: url) }
     ) -> BatchSanitizeReport {
         let startTime = CFAbsoluteTimeGetCurrent()
         let fm = FileManager.default
@@ -93,14 +95,23 @@ public enum BatchSanitizer {
                         attributes: nil
                     )
 
-                    // Remove existing file if overwrite
-                    if fm.fileExists(atPath: item.outputURL.path) {
-                        try fm.removeItem(at: item.outputURL)
+                    let temporaryURL = parentDir
+                        .appendingPathComponent(".pdfquickfix-\(UUID().uuidString)")
+                        .appendingPathExtension("pdf")
+                    defer { try? fm.removeItem(at: temporaryURL) }
+
+                    guard writer(sanitized, temporaryURL),
+                          let validationProvider = CGDataProvider(url: temporaryURL as CFURL),
+                          let validatedDocument = CGPDFDocument(validationProvider),
+                          validatedDocument.numberOfPages == sanitized.pageCount
+                    else {
+                        throw BatchSanitizerError.writeFailed(item.outputURL)
                     }
 
-                    // Write sanitized PDF
-                    guard sanitized.write(to: item.outputURL) else {
-                        throw BatchSanitizerError.writeFailed(item.outputURL)
+                    if fm.fileExists(atPath: item.outputURL.path) {
+                        _ = try fm.replaceItemAt(item.outputURL, withItemAt: temporaryURL)
+                    } else {
+                        try fm.moveItem(at: temporaryURL, to: item.outputURL)
                     }
 
                     // Get output size

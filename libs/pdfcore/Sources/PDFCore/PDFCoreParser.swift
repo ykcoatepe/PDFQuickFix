@@ -1,3 +1,4 @@
+import Compression
 import Foundation
 
 public enum PDFCoreError: Error, Equatable {
@@ -10,6 +11,8 @@ public enum PDFCoreError: Error, Equatable {
 }
 
 public class PDFCoreParser {
+    private static let maxCrossReferenceEntries = 1_000_000
+    private static let maxDecompressedStreamBytes = 16 * 1024 * 1024
     private let lexer: PDFCoreLexer
     private let data: Data
 
@@ -93,7 +96,7 @@ public class PDFCoreParser {
 
         for (objRef, offset) in masterEntries {
             // Safety check for offset
-            guard offset < data.count else {
+            guard offset >= 0, offset < data.count else {
                 throw PDFCoreError.syntax("Object offset out of bounds")
             }
 
@@ -135,6 +138,9 @@ public class PDFCoreParser {
     }
 
     private func parseXRef(at offset: Int) throws -> XRefResult {
+        guard offset >= 0, offset < data.count else {
+            throw PDFCoreError.invalidXRef
+        }
         lexer.seek(to: offset)
         let tokenAtXref = lexer.nextToken()
         lexer.seek(to: offset) // Reset
@@ -150,6 +156,7 @@ public class PDFCoreParser {
                 throw PDFCoreError.invalidXRef
             }
 
+            var classicEntryCount = 0
             while true {
                 guard let firstToken = lexer.nextToken() else { break }
                 if case .keyword("trailer") = firstToken { break } // End of xref
@@ -158,10 +165,15 @@ public class PDFCoreParser {
                       let startObj = Int(startStr),
                       let countToken = lexer.nextToken(),
                       case let .number(countStr) = countToken,
-                      let count = Int(countStr)
+                      let count = Int(countStr),
+                      startObj >= 0,
+                      count >= 0,
+                      count <= Self.maxCrossReferenceEntries - classicEntryCount,
+                      startObj <= Int.max - count
                 else {
                     throw PDFCoreError.invalidXRef
                 }
+                classicEntryCount += count
 
                 for i in 0 ..< count {
                     guard let offsetToken = lexer.nextToken(), case let .number(offsetStr) = offsetToken,
@@ -173,10 +185,13 @@ public class PDFCoreParser {
 
                     switch type {
                     case "n":
-                        if let offset = Int(offsetStr), let gen = Int(genStr) {
-                            let ref = PDFCoreObjectRef(objectNumber: startObj + i, generation: gen)
-                            entries[ref] = offset
+                        guard let offset = Int(offsetStr), offset >= 0,
+                              let gen = Int(genStr), gen >= 0
+                        else {
+                            throw PDFCoreError.invalidXRef
                         }
+                        let ref = PDFCoreObjectRef(objectNumber: startObj + i, generation: gen)
+                        entries[ref] = offset
                     case "f":
                         freed.insert(startObj + i)
                     default:
@@ -233,6 +248,9 @@ public class PDFCoreParser {
         let suffix = string[range.upperBound...]
         let scanner = Scanner(string: String(suffix))
         if let offset = scanner.scanInt() {
+            guard offset >= 0, offset < data.count else {
+                throw PDFCoreError.missingStartXRef
+            }
             return offset
         }
         throw PDFCoreError.missingStartXRef
@@ -355,10 +373,14 @@ public class PDFCoreParser {
         }
 
         // 2. Get W (Widths)
-        guard let wObj = stream.dictionary["W"], case let .array(wArr) = wObj, wArr.count >= 3,
+        guard let wObj = stream.dictionary["W"], case let .array(wArr) = wObj, wArr.count == 3,
               case let .int(w0) = wArr[0],
               case let .int(w1) = wArr[1],
-              case let .int(w2) = wArr[2]
+              case let .int(w2) = wArr[2],
+              (0 ... 8).contains(w0),
+              (0 ... 8).contains(w1),
+              (0 ... 8).contains(w2),
+              w0 + w1 + w2 > 0
         else {
             throw PDFCoreError.invalidXRef
         }
@@ -376,12 +398,28 @@ public class PDFCoreParser {
                 throw PDFCoreError.invalidXRef
             }
         }
+        guard index.count.isMultiple(of: 2) else {
+            throw PDFCoreError.invalidXRef
+        }
+        var totalEntries = 0
+        for pairStart in stride(from: 0, to: index.count, by: 2) {
+            let start = index[pairStart]
+            let count = index[pairStart + 1]
+            guard start >= 0,
+                  count >= 0,
+                  count <= Self.maxCrossReferenceEntries - totalEntries,
+                  start <= Int.max - count
+            else {
+                throw PDFCoreError.invalidXRef
+            }
+            totalEntries += count
+        }
 
         // 4. Decompress Data
         let decompressedData: Data
         if needsDecompress {
             do {
-                decompressedData = try (stream.data as NSData).decompressed(using: .zlib) as Data
+                decompressedData = try Self.decompressZlib(stream.data)
             } catch {
                 throw PDFCoreError.syntax("Failed to decompress XRef stream: \(error)")
             }
@@ -401,11 +439,17 @@ public class PDFCoreParser {
             idxPtr += 2
 
             for i in 0 ..< count {
-                guard cursor + entrySize <= decompressedData.count else { break }
+                guard cursor <= decompressedData.count - entrySize else {
+                    throw PDFCoreError.invalidXRef
+                }
 
-                let type = readInt(from: decompressedData, at: cursor, width: w0)
-                let field2 = readInt(from: decompressedData, at: cursor + w0, width: w1)
-                let field3 = readInt(from: decompressedData, at: cursor + w0 + w1, width: w2)
+                let type = if w0 == 0 {
+                    1
+                } else {
+                    try readInt(from: decompressedData, at: cursor, width: w0)
+                }
+                let field2 = try readInt(from: decompressedData, at: cursor + w0, width: w1)
+                let field3 = try readInt(from: decompressedData, at: cursor + w0 + w1, width: w2)
 
                 cursor += entrySize
 
@@ -438,13 +482,17 @@ public class PDFCoreParser {
         }
     }
 
-    private func readInt(from data: Data, at offset: Int, width: Int) -> Int {
+    private func readInt(from data: Data, at offset: Int, width: Int) throws -> Int {
         if width == 0 { return 0 }
-        var value = 0
-        for i in 0 ..< width {
-            value = (value << 8) | Int(data[offset + i])
+        guard offset >= 0, width > 0, offset <= data.count - width else {
+            throw PDFCoreError.invalidXRef
         }
-        return value
+        var value: UInt64 = 0
+        for i in 0 ..< width {
+            value = (value << 8) | UInt64(data[offset + i])
+        }
+        guard value <= UInt64(Int.max) else { throw PDFCoreError.invalidXRef }
+        return Int(value)
     }
 
     // MARK: - Filter Helpers
@@ -500,7 +548,7 @@ public class PDFCoreParser {
         let decompressedData: Data
         if needsDecompress {
             do {
-                decompressedData = try (stream.data as NSData).decompressed(using: .zlib) as Data
+                decompressedData = try Self.decompressZlib(stream.data)
             } catch {
                 throw PDFCoreError.syntax("Failed to decompress ObjStm \(objNum): \(error)")
             }
@@ -510,7 +558,11 @@ public class PDFCoreParser {
 
         // 3. Get /N and /First
         guard let nObj = stream.dictionary["N"], case let .int(n) = nObj,
-              let firstObj = stream.dictionary["First"], case let .int(first) = firstObj
+              let firstObj = stream.dictionary["First"], case let .int(first) = firstObj,
+              n >= 0,
+              n <= Self.maxCrossReferenceEntries,
+              first >= 0,
+              first <= decompressedData.count
         else {
             // Invalid ObjStm, maybe ignore or throw?
             // Throwing ensures we don't silently fail on corrupt critical data
@@ -534,6 +586,9 @@ public class PDFCoreParser {
 
         // 5. Parse Objects
         for (oNum, oOff) in pairs {
+            guard oOff >= 0, oOff <= decompressedData.count - first else {
+                throw PDFCoreError.syntax("ObjStm \(objNum) object offset out of bounds")
+            }
             let absoluteOffset = first + oOff
             guard absoluteOffset < decompressedData.count else {
                 throw PDFCoreError.syntax("ObjStm \(objNum) object offset out of bounds")
@@ -627,5 +682,59 @@ public class PDFCoreParser {
             dict[key] = value
         }
         return .dict(dict)
+    }
+
+    private static func decompressZlib(_ data: Data) throws -> Data {
+        guard !data.isEmpty else {
+            throw PDFCoreError.syntax("Empty zlib stream")
+        }
+        let scratch = UnsafeMutablePointer<UInt8>.allocate(capacity: 1)
+        defer { scratch.deallocate() }
+        var stream = compression_stream(
+            dst_ptr: scratch,
+            dst_size: 0,
+            src_ptr: UnsafePointer(scratch),
+            src_size: 0,
+            state: nil
+        )
+        guard compression_stream_init(&stream, COMPRESSION_STREAM_DECODE, COMPRESSION_ZLIB) != COMPRESSION_STATUS_ERROR else {
+            throw PDFCoreError.syntax("Failed to initialize zlib decoder")
+        }
+        defer { compression_stream_destroy(&stream) }
+
+        let chunkSize = 64 * 1024
+        var output = Data()
+        output.reserveCapacity(min(data.count * 4, maxDecompressedStreamBytes))
+
+        return try data.withUnsafeBytes { sourceBuffer in
+            guard let source = sourceBuffer.bindMemory(to: UInt8.self).baseAddress else { return Data() }
+            stream.src_ptr = source
+            stream.src_size = data.count
+
+            var chunk = [UInt8](repeating: 0, count: chunkSize)
+            while true {
+                let status: compression_status = chunk.withUnsafeMutableBytes { destinationBuffer in
+                    stream.dst_ptr = destinationBuffer.bindMemory(to: UInt8.self).baseAddress!
+                    stream.dst_size = chunkSize
+                    return compression_stream_process(&stream, Int32(COMPRESSION_STREAM_FINALIZE.rawValue))
+                }
+                let produced = chunkSize - stream.dst_size
+                guard produced <= maxDecompressedStreamBytes - output.count else {
+                    throw PDFCoreError.syntax("decompressed stream exceeds \(maxDecompressedStreamBytes) bytes")
+                }
+                output.append(contentsOf: chunk.prefix(produced))
+
+                switch status {
+                case COMPRESSION_STATUS_END:
+                    return output
+                case COMPRESSION_STATUS_OK:
+                    guard produced > 0 || stream.src_size > 0 else {
+                        throw PDFCoreError.syntax("zlib decoder made no progress")
+                    }
+                default:
+                    throw PDFCoreError.syntax("Failed to decompress zlib stream")
+                }
+            }
+        }
     }
 }

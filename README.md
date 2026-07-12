@@ -2,7 +2,7 @@
 
 A local, on-device macOS app for **reading, editing, repairing, redacting, sanitizing, organizing, splitting, merging, and exporting PDFs** before you share them.
 
-PDFQuickFix is best thought of as a **privacy-first PDF reader/editor workstation** for sensitive documents. Reader, Studio, Split/Merge, and AI Tools exist to help you inspect a PDF, edit it, remove risky content, and ship a cleaner output without sending files to a cloud service by default.
+PDFQuickFix is best thought of as a **privacy-first PDF reader/editor workstation** for sensitive documents. Reader, QuickFix, Studio, and Split exist to help you inspect a PDF, edit it, remove risky content, and ship a cleaner output without sending files to a cloud service by default.
 
 ## Best for
 
@@ -52,14 +52,14 @@ PDFQuickFix is best thought of as a **privacy-first PDF reader/editor workstatio
 - Merge multiple PDFs with source reordering, deduplication, blank-page insertion, and safe fallback policies
 - Recent split/merge job history plus Finder reveal actions
 
-**AI Tools tab**
+**QuickFix tab**
 - **OCR repair** (Local OCR by default, Vision fallback) adds invisible text layer
 - **Local AI tools** (summary, translation, PII scan, field extraction, redaction candidates, share-readiness review)
 - **Heavy AI workflows** stay here for OCR, extraction, redaction, and longer-running document jobs
 - **Accepts PDF, PNG, and JPEG inputs** (images are converted to searchable PDFs during OCR)
 - **Optional AI auto-crop, deskew, and enhancement** for image inputs (toggle in Options)
 - **Progress updates** during QuickFix runs (pages processed)
-- **Visible in the top mode switcher** (Reader | AI Tools | Studio | Split)
+- **Visible in the top mode switcher** (Reader | QuickFix | Studio | Split)
 
 > ✅ All processing is **local** by default. When enabled, the app talks only to `127.0.0.1:11434` for Ollama. Optional **cloud OCR fallback** can be enabled in Options.
 
@@ -113,7 +113,7 @@ The Finder service accepts one or more selected PDFs, writes side-by-side `-sani
 - AI Activity logs are in-memory per run by default; persistence is opt-in in Settings.
 - AI Activity prompts/responses are truncated to keep logs lightweight.
 - AI request timeout is configurable in **Settings → Local AI**.
-- AI task models can be overridden per task in **AI Tools** or from **Settings → Task Overrides**.
+- AI task models can be overridden per task in **QuickFix** or from **Settings → Task Overrides**.
 - Local OCR availability status is shown in **Options** with a Refresh button.
 - Cloud OCR fallback (Google Vision) is opt-in and requires an API key in Options.
 
@@ -122,7 +122,7 @@ The Finder service accepts one or more selected PDFs, writes side-by-side `-sani
 - **Local OCR not used:** confirm `qwen2.5vl:7b` or `minicpm-v:8b` is installed and OCR provider is set to Auto.
 - **Local OCR status says Unavailable:** ensure Ollama is running, then click **Refresh** in Options.
 - **AI tasks say “No local model available”:** open Settings, refresh, and select a default model.
-- **Want to force Vision OCR:** set OCR engine to “Vision only” in AI Tools → Options.
+- **Want to force Vision OCR:** set OCR engine to “Vision only” in QuickFix → Options.
 
 ## Feedback (OCR quality)
 If you want to report OCR quality or performance, please include:
@@ -160,7 +160,7 @@ Use this checklist to validate the reader/editor, export, OCR, and AI features e
 
 ### OCR (Local + fallback)
 1. Open a scanned PDF with **no redaction/Find→Replace/manual redactions**.
-2. In AI Tools → Options, set **OCR engine** to **Auto (Local OCR if available)**.
+2. In QuickFix → Options, set **OCR engine** to **Auto (Local OCR if available)**.
    - Expected: Local OCR status shows **Available** (after Refresh if needed).
 3. Run QuickFix.
    - Expected: Output PDF is searchable; OCR layer added.
@@ -177,16 +177,16 @@ Repeatable smoke harness:
 - `PDFQF_RUN_CLOUD_OCR_SMOKE=1 PDFQF_GOOGLE_VISION_API_KEY=... make smoke-ocr-fallback` also proves the real Google Vision cloud fallback. This requires a valid Google Vision API key and network access.
 
 ### OCR from Images (PNG/JPEG)
-1. In AI Tools, click **Choose PDF or Image…** and select a PNG or JPEG.
+1. In QuickFix, click **Choose PDF or Image…** and select a PNG or JPEG.
 2. Run QuickFix.
    - Expected: Output PDF is created next to the image and is searchable.
 3. Run an AI task (Summary/Translate/etc.).
    - Expected: OCR text is used to produce the AI result.
 4. Optional: enable **Auto-crop & deskew images (AI)** in Options for better OCR on photos.
 
-### AI Tools (Summary / Translate / PII / Extraction / Review)
+### QuickFix — Local AI Tools (Summary / Translate / PII / Extraction / Review)
 1. In Settings → Local AI, click **Refresh Models** and select a default model.
-2. In the AI Tools tab, under **Local AI Tools**, run **Summary** on a text‑heavy PDF.
+2. In the QuickFix tab, under **Local AI Tools**, run **Summary** on a text‑heavy PDF.
    - Expected: Summary output appears and is logged.
    - Optional: enter a page range (e.g. `1-2, 5`) to summarize selected pages only.
 3. Run **Translation** with a target language.
@@ -195,7 +195,7 @@ Repeatable smoke harness:
    - Expected: JSON output (pretty‑printed when valid).
 
 ### AI Activity Log
-1. Open **AI Activity** from the menu or the AI Tools tab.
+1. Open **AI Activity** from the menu or the QuickFix tab.
 2. Verify each AI run appears with task, model, and prompt/response.
 3. Toggle persistence in Settings, restart the app, and confirm logs persist.
 4. Turn persistence off and confirm logs clear.

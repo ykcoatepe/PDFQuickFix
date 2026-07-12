@@ -164,6 +164,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     private var snapshotGenerationID = UUID()
     private var snapshotOperation: PageSnapshotRenderOperation?
     private let renderService = PDFRenderService.shared
+    private var renderDocumentIdentity = UUID().uuidString
     private let renderThrottle = RenderThrottle()
     private let snapshotUpdateThrottle = AsyncThrottle(.milliseconds(80))
     private let editUndoManager = UndoManager()
@@ -2758,6 +2759,8 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     }
 
     private func resetThumbnailState() {
+        renderService.cancelAll()
+        renderDocumentIdentity = UUID().uuidString
         thumbnailCache.removeAllObjects()
         inflightThumbnails.removeAll()
     }
@@ -2836,6 +2839,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
                                 targetSize: thumbSize,
                                 documentURL: docURL,
                                 documentData: docData,
+                                documentIdentity: renderDocumentIdentity,
                                 priority: .high)
         { [weak self] image in
             guard let self else { return }
@@ -2884,6 +2888,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
             renderService.image(for: request,
                                 documentURL: docURL,
                                 documentData: docData,
+                                documentIdentity: renderDocumentIdentity,
                                 priority: .veryHigh)
             { [weak self] image in
                 guard let self, let image else { return }
@@ -2902,6 +2907,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
             renderService.image(for: request,
                                 documentURL: docURL,
                                 documentData: docData,
+                                documentIdentity: renderDocumentIdentity,
                                 priority: .low)
             { [weak self] image in
                 guard let self, let image else { return }

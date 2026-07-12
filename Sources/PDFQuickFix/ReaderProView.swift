@@ -1861,9 +1861,9 @@ struct ReaderHomeView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 40) {
+            VStack(spacing: 32) {
                 Spacer()
-                    .frame(height: 60)
+                    .frame(height: 28)
 
                 // Drop Zone
                 Button(action: {
@@ -1878,9 +1878,9 @@ struct ReaderHomeView: View {
                                     .fill(isDragging ? AppTheme.Colors.dropZoneFillHighlighted : AppTheme.Colors.dropZoneFill)
                             )
 
-                        VStack(spacing: 20) {
+                        VStack(spacing: 16) {
                             Image(systemName: "folder.badge.plus")
-                                .font(.system(size: 64))
+                                .font(.system(size: 52))
                                 .foregroundColor(AppTheme.Colors.accent)
 
                             VStack(spacing: 10) {
@@ -1892,6 +1892,9 @@ struct ReaderHomeView: View {
                                     .font(.system(size: 24, weight: .bold))
                                     .foregroundColor(AppTheme.Colors.primaryText)
                                     .multilineTextAlignment(.center)
+                                    .lineLimit(2)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .frame(maxWidth: 700)
                                 Text("Drag a PDF here or browse from your Mac. Review, cleanup, and export stay on this device.")
                                     .font(.body)
                                     .foregroundColor(AppTheme.Colors.secondaryText)
@@ -1903,7 +1906,7 @@ struct ReaderHomeView: View {
                             }
                         }
                     }
-                    .frame(height: 320)
+                    .frame(minHeight: 260)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -1989,13 +1992,9 @@ struct ReaderHomeView: View {
                                                 .lineLimit(1)
                                                 .truncationMode(.middle)
 
-                                            Text(file.date.formatted(date: .abbreviated, time: .shortened))
+                                            Text("\(file.pageCount) page\(file.pageCount == 1 ? "" : "s") • \(file.date.formatted(date: .abbreviated, time: .shortened))")
                                                 .font(.caption)
                                                 .foregroundColor(AppTheme.Colors.secondaryText)
-
-                                            Text("Reopen from the private cleanup desk")
-                                                .font(.caption2)
-                                                .foregroundColor(AppTheme.Colors.accent)
                                         }
                                         Spacer()
                                     }
@@ -2018,8 +2017,9 @@ struct ReaderHomeView: View {
 
                 Spacer()
             }
-            .padding(.horizontal)
-            .frame(maxWidth: 800)
+            .padding(.horizontal, 32)
+            .padding(.bottom, 40)
+            .frame(maxWidth: 980)
             .frame(maxWidth: .infinity)
         }
         .background(AppTheme.Colors.background)
@@ -2063,7 +2063,7 @@ struct ReaderShellView: View {
                 Button {
                     standaloneQuickFixPresented = true
                 } label: {
-                    Label("AI Tools", systemImage: "sparkles")
+                    Label("QuickFix Workspace", systemImage: "sparkles")
                 }
                 .buttonStyle(ReaderToolbarButtonStyle())
 
@@ -2086,7 +2086,7 @@ struct ReaderShellView: View {
                 Button {
                     quickFixPresented = true
                 } label: {
-                    Label("QuickFix", systemImage: "wand.and.stars")
+                    Label("Run QuickFix", systemImage: "wand.and.stars")
                 }
                 .buttonStyle(ReaderToolbarButtonStyle())
                 .disabled(controller.currentURL == nil)
