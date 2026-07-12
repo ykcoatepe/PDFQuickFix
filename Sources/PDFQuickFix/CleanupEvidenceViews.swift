@@ -22,7 +22,7 @@ struct CleanupEvidenceSheet: View {
                     .font(.headline)
                     .foregroundStyle(verdictColor)
                     .accessibilityLabel(verdictTitle)
-                    .accessibilityIdentifier("cleanup-evidence-verdict")
+                    .accessibilityIdentifier("cleanup-evidence-verdict-\(evidence.verdict.rawValue)")
             }
 
             HStack(spacing: 12) {
