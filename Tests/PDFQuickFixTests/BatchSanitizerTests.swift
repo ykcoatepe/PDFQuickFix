@@ -244,6 +244,30 @@ final class BatchSanitizerTests: XCTestCase {
         XCTAssertNotEqual(originalData, newData)
     }
 
+    func testOverwriteFailurePreservesExistingOutput() throws {
+        let input = tempInputDir.appendingPathComponent("existing.pdf")
+        let output = tempOutputDir.appendingPathComponent("existing.pdf")
+        try createTestPDF(at: input, text: "New Content")
+        let original = Data("existing output must survive".utf8)
+        try original.write(to: output)
+
+        let plan = try BatchSanitizePlanner.plan(
+            inputDir: tempInputDir,
+            outputDir: tempOutputDir,
+            recursive: false,
+            overwrite: true
+        )
+        let report = BatchSanitizer.run(
+            plan: plan,
+            profile: .lightClean,
+            dryRun: false,
+            writer: { _, _ in false }
+        )
+
+        XCTAssertEqual(report.failed, 1)
+        XCTAssertEqual(try Data(contentsOf: output), original)
+    }
+
     // MARK: - Progress and Cancellation Tests
 
     func testProgressReporting() throws {

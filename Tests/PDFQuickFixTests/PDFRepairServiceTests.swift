@@ -1,7 +1,23 @@
 @testable import PDFQuickFixKit
+import PDFKit
 import XCTest
 
 final class PDFRepairServiceTests: XCTestCase {
+    func testRepairIfNeeded_PreservesPDFThatPDFKitCanOpen() throws {
+        let document = PDFDocument()
+        document.insert(PDFPage(), at: 0)
+        let inputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("repair-if-needed-valid-\(UUID().uuidString).pdf")
+        guard document.write(to: inputURL) else {
+            return XCTFail("Unable to write valid PDF fixture")
+        }
+        defer { try? FileManager.default.removeItem(at: inputURL) }
+
+        let resolvedURL = try PDFRepairService().repairIfNeeded(inputURL: inputURL)
+
+        XCTAssertEqual(resolvedURL, inputURL)
+    }
+
     func testRepairForExport_SmallFile() throws {
         // Create a dummy PDF
         let pdfData = "%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /MediaBox [0 0 612 792] /Parent 2 0 R >>\nendobj\nxref\n0 4\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \n0000000115 00000 n \ntrailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n185\n%%EOF".data(using: .utf8)!

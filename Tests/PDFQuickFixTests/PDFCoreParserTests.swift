@@ -71,6 +71,97 @@ final class PDFCoreParserTests: XCTestCase {
         }
     }
 
+    func testNegativeStartXRefIsRejectedWithoutReadingOutsideInput() {
+        let data = Data("%PDF-1.4\nstartxref\n-1\n%%EOF".utf8)
+        XCTAssertThrowsError(try PDFCoreParser(data: data).parseDocument())
+    }
+
+    func testOddLengthXRefIndexIsRejected() throws {
+        let data = try makeXRefStreamPDF(w: [1, 1, 1], index: [0], streamData: Data([0, 0, 0]))
+        XCTAssertThrowsError(try PDFCoreParser(data: data).parseDocument())
+    }
+
+    func testNegativeXRefWidthIsRejected() throws {
+        let data = try makeXRefStreamPDF(w: [-1, 2, 2], index: [0, 1], streamData: Data([0, 0, 0]))
+        XCTAssertThrowsError(try PDFCoreParser(data: data).parseDocument())
+    }
+
+    func testClassicXRefRejectsInvalidInUseOffset() {
+        let header = "%PDF-1.4\n"
+        let xrefOffset = header.utf8.count
+        let data = Data((header + """
+        xref
+        0 2
+        0000000000 65535 f
+        -1 00000 n
+        trailer
+        << /Size 2 /Root 1 0 R >>
+        startxref
+        \(xrefOffset)
+        %%EOF
+        """).utf8)
+
+        XCTAssertThrowsError(try PDFCoreParser(data: data).parseDocument())
+    }
+
+    func testClassicXRefRejectsOverflowingInUseOffset() {
+        let header = "%PDF-1.4\n"
+        let xrefOffset = header.utf8.count
+        let data = Data((header + """
+        xref
+        0 2
+        0000000000 65535 f
+        999999999999999999999999 00000 n
+        trailer
+        << /Size 2 /Root 1 0 R >>
+        startxref
+        \(xrefOffset)
+        %%EOF
+        """).utf8)
+
+        XCTAssertThrowsError(try PDFCoreParser(data: data).parseDocument())
+    }
+
+    func testZeroTypeWidthDefaultsXRefEntryToInUse() throws {
+        let header = "%PDF-1.7\n"
+        let xrefOffset = header.utf8.count
+        let data = try makeXRefStreamPDF(
+            w: [0, 1, 1],
+            index: [1, 1],
+            streamData: Data([UInt8(xrefOffset), 0])
+        )
+
+        let document = try PDFCoreParser(data: data).parseDocument()
+
+        XCTAssertNotNil(document.objects[PDFCoreObjectRef(objectNumber: 1, generation: 0)])
+    }
+
+    func testEmptyFlateXRefStreamIsRejected() throws {
+        let data = try makeXRefStreamPDF(
+            w: [1, 1, 1],
+            index: [0, 0],
+            streamData: Data(),
+            filter: "/Filter /FlateDecode "
+        )
+
+        XCTAssertThrowsError(try PDFCoreParser(data: data).parseDocument())
+    }
+
+    func testOversizedDecompressedXRefStreamIsRejectedByLimit() throws {
+        let expanded = Data(repeating: 0, count: 17 * 1024 * 1024)
+        let compressed = try (expanded as NSData).compressed(using: .zlib) as Data
+        let data = try makeXRefStreamPDF(
+            w: [1, 1, 1],
+            index: [0, 1],
+            streamData: compressed,
+            filter: "/Filter /FlateDecode "
+        )
+
+        XCTAssertThrowsError(try PDFCoreParser(data: data).parseDocument()) { error in
+            XCTAssertTrue(String(describing: error).contains("decompressed stream exceeds"))
+        }
+    }
+
     func testParseXRefStream() throws {
         // Construct a PDF with XRef Stream
         // 0. Header
@@ -150,6 +241,24 @@ final class PDFCoreParserTests: XCTestCase {
                 XCTAssertEqual(t, "Catalog")
             } else { XCTFail() }
         } else { XCTFail() }
+    }
+
+    private func makeXRefStreamPDF(
+        w: [Int],
+        index: [Int],
+        streamData: Data,
+        filter: String = ""
+    ) throws -> Data {
+        let header = "%PDF-1.7\n"
+        let offset = header.utf8.count
+        let wValue = w.map(String.init).joined(separator: " ")
+        let indexValue = index.map(String.init).joined(separator: " ")
+        let objectPrefix = "1 0 obj\n<< /Type /XRef /Size 1 /W [\(wValue)] /Index [\(indexValue)] /Root 1 0 R \(filter)/Length \(streamData.count) >>\nstream\n"
+        var data = Data(header.utf8)
+        data.append(Data(objectPrefix.utf8))
+        data.append(streamData)
+        data.append(Data("\nendstream\nendobj\nstartxref\n\(offset)\n%%EOF".utf8))
+        return data
     }
 
     func testParseObjectStream() throws {

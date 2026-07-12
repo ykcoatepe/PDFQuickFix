@@ -1,5 +1,6 @@
 import AppKit
 import CoreGraphics
+import CryptoKit
 import Foundation
 import PDFKit
 
@@ -43,12 +44,14 @@ final class PDFRenderService {
     static let shared = PDFRenderService()
 
     private let queue: OperationQueue
-    private let cache: NSCache<PDFRenderRequestBox, CGImage>
-    private var operations: [PDFRenderRequest: Operation] = [:]
+    private let cache: NSCache<PDFRenderCacheKeyBox, CGImage>
+    private var operations: [PDFRenderCacheKey: TrackedOperation] = [:]
     private let lock = NSLock()
+    private var cancellationGeneration: UInt64 = 0
     #if DEBUG
         /// Hook for tests/diagnostics to observe render requests (thumbnail throttling, etc.).
         var requestObserver: ((PDFRenderRequest) -> Void)?
+        var identityComputationHook: (() -> Void)?
     #endif
 
     private init() {
@@ -62,30 +65,41 @@ final class PDFRenderService {
     }
 
     /// Wrapper so NSCache can use the request as a key.
-    private final class PDFRenderRequestBox: NSObject {
+    private struct PDFRenderCacheKey: Hashable {
         let request: PDFRenderRequest
+        let documentIdentity: String
+    }
 
-        init(_ request: PDFRenderRequest) {
-            self.request = request
+    private struct TrackedOperation {
+        let operation: Operation
+        let token: UUID
+    }
+
+    private final class PDFRenderCacheKeyBox: NSObject {
+        let key: PDFRenderCacheKey
+
+        init(_ key: PDFRenderCacheKey) {
+            self.key = key
         }
 
         override var hash: Int {
-            request.hashValue
+            key.hashValue
         }
 
         override func isEqual(_ object: Any?) -> Bool {
-            guard let other = object as? PDFRenderRequestBox else { return false }
-            return other.request == request
+            guard let other = object as? PDFRenderCacheKeyBox else { return false }
+            return other.key == key
         }
     }
 
-    func cachedImage(for request: PDFRenderRequest) -> CGImage? {
-        cache.object(forKey: PDFRenderRequestBox(request))
+    private func cachedImage(for key: PDFRenderCacheKey) -> CGImage? {
+        cache.object(forKey: PDFRenderCacheKeyBox(key))
     }
 
     func image(for request: PDFRenderRequest,
                documentURL: URL?,
                documentData: Data?,
+               documentIdentity: String? = nil,
                priority: Operation.QueuePriority = .normal,
                completion: @escaping (CGImage?) -> Void)
     {
@@ -93,8 +107,31 @@ final class PDFRenderService {
             requestObserver?(request)
         #endif
 
-        // Fast path: cache hit.
-        if let cached = cachedImage(for: request) {
+        lock.lock()
+        let requestGeneration = cancellationGeneration
+        lock.unlock()
+
+        #if DEBUG
+            if documentIdentity == nil {
+                identityComputationHook?()
+            }
+        #endif
+
+        let key = PDFRenderCacheKey(
+            request: request,
+            documentIdentity: documentIdentity ?? Self.documentIdentity(url: documentURL, data: documentData)
+        )
+
+        lock.lock()
+        guard requestGeneration == cancellationGeneration else {
+            lock.unlock()
+            DispatchQueue.main.async { completion(nil) }
+            return
+        }
+
+        // Fast path: cache hit. Holding the lock orders lookup with cancelAll().
+        if let cached = cachedImage(for: key) {
+            lock.unlock()
             let sp = PerfLog.begin("RenderCacheHit")
             PerfLog.end("RenderCacheHit", sp)
             #if DEBUG
@@ -110,13 +147,13 @@ final class PDFRenderService {
         #endif
 
         // Cancel any older lower-priority operation for the same request.
-        lock.lock()
-        if let op = operations[request], !op.isCancelled {
-            op.cancel()
-            operations[request] = nil
+        if let tracked = operations[key], !tracked.operation.isCancelled {
+            tracked.operation.cancel()
+            operations[key] = nil
         }
 
-        let box = PDFRenderRequestBox(request)
+        let box = PDFRenderCacheKeyBox(key)
+        let token = UUID()
         let op = BlockOperation { [weak self] in
             guard let self else { return }
             let signpostID = PerfLog.begin("RenderImage")
@@ -129,6 +166,13 @@ final class PDFRenderService {
             }
 
             PerfLog.end("RenderImage", signpostID)
+            lock.lock()
+            guard requestGeneration == cancellationGeneration,
+                  operations[key]?.token == token
+            else {
+                lock.unlock()
+                return
+            }
             if let image {
                 cache.setObject(image, forKey: box)
                 #if DEBUG
@@ -137,6 +181,7 @@ final class PDFRenderService {
                     }
                 #endif
             }
+            lock.unlock()
             DispatchQueue.main.async {
                 completion(image)
             }
@@ -144,13 +189,13 @@ final class PDFRenderService {
         op.completionBlock = { [weak self, weak op] in
             guard let self, let op else { return }
             lock.lock()
-            if let current = operations[request], current === op {
-                operations[request] = nil
+            if let current = operations[key], current.operation === op {
+                operations[key] = nil
             }
             lock.unlock()
         }
         op.queuePriority = priority
-        operations[request] = op
+        operations[key] = TrackedOperation(operation: op, token: token)
         lock.unlock()
 
         queue.addOperation(op)
@@ -161,6 +206,7 @@ final class PDFRenderService {
                    targetSize: CGSize,
                    documentURL: URL?,
                    documentData: Data?,
+                   documentIdentity: String? = nil,
                    priority: Operation.QueuePriority = .normal,
                    completion: @escaping (CGImage?) -> Void)
     {
@@ -173,20 +219,24 @@ final class PDFRenderService {
         image(for: request,
               documentURL: documentURL,
               documentData: documentData,
+              documentIdentity: documentIdentity,
               priority: priority,
               completion: completion)
     }
 
     func cancel(request: PDFRenderRequest) {
         lock.lock()
-        let op = operations.removeValue(forKey: request)
+        let matchingKeys = operations.keys.filter { $0.request == request }
+        let matchingOperations = matchingKeys.compactMap { operations.removeValue(forKey: $0)?.operation }
         lock.unlock()
-        op?.cancel()
+        matchingOperations.forEach { $0.cancel() }
     }
 
     func cancelAll() {
         lock.lock()
+        cancellationGeneration &+= 1
         operations.removeAll()
+        cache.removeAllObjects()
         lock.unlock()
         queue.cancelAllOperations()
     }
@@ -206,7 +256,8 @@ final class PDFRenderService {
         let keepRange = (center - window) ... (center + window)
 
         // First pass: collect keys to cancel (don't mutate during iteration)
-        for (request, _) in operations {
+        for (key, _) in operations {
+            let request = key.request
             guard case .thumbnail = request.kind else { continue }
             if !keepRange.contains(request.pageIndex) {
                 keysToCancel.append(request)
@@ -215,8 +266,9 @@ final class PDFRenderService {
 
         // Second pass: cancel and remove collected keys
         for request in keysToCancel {
-            if let operation = operations.removeValue(forKey: request) {
-                operation.cancel()
+            let keys = operations.keys.filter { $0.request == request }
+            for key in keys {
+                operations.removeValue(forKey: key)?.operation.cancel()
             }
         }
 
@@ -229,7 +281,8 @@ final class PDFRenderService {
         lock.lock()
         defer { lock.unlock() }
 
-        for (request, operation) in operations {
+        for (key, tracked) in operations {
+            let request = key.request
             guard case .thumbnail = request.kind else { continue }
 
             let distance = abs(request.pageIndex - center)
@@ -239,7 +292,7 @@ final class PDFRenderService {
             case 16 ... 30: .normal
             default: .low
             }
-            operation.queuePriority = priority
+            tracked.operation.queuePriority = priority
         }
     }
 
@@ -255,6 +308,18 @@ final class PDFRenderService {
         lock.unlock()
         return DebugInfo(queueOperationCount: opCount,
                          trackedOperationsCount: tracked)
+    }
+
+    private static func documentIdentity(url: URL?, data: Data?) -> String {
+        if let url {
+            var identity = Data(url.standardizedFileURL.path.utf8)
+            if let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]) {
+                identity.append(Data("|\(values.fileSize ?? -1)|\(values.contentModificationDate?.timeIntervalSince1970 ?? -1)".utf8))
+            }
+            return SHA256.hash(data: identity).map { String(format: "%02x", $0) }.joined()
+        }
+        guard let data else { return "no-document" }
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 }
 

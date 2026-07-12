@@ -223,7 +223,7 @@ public class PDFCoreLexer {
 
     /// Helper to peek/seek for parser
     public func seek(to offset: Int) {
-        cursor = offset
+        cursor = min(max(offset, 0), data.count)
     }
 
     public func currentOffset() -> Int {
@@ -256,8 +256,8 @@ public class PDFCoreLexer {
             if cursor < data.count, data[cursor] == 0x0A { cursor += 1 }
         }
 
-        if let len = length {
-            let end = min(cursor + len, data.count)
+        if let len = length, len >= 0 {
+            let end = cursor + min(len, data.count - cursor)
             let chunk = data.subdata(in: cursor ..< end)
             cursor = end
             return chunk

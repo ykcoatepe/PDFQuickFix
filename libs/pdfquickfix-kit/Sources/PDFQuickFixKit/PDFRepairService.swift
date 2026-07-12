@@ -2,6 +2,7 @@ import CoreGraphics
 import Foundation
 import os
 import PDFCore
+import PDFKit
 
 public enum PDFRepairOutcome: Error {
     case skippedTooLarge
@@ -92,6 +93,15 @@ public struct PDFRepairService {
         if fileSize > maxSizeBytes {
             outcome = .skippedTooLarge
             logger.info("PDFRepairService: Document too large (\(fileSize) bytes), skipping normalization.")
+            return inputURL
+        }
+
+        // Opening a valid document must be lossless. The home-grown PDFCore
+        // writer is a recovery tool, not a transparent round-trip serializer.
+        // Only enter the normalization path when the system PDF stack cannot
+        // open the original at all.
+        if PDFDocument(url: inputURL) != nil {
+            logger.info("PDFRepairService: Document opens normally; preserving original bytes.")
             return inputURL
         }
 

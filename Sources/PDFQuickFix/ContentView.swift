@@ -351,26 +351,38 @@ struct UnifiedToolbar: View {
             // File Operations
             Group {
                 Button(action: openStudioFile) {
-                    Label("Open", systemImage: "folder")
+                    Image(systemName: "folder")
+                        .frame(width: 28, height: 28)
                 }
-                .buttonStyle(GhostButtonStyle())
-
-                Button(action: { studioController.saveAs() }) {
-                    Label("Save As", systemImage: "square.and.arrow.down.on.square")
-                }
-                .buttonStyle(GhostButtonStyle())
-                .disabled(studioController.document == nil)
+                .buttonStyle(.plain)
+                .help("Open PDF…")
+                .accessibilityLabel("Open PDF")
 
                 Button(action: { studioController.saveDocument() }) {
-                    Label("Save", systemImage: "square.and.arrow.down")
+                    Image(systemName: "square.and.arrow.down")
+                        .frame(width: 28, height: 28)
                 }
-                .buttonStyle(GhostButtonStyle())
+                .buttonStyle(.plain)
+                .help("Save")
+                .accessibilityLabel("Save")
+                .disabled(studioController.document == nil)
+
+                Button(action: { studioController.saveAs() }) {
+                    Image(systemName: "square.and.arrow.down.on.square")
+                        .frame(width: 28, height: 28)
+                }
+                .buttonStyle(.plain)
+                .help("Save As…")
+                .accessibilityLabel("Save As")
                 .disabled(studioController.document == nil)
 
                 Button(action: { studioController.printDocument() }) {
-                    Label("Print", systemImage: "printer")
+                    Image(systemName: "printer")
+                        .frame(width: 28, height: 28)
                 }
-                .buttonStyle(GhostButtonStyle())
+                .buttonStyle(.plain)
+                .help("Print…")
+                .accessibilityLabel("Print")
                 .disabled(studioController.document == nil)
 
                 Menu {
@@ -387,17 +399,21 @@ struct UnifiedToolbar: View {
                     Divider()
                     Button("Sanitized PDF…") { studioController.exportSanitized() }
                 } label: {
-                    Label("Export", systemImage: "square.and.arrow.up")
+                    Image(systemName: "square.and.arrow.up")
                 }
                 .menuStyle(.borderlessButton)
-                .frame(height: 28)
+                .frame(width: 28, height: 28)
+                .help("Export")
+                .accessibilityLabel("Export")
                 .disabled(studioController.document == nil)
 
                 Button(action: { studioController.closeDocument() }) {
-                    Label("Close", systemImage: "xmark.circle")
+                    Image(systemName: "xmark.circle")
+                        .frame(width: 28, height: 28)
                 }
-                .buttonStyle(GhostButtonStyle())
+                .buttonStyle(.plain)
                 .help("Close Document")
+                .accessibilityLabel("Close Document")
                 .disabled(studioController.document == nil)
             }
         }
@@ -485,6 +501,7 @@ struct UnifiedToolbar: View {
 
             Button(action: { readerController.showDocumentHealth() }) {
                 Image(systemName: "cross.case")
+                    .frame(width: 28, height: 28)
                     .foregroundColor(AppTheme.Colors.primaryText)
             }
             .buttonStyle(.plain)
@@ -512,9 +529,11 @@ struct UnifiedToolbar: View {
     private var studioRightControls: some View {
         HStack(spacing: 12) {
             Button(action: { studioController.showDocumentHealth() }) {
-                Label("Health", systemImage: "cross.case")
+                Image(systemName: "cross.case")
             }
-            .buttonStyle(GhostButtonStyle())
+            .buttonStyle(.plain)
+            .help("Document Health")
+            .accessibilityLabel("Document Health")
             .disabled(studioController.document == nil)
 
             // Tools Menu
@@ -610,18 +629,24 @@ struct UnifiedToolbar: View {
                 quickFixURL = studioController.currentURL
                 showQuickFix = true
             }) {
-                Label("QuickFix", systemImage: "wand.and.sparkles")
+                Image(systemName: "wand.and.sparkles")
+                    .frame(width: 28, height: 28)
             }
-            .buttonStyle(GhostButtonStyle())
+            .buttonStyle(.plain)
+            .help("Open in QuickFix")
+            .accessibilityLabel("Open in QuickFix")
             .disabled(studioController.currentURL == nil)
 
             // Validate
             Button(action: {
                 studioController.runFullValidation()
             }) {
-                Label("Validate", systemImage: "checkmark.shield")
+                Image(systemName: "checkmark.shield")
+                    .frame(width: 28, height: 28)
             }
-            .buttonStyle(GhostButtonStyle())
+            .buttonStyle(.plain)
+            .help("Validate Document")
+            .accessibilityLabel("Validate Document")
             .disabled(studioController.document == nil || studioController.isFullValidationRunning)
 
             Divider().frame(height: 16)
