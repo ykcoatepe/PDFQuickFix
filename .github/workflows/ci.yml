@@ -17,6 +17,9 @@ jobs:
         run: make smoke-ocr-fallback
       - name: Run CI
         run: make ci-cloud
+      - name: Run cleanup review UI tests
+        run: make ui-test-cleanup-review
+        timeout-minutes: 15
       - name: Build Release for Artifact
         run: make build
       - name: Upload app artifact
