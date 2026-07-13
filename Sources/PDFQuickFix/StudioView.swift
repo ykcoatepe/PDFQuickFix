@@ -798,31 +798,11 @@ struct StudioView: View, Equatable {
     }
 
     private func save() {
-        guard let document = controller.document else { return }
-        if let url = controller.currentURL {
-            if document.write(to: url) {
-                controller.pushLog("Saved \(url.lastPathComponent)")
-            } else {
-                alertMessage = "Could not save to \(url.path)."
-            }
-        } else {
-            saveAs()
-        }
+        controller.saveDocument()
     }
 
     private func saveAs() {
-        guard let document = controller.document else { return }
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [.pdf]
-        panel.nameFieldStringValue = controller.currentURL?.lastPathComponent ?? "PDFQuickFix.pdf"
-        if panel.runModal() == .OK, let url = panel.url {
-            if document.write(to: url) {
-                controller.setDocument(document, url: url)
-                controller.pushLog("Exported to \(url.lastPathComponent)")
-            } else {
-                alertMessage = "Unable to export document."
-            }
-        }
+        controller.saveAs()
     }
 
     private func applyWatermark() {

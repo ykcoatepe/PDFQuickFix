@@ -79,6 +79,53 @@ final class PDFDocumentSanitizerTests: XCTestCase {
         XCTAssertEqual(sanitized.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "", "")
     }
 
+    func testRasterizeModeThrowsWhenPageRasterizationFails() throws {
+        let url = try TestPDFBuilder.makeSimplePDF(text: "Must not survive rasterization failure")
+        let validDocument = try XCTUnwrap(PDFDocument(url: url))
+        let validData = try XCTUnwrap(validDocument.dataRepresentation())
+        let document = RasterizationFailurePDFDocument(fallbackData: validData)
+
+        XCTAssertThrowsError(
+            try PDFDocumentSanitizer.sanitize(
+                document: document,
+                sourceURL: nil,
+                options: .init(rebuildMode: .rasterize, validationPageLimit: 1)
+            )
+        ) { error in
+            guard case PDFDocumentSanitizerError.pageRenderFailed = error else {
+                XCTFail("Expected pageRenderFailed, got \(error)")
+                return
+            }
+        }
+    }
+
+    func testRasterizeModePreservesEdgeTriggeredCancellation() throws {
+        let url = try TestPDFBuilder.makeSimplePDF(text: "Cancel rasterization")
+        let document = try XCTUnwrap(PDFDocument(url: url))
+        var cancellationChecks = 0
+
+        XCTAssertThrowsError(
+            try PDFDocumentSanitizer.sanitize(
+                document: document,
+                sourceURL: url,
+                options: .init(
+                    rebuildMode: .rasterize,
+                    validationPageLimit: 1,
+                    sanitizeAnnotations: false
+                ),
+                shouldCancel: {
+                    cancellationChecks += 1
+                    return cancellationChecks == 1
+                }
+            )
+        ) { error in
+            guard case PDFDocumentSanitizerError.cancelled = error else {
+                XCTFail("Expected cancelled, got \(error)")
+                return
+            }
+        }
+    }
+
     func testKeepEditableProfileRemovesOutline() throws {
         let url = try TestPDFBuilder.makeSimplePDF(text: "Editable Content")
         guard let document = PDFDocument(url: url) else {
@@ -237,5 +284,26 @@ private final class TrackingPDFDocument: PDFDocument {
     override func dataRepresentation() -> Data? {
         dataRepresentationCallCount += 1
         return super.dataRepresentation()
+    }
+}
+
+private final class RasterizationFailurePDFDocument: PDFDocument {
+    private let fallbackData: Data
+
+    init(fallbackData: Data) {
+        self.fallbackData = fallbackData
+        super.init()
+    }
+
+    override var pageCount: Int {
+        1
+    }
+
+    override func page(at index: Int) -> PDFPage? {
+        nil
+    }
+
+    override func dataRepresentation() -> Data? {
+        fallbackData
     }
 }

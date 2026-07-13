@@ -1280,9 +1280,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         self.document = document
         if let url {
             currentURL = url
-            // If setting document manually, we assume source=working unless specified otherwise.
-            // But this method is mostly for save-as or internal updates.
-            // Let's assume it updates working URL.
+            sourceURL = url
         }
         let profile = DocumentProfile.from(pageCount: document?.pageCount ?? 0)
         isLargeDocument = profile.isLarge
@@ -1846,14 +1844,12 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     }
 
     func saveAs() {
-        guard let doc = document else { return }
+        guard document != nil else { return }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.pdf]
         panel.nameFieldStringValue = (currentURL?.lastPathComponent ?? "PDFQuickFix.pdf")
         if panel.runModal() == .OK, let url = panel.url {
-            if writeDocument(doc, to: url) {
-                setDocument(document ?? doc, url: url)
-                sourceURL = url
+            if saveDocument(to: url) {
                 pushLog("Saved as \(url.lastPathComponent)")
             } else {
                 pushLog("Failed to save to \(url.path)")
@@ -1868,13 +1864,19 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
             return
         }
 
-        if writeDocument(doc, to: url) {
-            currentURL = url
-            sourceURL = url
+        if saveDocument(to: url) {
             pushLog("Saved \(url.lastPathComponent)")
         } else {
             pushLog("Save failed: \(url.lastPathComponent)")
         }
+    }
+
+    @discardableResult
+    func saveDocument(to url: URL) -> Bool {
+        guard let doc = document, writeDocument(doc, to: url) else { return false }
+        currentURL = url
+        sourceURL = url
+        return true
     }
 
     private func writeDocument(_ doc: PDFDocument, to url: URL) -> Bool {
