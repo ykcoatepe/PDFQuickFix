@@ -8,6 +8,21 @@ settings:
   base:
     SWIFT_VERSION: 5.9
 packages: {}
+schemes:
+  PDFQuickFix:
+    build:
+      targets:
+        PDFQuickFix: all
+    test:
+      targets:
+        - PDFQuickFixTests
+  PDFQuickFixUI:
+    build:
+      targets:
+        PDFQuickFix: all
+    test:
+      targets:
+        - PDFQuickFixUITests
 targets:
   PDFQuickFix:
     type: application
@@ -105,3 +120,16 @@ targets:
       base:
         GENERATE_INFOPLIST_FILE: YES
         CODE_SIGN_IDENTITY: "-"
+  PDFQuickFixUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Tests/PDFQuickFixUITests
+    dependencies:
+      - target: PDFQuickFix
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_IDENTITY: "-"
+        TEST_TARGET_NAME: PDFQuickFix

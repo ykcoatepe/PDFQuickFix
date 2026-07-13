@@ -18,6 +18,21 @@ struct ContentView: View {
     @State private var showingCropSheet = false
     @State private var showingMetadataSheet = false
 
+    #if DEBUG
+        private let cleanupReviewUITestMode: AppMode?
+        @State private var cleanupReviewUITestFixtureURL: URL?
+    #endif
+
+    init() {
+        var initialMode: AppMode = .reader
+        #if DEBUG
+            let requestedMode = CleanupReviewUITestSupport.requestedMode()
+            cleanupReviewUITestMode = requestedMode
+            initialMode = requestedMode ?? .reader
+        #endif
+        _currentMode = State(initialValue: initialMode)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             UnifiedToolbar(
@@ -67,6 +82,9 @@ struct ContentView: View {
         .environmentObject(documentHub)
         .task {
             readerController.configureCopilotAI(settings: aiSettings, interactionStore: aiInteractions)
+            #if DEBUG
+                prepareCleanupReviewUITestFixtureIfNeeded()
+            #endif
         }
         .onChange(of: aiSettings.selectedProvider) { _ in
             readerController.configureCopilotAI(settings: aiSettings, interactionStore: aiInteractions)
@@ -78,7 +96,52 @@ struct ContentView: View {
             // When launched via "Open With" or file double-click
             readerController.open(url: url)
         }
+        #if DEBUG
+        .overlay(alignment: .bottomLeading) {
+                if isCleanupReviewUITestFixtureReady {
+                    Text("UI Test Fixture Ready")
+                        .font(.caption2)
+                        .accessibilityIdentifier("ui-test-fixture-ready")
+                        .padding(4)
+                }
+            }
+        #endif
     }
+
+    #if DEBUG
+        private var isCleanupReviewUITestFixtureReady: Bool {
+            switch cleanupReviewUITestMode {
+            case .reader:
+                readerController.document != nil
+            case .studio:
+                studioController.document != nil
+            case nil, .quickFix, .split:
+                false
+            }
+        }
+
+        private func prepareCleanupReviewUITestFixtureIfNeeded() {
+            guard let mode = cleanupReviewUITestMode,
+                  cleanupReviewUITestFixtureURL == nil
+            else {
+                return
+            }
+            do {
+                let fixtureURL = try CleanupReviewUITestSupport.makeFixturePDF()
+                cleanupReviewUITestFixtureURL = fixtureURL
+                switch mode {
+                case .reader:
+                    readerController.open(url: fixtureURL)
+                case .studio:
+                    studioController.open(url: fixtureURL)
+                case .quickFix, .split:
+                    break
+                }
+            } catch {
+                assertionFailure("Unable to create cleanup review UI fixture: \(error)")
+            }
+        }
+    #endif
 }
 
 enum AppMode: String, CaseIterable, Identifiable {
@@ -696,5 +759,4 @@ struct UnifiedToolbar: View {
             studioController.open(url: url)
         }
     }
-
 }

@@ -6,7 +6,7 @@ PROJECT := $(APP).xcodeproj
 USER ?= $(shell id -un)
 export USER
 
-.PHONY: bootstrap generate security-check build run clean dmg debug release smoke-ocr-fallback
+.PHONY: bootstrap generate security-check build run clean dmg debug release smoke-ocr-fallback ui-test-cleanup-review
 
 bootstrap:
 	brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
@@ -56,3 +56,6 @@ sanity-fast:
 
 smoke-ocr-fallback:
 	./scripts/smoke_ocr_fallback.sh
+
+ui-test-cleanup-review: generate
+	./scripts/run_xcodebuild.sh -project $(PROJECT) -scheme PDFQuickFixUI -destination 'platform=macOS' -derivedDataPath $(DERIVED)/ui-tests test

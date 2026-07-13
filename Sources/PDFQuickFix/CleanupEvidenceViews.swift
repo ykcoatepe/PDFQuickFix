@@ -21,6 +21,8 @@ struct CleanupEvidenceSheet: View {
                 Label(verdictTitle, systemImage: verdictIcon)
                     .font(.headline)
                     .foregroundStyle(verdictColor)
+                    .accessibilityLabel(verdictTitle)
+                    .accessibilityIdentifier("cleanup-evidence-verdict-\(evidence.verdict.rawValue)")
             }
 
             HStack(spacing: 12) {
@@ -185,7 +187,9 @@ struct CleanupExportReviewSheet: View {
             HStack {
                 Picker("Review", selection: $selectedTab) {
                     ForEach(ReviewTab.allCases) { tab in
-                        Text(tab.rawValue).tag(tab)
+                        Text(tab.rawValue)
+                            .accessibilityIdentifier(tab == .evidence ? "cleanup-review-tab-evidence" : "cleanup-review-tab-comparison")
+                            .tag(tab)
                     }
                 }
                 .pickerStyle(.segmented)
