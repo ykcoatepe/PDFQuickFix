@@ -16,10 +16,10 @@ struct SplitSourceCard: View {
                 .foregroundColor(AppTheme.Colors.primaryText)
 
             ZStack {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                RoundedRectangle(cornerRadius: AppTheme.Metrics.cardCornerRadius, style: .continuous)
                     .strokeBorder(AppTheme.Colors.cardBorder.opacity(0.7), lineWidth: 0.5)
                     .background(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        RoundedRectangle(cornerRadius: AppTheme.Metrics.cardCornerRadius, style: .continuous)
                             .fill(isTargeted ? AppTheme.Colors.dropZoneFillHighlighted : AppTheme.Colors.cardBackground.opacity(0.6))
                     )
 
@@ -240,7 +240,7 @@ struct SplitDestinationCard: View {
             .padding(12)
             .background(AppTheme.Colors.cardBackground.opacity(0.6))
             .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                RoundedRectangle(cornerRadius: AppTheme.Metrics.cardCornerRadius, style: .continuous)
                     .stroke(AppTheme.Colors.cardBorder.opacity(0.6), lineWidth: 0.5)
             )
             .foregroundColor(AppTheme.Colors.primaryText)
@@ -369,7 +369,7 @@ struct MergeSourceListCard: View {
                 }
                 .frame(minHeight: 170, maxHeight: 220)
                 .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    RoundedRectangle(cornerRadius: AppTheme.Metrics.smallCornerRadius, style: .continuous)
                         .fill(isTargeted ? AppTheme.Colors.dropZoneFillHighlighted : AppTheme.Colors.cardBackground.opacity(0.6))
                 )
                 .onDrop(of: [.fileURL], isTargeted: $isTargeted) { providers in
@@ -431,7 +431,7 @@ struct MergeOptionsCard: View {
             .padding(12)
             .background(AppTheme.Colors.cardBackground.opacity(0.6))
             .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                RoundedRectangle(cornerRadius: AppTheme.Metrics.cardCornerRadius, style: .continuous)
                     .stroke(AppTheme.Colors.cardBorder.opacity(0.6), lineWidth: 0.5)
             )
             .foregroundColor(AppTheme.Colors.primaryText)
@@ -471,7 +471,7 @@ struct MergeDestinationCard: View {
             .padding(12)
             .background(AppTheme.Colors.cardBackground.opacity(0.6))
             .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                RoundedRectangle(cornerRadius: AppTheme.Metrics.cardCornerRadius, style: .continuous)
                     .stroke(AppTheme.Colors.cardBorder.opacity(0.6), lineWidth: 0.5)
             )
             .foregroundColor(AppTheme.Colors.primaryText)

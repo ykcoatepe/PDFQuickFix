@@ -539,7 +539,7 @@ struct BatchSanitizeSheet: View {
             }
 
             Button {
-                withAnimation(.easeInOut(duration: 0.18)) {
+                withAnimation(AppTheme.Motion.panelShift) {
                     isFileEvidenceExpanded.toggle()
                 }
             } label: {

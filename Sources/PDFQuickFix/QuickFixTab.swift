@@ -82,7 +82,7 @@ struct QuickFixTab: View {
             VStack(alignment: .leading, spacing: 24) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Cleanup Workbench")
-                        .appFont(.largeTitle, weight: .bold)
+                        .font(AppTheme.Typography.displayXL)
                     Text("Repair, redact, replace, OCR, and local AI workflows for outbound PDFs that stay on your Mac.")
                         .appFont(.body)
                         .foregroundStyle(AppTheme.Colors.secondaryText)
@@ -718,7 +718,7 @@ struct QuickFixTab: View {
         switch verdict {
         case .passed: AppTheme.Colors.success
         case .reviewRequired: AppTheme.Colors.warning
-        case .failed: .red
+        case .failed: AppTheme.Colors.error
         }
     }
 

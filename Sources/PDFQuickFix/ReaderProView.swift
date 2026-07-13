@@ -1923,7 +1923,7 @@ struct ReaderHomeView: View {
                                     .tracking(1.6)
                                     .foregroundColor(AppTheme.Colors.accent)
                                 Text("Open a PDF to inspect it privately and prepare a safer outbound copy")
-                                    .font(.system(size: 24, weight: .bold))
+                                    .font(AppTheme.Typography.displayL)
                                     .foregroundColor(AppTheme.Colors.primaryText)
                                     .multilineTextAlignment(.center)
                                     .lineLimit(2)
@@ -2089,7 +2089,7 @@ struct ReaderShellView: View {
             // 1. Unified Toolbar
             HStack(spacing: 12) {
                 Text("Reader")
-                    .font(.system(.headline, design: .rounded))
+                    .font(AppTheme.Typography.title)
                     .foregroundColor(AppTheme.Colors.primaryText)
 
                 Spacer()
@@ -2240,7 +2240,7 @@ struct ReaderShellView: View {
 private struct ReaderToolbarButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(.subheadline, design: .rounded).weight(.semibold))
+            .font(AppTheme.Typography.section)
             .foregroundColor(AppTheme.Colors.primaryText)
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
@@ -2638,7 +2638,7 @@ struct ReaderCanvas: View {
                     if controller.isPartialLoad {
                         HStack {
                             Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundColor(.yellow)
+                                .foregroundColor(AppTheme.Colors.warning)
                             Text("Partial Load: First 50 pages")
                                 .font(.caption)
                                 .fontWeight(.medium)
@@ -2664,7 +2664,7 @@ struct ReaderCanvas: View {
                     if controller.isMassiveDocument {
                         HStack(spacing: 8) {
                             Image(systemName: "bolt.fill")
-                                .foregroundColor(.yellow)
+                                .foregroundColor(AppTheme.Colors.warning)
                             Text("Performance Mode • \(controller.document?.pageCount ?? 0) pages")
                                 .font(.caption.weight(.medium))
                             Spacer()

@@ -133,10 +133,13 @@ This means:
   AI stays supportive, not visually dominant. The gain is trust. The cost is less immediate "AI product" signaling.
 
 ## Implementation Notes
-- There are currently two parallel token systems in the app:
-  - `AppTheme` in [Sources/PDFQuickFix/AppTheme.swift](/Users/yordamkocatepe/Projects/PDFQuickFix/Sources/PDFQuickFix/AppTheme.swift:6)
-  - `AppColors` / `AppLayout` in [Sources/PDFQuickFix/Utilities.swift](/Users/yordamkocatepe/Projects/PDFQuickFix/Sources/PDFQuickFix/Utilities.swift:198)
-- Future UI work should converge these into one token source instead of extending both.
+- `AppTheme` in [Sources/PDFQuickFix/AppTheme.swift](/Users/yordamkocatepe/Projects/PDFQuickFix/Sources/PDFQuickFix/AppTheme.swift:6) is now the single token source. The old parallel `AppColors` / `AppLayout` system has been removed; do not reintroduce a second token namespace.
+- Token groups under `AppTheme`:
+  - `Colors` — surfaces, text, accents, and semantic signals (`success`/`warning`/`error`), plus `onAccent` (warm off-white for labels on the vermilion accent, honoring "avoid pure white on pure black").
+  - `Typography` — the DESIGN.md type scale as named SwiftUI `Font` tokens: `displayXL` (28), `displayL` (24), `title` (20), `section` (15 semibold), `body` (13), `bodySmall` (12), `caption` (11), `monoSmall` (11, SF Mono). All use `design: .default` (SF Pro Display/Text) except `monoSmall`. The legacy `.rounded` design has been removed app-wide (including the `appFont` helper).
+  - `Metrics` — corner radii snapped to the 8 / 12 / 18 / 24 scale, plus padding and border widths.
+  - `Motion` — durations (micro 80ms, short 160ms, medium 240ms, long 360ms) and pre-built animations: `enter` (easeOut), `panelShift` (easeInOut), `dismiss` (easeIn), `press` (easeInOut micro). `Animation.sidebarTransition` / `panelTransition` now delegate to these.
+- Future UI work should extend `AppTheme` tokens rather than hard-coding fonts, radii, colors, or durations at call sites.
 - Current UI already hints at the right direction:
   - dark shell and focused toolbar in [ContentView.swift](/Users/yordamkocatepe/Projects/PDFQuickFix/Sources/PDFQuickFix/ContentView.swift:136)
   - document-first empty state in [ReaderProView.swift](/Users/yordamkocatepe/Projects/PDFQuickFix/Sources/PDFQuickFix/ReaderProView.swift:970)
@@ -170,3 +173,4 @@ This means:
 | 2026-04-18 | Kept app shell dark-first | Preserves current product feel while allowing light paper surfaces where outputs matter |
 | 2026-04-18 | Chose native SF Pro / SF Mono typography | Best balance of Mac-native trust, readability, and implementation realism |
 | 2026-04-18 | Introduced warm vermilion + oxidized teal accents | Makes the product memorable without drifting into trendy AI color language |
+| 2026-07-13 | Phase 1 token consolidation into `AppTheme` | Added `Typography` and `Motion` token groups, snapped `Metrics` radii to the 8/12/18/24 scale, removed the `.rounded` type design and raw `.white`/`.red`/`.yellow` literals, and retired the parallel `AppColors`/`AppLayout` system so there is one source of truth |

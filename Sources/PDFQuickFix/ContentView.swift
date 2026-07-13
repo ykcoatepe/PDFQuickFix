@@ -188,17 +188,17 @@ struct AppModeSwitcher: View {
                     currentMode = mode
                 } label: {
                     Text(mode.rawValue)
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .font(AppTheme.Typography.bodySmall.weight(.semibold))
                         .foregroundColor(currentMode == mode ? AppTheme.Colors.primaryText : AppTheme.Colors.secondaryText)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 8)
                         .frame(minWidth: 84)
                         .background(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            RoundedRectangle(cornerRadius: AppTheme.Metrics.smallCornerRadius, style: .continuous)
                                 .fill(currentMode == mode ? AppTheme.Colors.accentSoft : Color.clear)
                         )
                         .overlay(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            RoundedRectangle(cornerRadius: AppTheme.Metrics.smallCornerRadius, style: .continuous)
                                 .stroke(currentMode == mode ? AppTheme.Colors.accent.opacity(0.55) : Color.clear, lineWidth: 1)
                         )
                 }
@@ -207,11 +207,11 @@ struct AppModeSwitcher: View {
         }
         .padding(4)
         .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: AppTheme.Metrics.cardCornerRadius, style: .continuous)
                 .fill(AppTheme.Colors.elevatedBackground)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: AppTheme.Metrics.cardCornerRadius, style: .continuous)
                 .stroke(AppTheme.Colors.cardBorder, lineWidth: 1)
         )
     }

@@ -157,7 +157,7 @@ struct CleanupEvidenceSheet: View {
         switch evidence.verdict {
         case .passed: AppTheme.Colors.success
         case .reviewRequired: AppTheme.Colors.warning
-        case .failed: .red
+        case .failed: AppTheme.Colors.error
         }
     }
 
@@ -327,7 +327,7 @@ struct CleanupComparisonSheet: View {
                                 }
                                 .padding(8)
                                 .background(selectedPageNumber == pageNumber ? AppTheme.Colors.accent.opacity(0.18) : AppTheme.Colors.cardBackground)
-                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                .clipShape(RoundedRectangle(cornerRadius: AppTheme.Metrics.smallCornerRadius, style: .continuous))
                             }
                             .buttonStyle(.plain)
                         }
@@ -347,7 +347,7 @@ struct CleanupComparisonSheet: View {
         }
         .padding(10)
         .background(AppTheme.Colors.cardBackground.opacity(0.55))
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: AppTheme.Metrics.cardCornerRadius, style: .continuous))
     }
 
     private func pagePreview(title: String, document: PDFDocument?) -> some View {
@@ -365,7 +365,7 @@ struct CleanupComparisonSheet: View {
                     .scaledToFit()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Color.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: AppTheme.Metrics.smallCornerRadius, style: .continuous))
             } else {
                 VStack(spacing: 8) {
                     Image(systemName: "doc.questionmark")
