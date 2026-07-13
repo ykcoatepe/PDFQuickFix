@@ -15,8 +15,8 @@ PDFQuickFix is best thought of as a **privacy-first PDF reader/editor workstatio
 **Privacy-first cleanup workflows**
 - **Sanitize for Sharing** export for safer one-off outbound copies
 - Export **optimized**, **metadata-clean**, **flattened**, **encrypted**, **image**, **text**, and **selected-page** copies
-- **Finder Quick Action**: right-click PDFs in Finder and choose **Quick Actions → PDFQuickFix/Sanitize PDF for Sharing**
-- **Sanitize Folder** batch workflow for processing a full directory from the app
+- **Finder Quick Action**: right-click PDFs in Finder, sanitize them, then review Cleanup Evidence and before/after pages from the receipt
+- **Sanitize Folder** batch workflow with aggregate and per-file verdicts plus a privacy-safe JSON evidence manifest
 - **Privacy / Light / Keep Editable** sanitize profiles for different output goals
 - **Secure redaction** by patterns (IBAN, TCKN, PNR, TC- tail) + your own regex
 - **Find → Replace** visual edits (white patch + new text)
@@ -75,7 +75,7 @@ PDFQuickFix is best thought of as a **privacy-first PDF reader/editor workstatio
 - CLI: `pdfquickfix-cli sanitize-batch <inputDir> <outputDir>`
 - Guide: [Sanitize for Sharing](docs/sanitize-for-sharing.md)
 
-The Finder service accepts one or more selected PDFs, writes side-by-side `-sanitized.pdf` outbound copies, leaves originals untouched, and shows a receipt window before revealing the first output in Finder. The Finder, batch, export, and CLI surfaces use the same sanitize core so you can apply the same privacy workflow interactively or in repeatable local automation.
+The Finder service accepts one or more selected PDFs, writes side-by-side `-sanitized.pdf` outbound copies, leaves originals untouched, and shows a receipt with Cleanup Evidence and before/after review before revealing the first output in Finder. The app batch receipt adds aggregate and per-file verdicts and can export a privacy-safe evidence manifest. The Finder, batch, export, and CLI surfaces use the same sanitize core so you can apply the same privacy workflow interactively or in repeatable local automation.
 
 ## Build (XcodeGen)
 1. Install Xcode 15+ and Command Line Tools.

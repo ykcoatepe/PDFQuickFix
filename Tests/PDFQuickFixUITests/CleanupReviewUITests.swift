@@ -9,6 +9,28 @@ final class CleanupReviewUITests: XCTestCase {
         try verifySanitizedExportReview(mode: "studio")
     }
 
+    func testBatchReceiptPresentsFileEvidenceAndExportAction() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-test-batch-evidence"]
+        app.launch()
+
+        XCTAssertTrue(app.staticTexts["Batch cleanup station"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["Run Receipt"].exists)
+        XCTAssertTrue(app.staticTexts["Cleanup Evidence"].exists)
+        XCTAssertTrue(app.buttons["Export Evidence…"].exists)
+
+        let disclosure = app.buttons["File evidence (1)"]
+        XCTAssertTrue(disclosure.waitForExistence(timeout: 5))
+        disclosure.click()
+
+        let viewEvidence = app.descendants(matching: .any)["View Evidence"]
+        XCTAssertTrue(viewEvidence.waitForExistence(timeout: 5))
+        viewEvidence.click()
+
+        XCTAssertTrue(app.staticTexts["Cleanup Evidence"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Sanitized Export"].exists)
+    }
+
     private func verifySanitizedExportReview(mode: String) throws {
         let app = XCUIApplication()
         app.launchArguments = ["--ui-test-cleanup-review", mode]

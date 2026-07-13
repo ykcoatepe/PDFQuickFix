@@ -29,6 +29,34 @@ final class CleanupReview: Identifiable, Sendable {
     }
 }
 
+struct CleanupSanitizeAssessment {
+    let verdict: CleanupEvidenceVerdict
+    let warnings: [String]
+
+    static func evaluate(sourcePageCount: Int,
+                         outputPageCount: Int,
+                         remainingMetadataFields: [String]) -> CleanupSanitizeAssessment
+    {
+        var warnings: [String] = []
+        if sourcePageCount != outputPageCount {
+            warnings.append("Source and output page counts differ.")
+        }
+        if !remainingMetadataFields.isEmpty {
+            warnings.append(
+                "Output metadata fields remain: \(remainingMetadataFields.joined(separator: ", "))."
+            )
+        }
+        let verdict: CleanupEvidenceVerdict = if sourcePageCount != outputPageCount {
+            .failed
+        } else if warnings.isEmpty {
+            .passed
+        } else {
+            .reviewRequired
+        }
+        return CleanupSanitizeAssessment(verdict: verdict, warnings: warnings)
+    }
+}
+
 enum CleanupReviewBuilder {
     static func build(sourceDocument: PDFDocument,
                       sourceFileName: String,
@@ -54,28 +82,19 @@ enum CleanupReviewBuilder {
                 source: sourceSnapshot,
                 output: outputDocument
             )
-            var warnings: [String] = []
-            if comparison.sourcePageCount != comparison.outputPageCount {
-                warnings.append("Source and output page counts differ.")
-            }
-            if !comparison.metadataFieldsRemaining.isEmpty {
-                warnings.append("Output metadata fields remain: \(comparison.metadataFieldsRemaining.joined(separator: ", ")).")
-            }
-            let verdict: CleanupEvidenceVerdict = if comparison.sourcePageCount != comparison.outputPageCount {
-                .failed
-            } else if warnings.isEmpty {
-                .passed
-            } else {
-                .reviewRequired
-            }
+            let assessment = CleanupSanitizeAssessment.evaluate(
+                sourcePageCount: comparison.sourcePageCount,
+                outputPageCount: comparison.outputPageCount,
+                remainingMetadataFields: comparison.metadataFieldsRemaining
+            )
             let evidence = try CleanupEvidenceGenerator.generate(
                 sourceURL: snapshotURL,
                 outputURL: outputURL,
                 operationKind: .sanitize,
                 sanitizeProfile: profile.rawValue,
                 comparison: comparison.evidenceSummary,
-                verdict: verdict,
-                warnings: warnings
+                verdict: assessment.verdict,
+                warnings: assessment.warnings
             )
             .replacingSourceFileName(with: URL(fileURLWithPath: sourceFileName).lastPathComponent)
 

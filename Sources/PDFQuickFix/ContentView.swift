@@ -21,6 +21,7 @@ struct ContentView: View {
     #if DEBUG
         private let cleanupReviewUITestMode: AppMode?
         @State private var cleanupReviewUITestFixtureURL: URL?
+        @State private var batchEvidenceUITestWindowController: BatchSanitizeWindowController?
     #endif
 
     init() {
@@ -84,6 +85,7 @@ struct ContentView: View {
             readerController.configureCopilotAI(settings: aiSettings, interactionStore: aiInteractions)
             #if DEBUG
                 prepareCleanupReviewUITestFixtureIfNeeded()
+                prepareBatchEvidenceUITestWindowIfNeeded()
             #endif
         }
         .onChange(of: aiSettings.selectedProvider) { _ in
@@ -139,6 +141,26 @@ struct ContentView: View {
                 }
             } catch {
                 assertionFailure("Unable to create cleanup review UI fixture: \(error)")
+            }
+        }
+
+        @MainActor
+        private func prepareBatchEvidenceUITestWindowIfNeeded() {
+            guard CleanupReviewUITestSupport.batchEvidenceRequested(),
+                  batchEvidenceUITestWindowController == nil
+            else {
+                return
+            }
+            do {
+                let viewModel = try CleanupReviewUITestSupport.makeBatchEvidenceViewModel()
+                let controller = BatchSanitizeWindowController(viewModel: viewModel)
+                controller.window?.level = .floating
+                controller.showWindow(nil)
+                controller.window?.makeKeyAndOrderFront(nil)
+                controller.window?.orderFrontRegardless()
+                batchEvidenceUITestWindowController = controller
+            } catch {
+                assertionFailure("Unable to create batch evidence UI fixture: \(error)")
             }
         }
     #endif

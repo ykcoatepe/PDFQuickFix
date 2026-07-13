@@ -55,7 +55,7 @@ final class FinderQuickActionSanitizerTests: XCTestCase {
 
         let originalData = try Data(contentsOf: sourceURL)
 
-        try FinderQuickActionSanitizer.sanitizeFile(
+        _ = try FinderQuickActionSanitizer.sanitizeFile(
             sourceURL: sourceURL,
             outputURL: outputURL,
             profile: .lightClean
@@ -64,6 +64,33 @@ final class FinderQuickActionSanitizerTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: outputURL.path))
         XCTAssertEqual(try Data(contentsOf: sourceURL), originalData)
         XCTAssertNotNil(PDFDocument(url: outputURL))
+    }
+
+    func testSanitizeFileReturnsCleanupReviewForFinderReceipt() throws {
+        let sourceURL = try TestPDFBuilder.makeSimplePDF(text: "Private finder handoff")
+        let outputURL = sourceURL
+            .deletingLastPathComponent()
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("pdf")
+        defer {
+            try? FileManager.default.removeItem(at: sourceURL)
+            try? FileManager.default.removeItem(at: outputURL)
+        }
+
+        let outcome = try FinderQuickActionSanitizer.sanitizeFile(
+            sourceURL: sourceURL,
+            outputURL: outputURL,
+            profile: .lightClean
+        )
+        let review = try XCTUnwrap(outcome.review)
+        defer { review.removeTemporarySource() }
+
+        XCTAssertNil(outcome.reviewErrorDescription)
+        XCTAssertEqual(review.outputURL, outputURL)
+        XCTAssertEqual(review.evidence.source.fileName, sourceURL.lastPathComponent)
+        XCTAssertEqual(review.evidence.sanitizeProfile, SanitizeProfile.lightClean.rawValue)
+        XCTAssertNotEqual(review.evidence.verdict, .failed)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: review.sourceSnapshotURL.path))
     }
 
     private func makeTemporaryDirectory() throws -> URL {
