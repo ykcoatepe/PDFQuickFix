@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-07-13
+
 ### Added
 - Cleanup Evidence receipts for QuickFix and sanitize outputs with source/output SHA-256 hashes, document facts, OCR/redaction counters, warnings, and Passed/Review/Failed verdicts
 - Before/after cleanup review with changed-page navigation, visual and text-layer comparison, and removed metadata labels
