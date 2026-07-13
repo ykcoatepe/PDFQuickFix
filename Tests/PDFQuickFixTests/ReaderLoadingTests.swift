@@ -32,6 +32,43 @@ final class ReaderLoadingTests: XCTestCase {
         XCTAssertFalse(controller.isLoadingDocument)
     }
 
+    func testReaderControllerNewestOpenWinsWhenEarlierRepairCompletesLast() throws {
+        let firstURL = try TestPDFBuilder.makeSimplePDF(text: "First reader document")
+        let secondURL = try TestPDFBuilder.makeMultipagePDF(pageCount: 2, textPrefix: "Second reader document")
+        let firstRepairStarted = expectation(description: "First reader repair started")
+        let releaseFirstRepair = DispatchSemaphore(value: 0)
+        let controller = ReaderControllerPro(repairSourceURL: { url in
+            if url == firstURL {
+                firstRepairStarted.fulfill()
+                releaseFirstRepair.wait()
+            }
+            return url
+        })
+
+        controller.open(url: firstURL)
+        wait(for: [firstRepairStarted], timeout: 5.0)
+
+        let secondOpen = expectation(description: "Second reader document opened")
+        controller.$sourceURL
+            .first { $0 == secondURL }
+            .sink { _ in secondOpen.fulfill() }
+            .store(in: &cancellables)
+        controller.open(url: secondURL)
+        wait(for: [secondOpen], timeout: 5.0)
+
+        releaseFirstRepair.signal()
+        let staleCompletionWindow = expectation(description: "Stale reader completion window elapsed")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            staleCompletionWindow.fulfill()
+        }
+        wait(for: [staleCompletionWindow], timeout: 2.0)
+
+        XCTAssertEqual(controller.sourceURL, secondURL)
+        XCTAssertEqual(controller.currentURL, secondURL)
+        XCTAssertEqual(controller.document?.pageCount, 2)
+        XCTAssertFalse(controller.isLoadingDocument)
+    }
+
     func testReaderControllerOpensEncryptedPDFWithPasswordProvider() throws {
         let controller = ReaderControllerPro(passwordProvider: { _ in "user-pass" })
         let pdfURL = try makeEncryptedPDF()
@@ -145,6 +182,44 @@ final class ReaderLoadingTests: XCTestCase {
 
         wait(for: [expectation], timeout: 5.0)
         XCTAssertNotNil(controller.document)
+        XCTAssertFalse(controller.isDocumentLoading)
+    }
+
+    func testStudioControllerNewestOpenWinsWhenEarlierRepairCompletesLast() throws {
+        let firstURL = try TestPDFBuilder.makeSimplePDF(text: "First studio document")
+        let secondURL = try TestPDFBuilder.makeMultipagePDF(pageCount: 2, textPrefix: "Second studio document")
+        let firstRepairStarted = expectation(description: "First studio repair started")
+        let releaseFirstRepair = DispatchSemaphore(value: 0)
+        let controller = StudioController(repairSourceURL: { url in
+            if url == firstURL {
+                firstRepairStarted.fulfill()
+                releaseFirstRepair.wait()
+            }
+            return url
+        })
+        controller.attach(pdfView: PDFView())
+
+        controller.open(url: firstURL)
+        wait(for: [firstRepairStarted], timeout: 5.0)
+
+        let secondOpen = expectation(description: "Second studio document opened")
+        controller.$sourceURL
+            .first { $0 == secondURL }
+            .sink { _ in secondOpen.fulfill() }
+            .store(in: &cancellables)
+        controller.open(url: secondURL)
+        wait(for: [secondOpen], timeout: 5.0)
+
+        releaseFirstRepair.signal()
+        let staleCompletionWindow = expectation(description: "Stale studio completion window elapsed")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            staleCompletionWindow.fulfill()
+        }
+        wait(for: [staleCompletionWindow], timeout: 2.0)
+
+        XCTAssertEqual(controller.sourceURL, secondURL)
+        XCTAssertEqual(controller.currentURL, secondURL)
+        XCTAssertEqual(controller.document?.pageCount, 2)
         XCTAssertFalse(controller.isDocumentLoading)
     }
 

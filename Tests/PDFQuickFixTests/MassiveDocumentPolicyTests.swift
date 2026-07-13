@@ -49,14 +49,20 @@ final class MassiveDocumentPolicyTests: XCTestCase {
         controller.isMassiveDocument = false
 
         var requests: [PDFRenderRequest] = []
+        let requestsFinished = expectation(description: "Prefetch requests submitted")
+        requestsFinished.expectedFulfillmentCount = 13
         #if DEBUG
-            PDFRenderService.shared.requestObserver = { requests.append($0) }
+            PDFRenderService.shared.requestObserver = {
+                requests.append($0)
+                requestsFinished.fulfill()
+            }
             defer { PDFRenderService.shared.requestObserver = nil }
         #endif
 
         controller.prefetchThumbnails(around: 10, window: 2, farWindow: 6)
 
         #if DEBUG
+            wait(for: [requestsFinished], timeout: 5.0)
             // Expect near window (5 requests) + far window (8 requests) = 13
             XCTAssertEqual(requests.count, 13)
         #else

@@ -44,4 +44,19 @@ final class QuickFixOptionsModelTests: XCTestCase {
         XCTAssertFalse(parameters.options.doOCR)
         XCTAssertEqual(parameters.languages, ["en-US"])
     }
+
+    func testQuickVerifyOutcomeMatchesOnlyWhenFixtureRecognized() {
+        // Fixture text is the success case.
+        XCTAssertEqual(QuickVerifyOCRSample.outcome(forText: QuickVerifyOCRSample.text), .matched)
+        XCTAssertEqual(QuickVerifyOCRSample.outcome(forText: "the ocr layer works"), .matched)
+    }
+
+    func testQuickVerifyOutcomeWarnsWhenTextDetectedButWrong() {
+        XCTAssertEqual(QuickVerifyOCRSample.outcome(forText: "totally unrelated words"), .textWithoutMatch)
+    }
+
+    func testQuickVerifyOutcomeFailsWhenNoText() {
+        XCTAssertEqual(QuickVerifyOCRSample.outcome(forText: ""), .noText)
+        XCTAssertEqual(QuickVerifyOCRSample.outcome(forText: "   \n  "), .noText)
+    }
 }

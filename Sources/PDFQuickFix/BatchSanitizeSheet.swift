@@ -30,12 +30,18 @@ final class BatchSanitizeCoordinator: ObservableObject {
 }
 
 /// Window controller for the batch sanitize panel.
+@MainActor
 final class BatchSanitizeWindowController: NSWindowController {
     var onClose: (() -> Void)?
+    private var closeObserver: NSObjectProtocol?
 
     convenience init() {
+        self.init(viewModel: BatchSanitizeViewModel())
+    }
+
+    convenience init(viewModel: BatchSanitizeViewModel) {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 500, height: 400),
+            contentRect: NSRect(x: 0, y: 0, width: 680, height: 720),
             styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
             defer: false
@@ -46,22 +52,25 @@ final class BatchSanitizeWindowController: NSWindowController {
 
         self.init(window: window)
 
-        let viewModel = BatchSanitizeViewModel()
         let contentView = BatchSanitizeSheet(viewModel: viewModel)
         window.contentView = NSHostingView(rootView: contentView)
 
         // Handle close
-        NotificationCenter.default.addObserver(
+        closeObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.willCloseNotification,
             object: window,
             queue: .main
         ) { [weak self] _ in
-            self?.onClose?()
+            Task { @MainActor [weak self] in
+                self?.onClose?()
+            }
         }
     }
 
     deinit {
-        NotificationCenter.default.removeObserver(self)
+        if let closeObserver {
+            NotificationCenter.default.removeObserver(closeObserver)
+        }
     }
 }
 
@@ -76,8 +85,10 @@ final class BatchSanitizeViewModel: ObservableObject {
 
     @Published var isRunning: Bool = false
     @Published var isCancelled: Bool = false
+    @Published var isPreparingEvidence: Bool = false
     @Published var progress: BatchSanitizeProgress?
     @Published var report: BatchSanitizeReport?
+    @Published var evidenceManifest: BatchCleanupEvidenceManifest?
     @Published var errorMessage: String?
 
     // Security-scoped access tokens
@@ -159,8 +170,10 @@ final class BatchSanitizeViewModel: ObservableObject {
 
         isRunning = true
         isCancelled = false
+        isPreparingEvidence = false
         progress = nil
         report = nil
+        evidenceManifest = nil
         errorMessage = nil
 
         // Start security-scoped access
@@ -200,13 +213,24 @@ final class BatchSanitizeViewModel: ObservableObject {
                 )
 
                 DispatchQueue.main.async {
+                    self?.isPreparingEvidence = true
+                }
+                let evidenceManifest = BatchCleanupEvidenceBuilder.build(
+                    plan: plan,
+                    report: result
+                )
+
+                DispatchQueue.main.async {
                     self?.report = result
+                    self?.evidenceManifest = evidenceManifest
+                    self?.isPreparingEvidence = false
                     self?.isRunning = false
                     self?.endSecurityScopedAccess()
                 }
             } catch {
                 DispatchQueue.main.async {
                     self?.errorMessage = error.localizedDescription
+                    self?.isPreparingEvidence = false
                     self?.isRunning = false
                     self?.endSecurityScopedAccess()
                 }
@@ -233,6 +257,9 @@ final class BatchSanitizeViewModel: ObservableObject {
 /// SwiftUI view for batch sanitize configuration and progress.
 struct BatchSanitizeSheet: View {
     @ObservedObject var viewModel: BatchSanitizeViewModel
+    @State private var selectedEvidenceEntry: BatchCleanupEvidenceManifest.FileEntry?
+    @State private var evidenceExportError: String?
+    @State private var isFileEvidenceExpanded = false
 
     var body: some View {
         ScrollView {
@@ -264,8 +291,31 @@ struct BatchSanitizeSheet: View {
             }
             .padding(20)
         }
-        .frame(minWidth: 450, minHeight: 350)
+        .frame(minWidth: 600, minHeight: 580)
         .background(AppTheme.Colors.background.ignoresSafeArea())
+        .onChange(of: viewModel.evidenceManifest?.verdict) { verdict in
+            // Non-passing runs lead with the evidence: auto-expand the per-file list.
+            if let verdict, verdict != .passed {
+                isFileEvidenceExpanded = true
+            }
+        }
+        .sheet(item: $selectedEvidenceEntry) { entry in
+            if let evidence = entry.evidence {
+                CleanupEvidenceSheet(evidence: evidence)
+            }
+        }
+        .alert("Evidence Export Failed", isPresented: Binding(
+            get: { evidenceExportError != nil },
+            set: {
+                if !$0 {
+                    evidenceExportError = nil
+                }
+            }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(evidenceExportError ?? "Unknown error")
+        }
     }
 
     private var header: some View {
@@ -367,9 +417,20 @@ struct BatchSanitizeSheet: View {
 
     private var progressSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionHeader("Processing", detail: "The current batch run is preparing reviewed outbound copies.")
+            sectionHeader(
+                viewModel.isPreparingEvidence ? "Preparing evidence" : "Processing",
+                detail: viewModel.isPreparingEvidence
+                    ? "Verifying the completed outbound copies before folder access closes."
+                    : "The current batch run is preparing reviewed outbound copies."
+            )
 
-            if let progress = viewModel.progress {
+            if viewModel.isPreparingEvidence {
+                ProgressView()
+                    .progressViewStyle(.linear)
+                Text("Calculating file identities, page facts, metadata labels, and verdicts.")
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.Colors.secondaryText)
+            } else if let progress = viewModel.progress {
                 ProgressView(value: progress.fraction) {
                     Text("\(progress.currentFile) of \(progress.totalFiles)")
                 }
@@ -428,6 +489,10 @@ struct BatchSanitizeSheet: View {
             }
             .paperPanelStyle()
 
+            if let manifest = viewModel.evidenceManifest {
+                batchEvidenceSection(manifest)
+            }
+
             HStack(spacing: 12) {
                 Button("Open Outbound Folder") {
                     if let url = viewModel.outputFolderURL {
@@ -435,6 +500,13 @@ struct BatchSanitizeSheet: View {
                     }
                 }
                 .buttonStyle(SecondaryButtonStyle())
+
+                if let manifest = viewModel.evidenceManifest {
+                    Button("Export Evidence…") {
+                        exportEvidence(manifest)
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
+                }
 
                 if report.failed == 0, report.skipped == 0 {
                     Text("Receipt looks clean.")
@@ -448,6 +520,78 @@ struct BatchSanitizeSheet: View {
             }
         }
         .cardStyle()
+    }
+
+    private func batchEvidenceSection(_ manifest: BatchCleanupEvidenceManifest) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Cleanup Evidence")
+                        .font(.headline)
+                    Text("Privacy-safe file receipts prepared before folder access closed.")
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.Colors.secondaryText)
+                }
+                Spacer()
+                Label(verdictTitle(manifest.verdict), systemImage: verdictIcon(manifest.verdict))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(verdictColor(manifest.verdict))
+            }
+
+            HStack(spacing: 12) {
+                statCard(value: "\(manifest.passedCount)", label: "Passed", color: AppTheme.Colors.success)
+                statCard(value: "\(manifest.reviewRequiredCount)", label: "Review", color: AppTheme.Colors.warning)
+                statCard(value: "\(manifest.failedCount)", label: "Failed", color: AppTheme.Colors.error)
+            }
+
+            Button {
+                withAnimation(AppTheme.Motion.panelShift) {
+                    isFileEvidenceExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.right")
+                        .rotationEffect(.degrees(isFileEvidenceExpanded ? 90 : 0))
+                    Text("File evidence (\(manifest.files.count))")
+                    Spacer()
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .font(.caption.weight(.semibold))
+            .accessibilityIdentifier("batch-evidence-disclosure")
+            .accessibilityValue(isFileEvidenceExpanded ? "Expanded" : "Collapsed")
+
+            if isFileEvidenceExpanded {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(manifest.files) { entry in
+                        HStack(alignment: .center, spacing: 8) {
+                            Image(systemName: verdictIcon(entry.verdict))
+                                .foregroundStyle(verdictColor(entry.verdict))
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(entry.fileName)
+                                    .font(.caption.weight(.semibold))
+                                Text(entryDetail(entry))
+                                    .font(.caption2)
+                                    .foregroundStyle(AppTheme.Colors.secondaryText)
+                            }
+                            Spacer()
+                            if entry.evidence != nil {
+                                Button("View Evidence") {
+                                    selectedEvidenceEntry = entry
+                                }
+                                .buttonStyle(.link)
+                            }
+                        }
+                        .padding(.vertical, 3)
+                    }
+                }
+                .padding(.top, 8)
+            }
+        }
+        .padding(12)
+        .background(AppTheme.Colors.cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: AppTheme.Metrics.smallCornerRadius, style: .continuous))
     }
 
     private func errorSection(error: String) -> some View {
@@ -475,12 +619,28 @@ struct BatchSanitizeSheet: View {
                 }
                 .buttonStyle(SecondaryButtonStyle())
             } else if viewModel.report != nil {
-                Button("Done") {
-                    // Close window
-                    NSApp.keyWindow?.close()
+                if let manifest = viewModel.evidenceManifest, manifest.verdict != .passed {
+                    // Review/Failed aggregate: lead with review, demote Close to secondary.
+                    Button("Close") {
+                        NSApp.keyWindow?.close()
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
+
+                    let count = manifest.needsReviewCount
+                    Button("Review \(count) file\(count == 1 ? "" : "s")") {
+                        isFileEvidenceExpanded = true
+                        selectedEvidenceEntry = manifest.firstReviewableEntry
+                    }
+                    .buttonStyle(PrimaryButtonStyle(tint: manifest.verdict == .failed ? AppTheme.Colors.error : AppTheme.Colors.warning))
+                    .keyboardShortcut(.defaultAction)
+                } else {
+                    Button("Done") {
+                        // Close window
+                        NSApp.keyWindow?.close()
+                    }
+                    .buttonStyle(PrimaryButtonStyle())
+                    .keyboardShortcut(.defaultAction)
                 }
-                .buttonStyle(PrimaryButtonStyle())
-                .keyboardShortcut(.defaultAction)
             } else {
                 Button("Start Run") {
                     viewModel.startBatch()
@@ -544,6 +704,58 @@ struct BatchSanitizeSheet: View {
             "Light Clean"
         case .keepEditable:
             "Keep Editable"
+        }
+    }
+
+    private func exportEvidence(_ manifest: BatchCleanupEvidenceManifest) {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.json]
+        panel.nameFieldStringValue = "batch-cleanup-evidence.json"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try BatchCleanupEvidenceWriter.writeJSON(manifest, to: url)
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        } catch {
+            evidenceExportError = error.localizedDescription
+        }
+    }
+
+    private func entryDetail(_ entry: BatchCleanupEvidenceManifest.FileEntry) -> String {
+        switch entry.reason {
+        case .existingOutputNotEvaluated:
+            "Skipped · existing output was not evaluated"
+        case .sanitizeFailed:
+            "Failed · no private error details included"
+        case .notProcessed:
+            "Not processed · run stopped before this file"
+        case .evidenceUnavailable:
+            "Processed · evidence unavailable, review manually"
+        case nil:
+            "Processed · \(verdictTitle(entry.verdict))"
+        }
+    }
+
+    private func verdictTitle(_ verdict: CleanupEvidenceVerdict) -> String {
+        switch verdict {
+        case .passed: "Passed"
+        case .reviewRequired: "Review required"
+        case .failed: "Failed"
+        }
+    }
+
+    private func verdictIcon(_ verdict: CleanupEvidenceVerdict) -> String {
+        switch verdict {
+        case .passed: "checkmark.shield.fill"
+        case .reviewRequired: "exclamationmark.triangle.fill"
+        case .failed: "xmark.shield.fill"
+        }
+    }
+
+    private func verdictColor(_ verdict: CleanupEvidenceVerdict) -> Color {
+        switch verdict {
+        case .passed: AppTheme.Colors.success
+        case .reviewRequired: AppTheme.Colors.warning
+        case .failed: AppTheme.Colors.error
         }
     }
 

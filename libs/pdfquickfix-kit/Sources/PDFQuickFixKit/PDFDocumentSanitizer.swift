@@ -148,9 +148,13 @@ public enum PDFDocumentSanitizer {
         }
 
         let workingDocument: PDFDocument
-        if requiresRebuild, options.rebuildMode == .rasterize,
-           let redrawn = rebuildDocumentByRasterizing(original, shouldCancel: shouldCancel)
-        {
+        if options.rebuildMode == .rasterize {
+            guard let redrawn = try rebuildDocumentByRasterizing(original, shouldCancel: shouldCancel) else {
+                throw PDFDocumentSanitizerError.pageRenderFailed(
+                    page: 0,
+                    reason: "PDF rasterizasyonu tamamlanamadı"
+                )
+            }
             enforceStructureTreeOff(redrawn)
             if options.scrubMetadata {
                 redrawn.documentAttributes = [:]
@@ -158,10 +162,15 @@ public enum PDFDocumentSanitizer {
                 redrawn.documentAttributes = original.documentAttributes
             }
             workingDocument = redrawn
-        } else if requiresRebuild,
-                  let data = original.dataRepresentation(),
+        } else if requiresRebuild {
+            guard let data = original.dataRepresentation(),
                   let rebuilt = PDFDocument(data: data)
-        {
+            else {
+                throw PDFDocumentSanitizerError.pageRenderFailed(
+                    page: 0,
+                    reason: "PDF yeniden oluşturulamadı"
+                )
+            }
             enforceStructureTreeOff(rebuilt)
             if options.scrubMetadata {
                 rebuilt.documentAttributes = [:]
@@ -477,7 +486,7 @@ public enum PDFDocumentSanitizer {
     }
 
     private static func rebuildDocumentByRasterizing(_ document: PDFDocument,
-                                                     shouldCancel: () -> Bool) -> PDFDocument?
+                                                     shouldCancel: () -> Bool) throws -> PDFDocument?
     {
         let data = NSMutableData()
         guard let consumer = CGDataConsumer(data: data as CFMutableData),
@@ -487,7 +496,7 @@ public enum PDFDocumentSanitizer {
         }
 
         for index in 0 ..< document.pageCount {
-            if shouldCancel() { return nil }
+            if shouldCancel() { throw PDFDocumentSanitizerError.cancelled }
             guard let page = document.page(at: index) else { return nil }
             var shouldAbort = false
             autoreleasepool {

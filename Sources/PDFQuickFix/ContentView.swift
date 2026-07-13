@@ -21,6 +21,7 @@ struct ContentView: View {
     #if DEBUG
         private let cleanupReviewUITestMode: AppMode?
         @State private var cleanupReviewUITestFixtureURL: URL?
+        @State private var batchEvidenceUITestWindowController: BatchSanitizeWindowController?
     #endif
 
     init() {
@@ -84,6 +85,7 @@ struct ContentView: View {
             readerController.configureCopilotAI(settings: aiSettings, interactionStore: aiInteractions)
             #if DEBUG
                 prepareCleanupReviewUITestFixtureIfNeeded()
+                prepareBatchEvidenceUITestWindowIfNeeded()
             #endif
         }
         .onChange(of: aiSettings.selectedProvider) { _ in
@@ -141,6 +143,26 @@ struct ContentView: View {
                 assertionFailure("Unable to create cleanup review UI fixture: \(error)")
             }
         }
+
+        @MainActor
+        private func prepareBatchEvidenceUITestWindowIfNeeded() {
+            guard CleanupReviewUITestSupport.batchEvidenceRequested(),
+                  batchEvidenceUITestWindowController == nil
+            else {
+                return
+            }
+            do {
+                let viewModel = try CleanupReviewUITestSupport.makeBatchEvidenceViewModel()
+                let controller = BatchSanitizeWindowController(viewModel: viewModel)
+                controller.window?.level = .floating
+                controller.showWindow(nil)
+                controller.window?.makeKeyAndOrderFront(nil)
+                controller.window?.orderFrontRegardless()
+                batchEvidenceUITestWindowController = controller
+            } catch {
+                assertionFailure("Unable to create batch evidence UI fixture: \(error)")
+            }
+        }
     #endif
 }
 
@@ -166,17 +188,17 @@ struct AppModeSwitcher: View {
                     currentMode = mode
                 } label: {
                     Text(mode.rawValue)
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .font(AppTheme.Typography.bodySmall.weight(.semibold))
                         .foregroundColor(currentMode == mode ? AppTheme.Colors.primaryText : AppTheme.Colors.secondaryText)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 8)
                         .frame(minWidth: 84)
                         .background(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            RoundedRectangle(cornerRadius: AppTheme.Metrics.smallCornerRadius, style: .continuous)
                                 .fill(currentMode == mode ? AppTheme.Colors.accentSoft : Color.clear)
                         )
                         .overlay(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            RoundedRectangle(cornerRadius: AppTheme.Metrics.smallCornerRadius, style: .continuous)
                                 .stroke(currentMode == mode ? AppTheme.Colors.accent.opacity(0.55) : Color.clear, lineWidth: 1)
                         )
                 }
@@ -185,11 +207,11 @@ struct AppModeSwitcher: View {
         }
         .padding(4)
         .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: AppTheme.Metrics.cardCornerRadius, style: .continuous)
                 .fill(AppTheme.Colors.elevatedBackground)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: AppTheme.Metrics.cardCornerRadius, style: .continuous)
                 .stroke(AppTheme.Colors.cardBorder, lineWidth: 1)
         )
     }
@@ -324,6 +346,10 @@ struct UnifiedToolbar: View {
                 .disabled(readerController.document == nil)
 
                 Menu {
+                    Button { readerController.exportSanitized() } label: {
+                        Label("Sanitized PDF…", systemImage: "checkmark.shield")
+                    }
+                    Divider()
                     Menu("Images") {
                         Button("JPEG") { readerController.exportToImages(format: .jpeg) }
                         Button("PNG") { readerController.exportToImages(format: .png) }
@@ -334,8 +360,6 @@ struct UnifiedToolbar: View {
                     Button("Metadata-Clean PDF…") { readerController.exportMetadataCleaned() }
                     Button("Flattened PDF…") { readerController.exportFlattened() }
                     Button("Encrypted PDF…") { readerController.exportEncrypted() }
-                    Divider()
-                    Button("Sanitized PDF…") { readerController.exportSanitized() }
                 } label: {
                     Image(systemName: "square.and.arrow.up")
                 }
@@ -449,6 +473,10 @@ struct UnifiedToolbar: View {
                 .disabled(studioController.document == nil)
 
                 Menu {
+                    Button { studioController.exportSanitized() } label: {
+                        Label("Sanitized PDF…", systemImage: "checkmark.shield")
+                    }
+                    Divider()
                     Menu("Images") {
                         Button("JPEG") { studioController.exportToImages(format: .jpeg) }
                         Button("PNG") { studioController.exportToImages(format: .png) }
@@ -459,8 +487,6 @@ struct UnifiedToolbar: View {
                     Button("Metadata-Clean PDF…") { studioController.exportMetadataCleaned() }
                     Button("Flattened PDF…") { studioController.exportFlattened() }
                     Button("Encrypted PDF…") { studioController.exportEncrypted() }
-                    Divider()
-                    Button("Sanitized PDF…") { studioController.exportSanitized() }
                 } label: {
                     Image(systemName: "square.and.arrow.up")
                 }
@@ -492,7 +518,7 @@ struct UnifiedToolbar: View {
         case .studio:
             studioRightControls
         case .split, .quickFix:
-            BatchSanitizeLaunchButton(tone: .ghost)
+            BatchSanitizeLaunchButton(tone: .secondary)
         }
     }
 
@@ -585,7 +611,11 @@ struct UnifiedToolbar: View {
 
             Divider().frame(height: 16)
 
-            BatchSanitizeLaunchButton(tone: .ghost)
+            MakeSafeCopyButton(isEnabled: readerController.document != nil) {
+                readerController.exportSanitized()
+            }
+
+            BatchSanitizeLaunchButton(tone: .secondary)
         }
     }
 
@@ -714,7 +744,11 @@ struct UnifiedToolbar: View {
 
             Divider().frame(height: 16)
 
-            BatchSanitizeLaunchButton(tone: .ghost)
+            MakeSafeCopyButton(isEnabled: studioController.document != nil) {
+                studioController.exportSanitized()
+            }
+
+            BatchSanitizeLaunchButton(tone: .secondary)
         }
     }
 

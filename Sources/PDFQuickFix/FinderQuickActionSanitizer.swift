@@ -5,6 +5,11 @@ import PDFKit
 import SwiftUI
 import UniformTypeIdentifiers
 
+struct FinderSanitizeOutcome {
+    let review: CleanupReview?
+    let reviewErrorDescription: String?
+}
+
 enum FinderQuickActionSanitizer {
     static let serviceMenuTitle = "PDFQuickFix/Sanitize PDF for Sharing"
     static let outputSuffix = "-sanitized"
@@ -64,9 +69,10 @@ enum FinderQuickActionSanitizer {
     static func sanitizeFile(sourceURL: URL,
                              outputURL: URL,
                              profile: SanitizeProfile,
-                             progress: PDFDocumentSanitizer.ProgressHandler? = nil) throws
+                             progress: PDFDocumentSanitizer.ProgressHandler? = nil) throws -> FinderSanitizeOutcome
     {
-        guard let document = PDFDocument(url: sourceURL) else {
+        let evidenceSourceData = try Data(contentsOf: sourceURL, options: [.mappedIfSafe])
+        guard let document = PDFDocument(data: evidenceSourceData) else {
             throw PDFDocumentSanitizerError.unableToOpen(sourceURL)
         }
 
@@ -84,6 +90,21 @@ enum FinderQuickActionSanitizer {
                 userInfo: [NSLocalizedDescriptionKey: "Failed to write \(outputURL.lastPathComponent)."]
             )
         }
+
+        do {
+            let review = try CleanupReviewBuilder.build(
+                sourceData: evidenceSourceData,
+                sourceFileName: sourceURL.lastPathComponent,
+                outputURL: outputURL,
+                profile: profile
+            )
+            return FinderSanitizeOutcome(review: review, reviewErrorDescription: nil)
+        } catch {
+            return FinderSanitizeOutcome(
+                review: nil,
+                reviewErrorDescription: error.localizedDescription
+            )
+        }
     }
 }
 
@@ -92,6 +113,21 @@ struct FinderQuickActionResult: Identifiable {
     let sourceURL: URL
     let outputURL: URL?
     let errorDescription: String?
+    let review: CleanupReview?
+    let reviewErrorDescription: String?
+
+    init(sourceURL: URL,
+         outputURL: URL?,
+         errorDescription: String?,
+         review: CleanupReview? = nil,
+         reviewErrorDescription: String? = nil)
+    {
+        self.sourceURL = sourceURL
+        self.outputURL = outputURL
+        self.errorDescription = errorDescription
+        self.review = review
+        self.reviewErrorDescription = reviewErrorDescription
+    }
 
     var succeeded: Bool {
         outputURL != nil && errorDescription == nil
@@ -110,6 +146,7 @@ final class FinderQuickActionCoordinator: ObservableObject {
     @Published private(set) var results: [FinderQuickActionResult] = []
 
     private var windowController: FinderQuickActionWindowController?
+    private var receiptIsVisible = false
 
     private init() {}
 
@@ -161,7 +198,7 @@ final class FinderQuickActionCoordinator: ObservableObject {
 
                 do {
                     let outputURL = FinderQuickActionSanitizer.outputURL(for: sourceURL)
-                    try FinderQuickActionSanitizer.sanitizeFile(
+                    let outcome = try FinderQuickActionSanitizer.sanitizeFile(
                         sourceURL: sourceURL,
                         outputURL: outputURL,
                         profile: selectedProfile
@@ -170,7 +207,9 @@ final class FinderQuickActionCoordinator: ObservableObject {
                         FinderQuickActionResult(
                             sourceURL: sourceURL,
                             outputURL: outputURL,
-                            errorDescription: nil
+                            errorDescription: nil,
+                            review: outcome.review,
+                            reviewErrorDescription: outcome.reviewErrorDescription
                         )
                     )
                 } catch {
@@ -186,14 +225,18 @@ final class FinderQuickActionCoordinator: ObservableObject {
                 let snapshot = completed
                 DispatchQueue.main.async {
                     self.processedCount = snapshot.count
-                    self.results = snapshot
+                    if self.receiptIsVisible {
+                        self.results = snapshot
+                    }
                 }
             }
 
             DispatchQueue.main.async {
                 self.isRunning = false
                 self.currentFileName = nil
-                self.results = completed
+                if self.receiptIsVisible {
+                    self.results = completed
+                }
                 let outputURLs = completed.compactMap(\.outputURL)
                 if !outputURLs.isEmpty {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
@@ -209,6 +252,7 @@ final class FinderQuickActionCoordinator: ObservableObject {
     }
 
     private func showReceipt() {
+        receiptIsVisible = true
         if let existing = windowController {
             existing.window?.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
@@ -221,6 +265,8 @@ final class FinderQuickActionCoordinator: ObservableObject {
         NSApp.activate(ignoringOtherApps: true)
 
         controller.onClose = { [weak self] in
+            self?.receiptIsVisible = false
+            self?.results = []
             self?.windowController = nil
         }
     }
@@ -265,6 +311,7 @@ final class FinderQuickActionWindowController: NSWindowController {
 
 struct FinderQuickActionReceiptView: View {
     @ObservedObject var coordinator: FinderQuickActionCoordinator
+    @State private var selectedReview: CleanupReview?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -276,6 +323,9 @@ struct FinderQuickActionReceiptView: View {
         .padding(24)
         .frame(minWidth: 520, minHeight: 360)
         .background(AppTheme.Colors.background)
+        .sheet(item: $selectedReview) { review in
+            CleanupExportReviewSheet(review: review)
+        }
     }
 
     private var header: some View {
@@ -328,6 +378,26 @@ struct FinderQuickActionReceiptView: View {
                                 Text("Outbound copy: \(outputURL.lastPathComponent)")
                                     .font(.caption)
                                     .foregroundColor(AppTheme.Colors.secondaryText)
+
+                                if let review = result.review {
+                                    HStack(spacing: 8) {
+                                        Label(
+                                            evidenceVerdictTitle(review.evidence.verdict),
+                                            systemImage: evidenceVerdictIcon(review.evidence.verdict)
+                                        )
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(evidenceVerdictColor(review.evidence.verdict))
+
+                                        Button("Review Cleanup") {
+                                            selectedReview = review
+                                        }
+                                        .buttonStyle(.link)
+                                    }
+                                } else if let reviewError = result.reviewErrorDescription {
+                                    Label("Cleanup review unavailable: \(reviewError)", systemImage: "exclamationmark.triangle")
+                                        .font(.caption)
+                                        .foregroundStyle(AppTheme.Colors.warning)
+                                }
                             } else if let error = result.errorDescription {
                                 Text(error)
                                     .font(.caption)
@@ -353,6 +423,30 @@ struct FinderQuickActionReceiptView: View {
             "Light Clean"
         case .keepEditable:
             "Keep Editable"
+        }
+    }
+
+    private func evidenceVerdictTitle(_ verdict: CleanupEvidenceVerdict) -> String {
+        switch verdict {
+        case .passed: "Passed"
+        case .reviewRequired: "Review required"
+        case .failed: "Failed"
+        }
+    }
+
+    private func evidenceVerdictIcon(_ verdict: CleanupEvidenceVerdict) -> String {
+        switch verdict {
+        case .passed: "checkmark.shield.fill"
+        case .reviewRequired: "exclamationmark.triangle.fill"
+        case .failed: "xmark.shield.fill"
+        }
+    }
+
+    private func evidenceVerdictColor(_ verdict: CleanupEvidenceVerdict) -> Color {
+        switch verdict {
+        case .passed: AppTheme.Colors.success
+        case .reviewRequired: AppTheme.Colors.warning
+        case .failed: AppTheme.Colors.error
         }
     }
 }

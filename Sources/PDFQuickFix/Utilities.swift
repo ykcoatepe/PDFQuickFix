@@ -233,17 +233,20 @@ struct PaperPanelModifier: ViewModifier {
 
 struct PrimaryButtonStyle: ButtonStyle {
     var isDisabled: Bool = false
+    /// Filled background tone. Defaults to the vermilion wedge accent; override with a
+    /// semantic color (e.g. warning/error) for review-oriented primary actions.
+    var tint: Color = AppTheme.Colors.accent
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .padding(.horizontal, 20)
             .padding(.vertical, 10)
-            .background(isDisabled ? Color.gray.opacity(0.3) : AppTheme.Colors.accent)
-            .foregroundColor(.white)
+            .background(isDisabled ? Color.gray.opacity(0.3) : tint)
+            .foregroundColor(AppTheme.Colors.onAccent)
             .cornerRadius(AppTheme.Metrics.smallCornerRadius)
             .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
-            .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
-            .shadow(color: AppTheme.Colors.accent.opacity(0.3), radius: 4, x: 0, y: 2)
+            .animation(AppTheme.Motion.press, value: configuration.isPressed)
+            .shadow(color: tint.opacity(0.3), radius: 4, x: 0, y: 2)
     }
 }
 
@@ -260,7 +263,7 @@ struct SecondaryButtonStyle: ButtonStyle {
                     .stroke(AppTheme.Colors.cardBorder, lineWidth: 1)
             )
             .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
-            .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
+            .animation(AppTheme.Motion.press, value: configuration.isPressed)
     }
 }
 
@@ -272,7 +275,7 @@ struct GhostButtonStyle: ButtonStyle {
             .background(configuration.isPressed ? AppTheme.Colors.elevatedBackground : Color.clear)
             .foregroundColor(AppTheme.Colors.primaryText)
             .cornerRadius(AppTheme.Metrics.smallCornerRadius)
-            .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
+            .animation(AppTheme.Motion.press, value: configuration.isPressed)
     }
 }
 
@@ -288,7 +291,7 @@ extension View {
     }
 
     func appFont(_ style: Font.TextStyle, weight: Font.Weight = .regular) -> some View {
-        font(.system(style, design: .rounded).weight(weight))
+        font(.system(style, design: .default).weight(weight))
     }
 }
 
@@ -594,14 +597,16 @@ struct PDFURLDropDelegate: DropDelegate {
 }
 
 extension Animation {
-    /// Standard transition for sidebars (Left/Right panels)
+    /// Standard transition for sidebars (Left/Right panels).
+    /// Panel shift per DESIGN.md motion tokens (easeInOut, medium 240ms).
     static var sidebarTransition: Animation {
-        .easeOut(duration: 0.25)
+        AppTheme.Motion.panelShift
     }
 
-    /// Standard transition for smaller panels or overlays
+    /// Standard transition for smaller panels or overlays.
+    /// Enter per DESIGN.md motion tokens (easeOut, short 160ms).
     static var panelTransition: Animation {
-        .easeOut(duration: 0.2)
+        AppTheme.Motion.enter
     }
 }
 

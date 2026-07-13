@@ -62,7 +62,7 @@ struct SplitView: View {
                     .font(.caption.weight(.semibold))
                     .foregroundColor(AppTheme.Colors.support)
                 Text(workspaceMode == .split ? "Split outbound copies" : "Assemble outbound packet")
-                    .font(.title3.weight(.semibold))
+                    .font(AppTheme.Typography.title)
                     .foregroundColor(AppTheme.Colors.primaryText)
                 Text(workspaceMode == .split
                     ? "Break a PDF into smaller, reviewable outputs for safer sharing."
@@ -83,17 +83,17 @@ struct SplitView: View {
                         workspaceMode = mode
                     } label: {
                         Text(mode.rawValue)
-                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                            .font(AppTheme.Typography.bodySmall.weight(.semibold))
                             .foregroundColor(workspaceMode == mode ? AppTheme.Colors.primaryText : AppTheme.Colors.secondaryText)
                             .padding(.horizontal, 14)
                             .padding(.vertical, 8)
                             .frame(minWidth: 88)
                             .background(
-                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                RoundedRectangle(cornerRadius: AppTheme.Metrics.smallCornerRadius, style: .continuous)
                                     .fill(workspaceMode == mode ? AppTheme.Colors.accentSoft : Color.clear)
                             )
                             .overlay(
-                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                RoundedRectangle(cornerRadius: AppTheme.Metrics.smallCornerRadius, style: .continuous)
                                     .stroke(workspaceMode == mode ? AppTheme.Colors.accent.opacity(0.55) : Color.clear, lineWidth: 1)
                             )
                     }
@@ -102,11 +102,11 @@ struct SplitView: View {
             }
             .padding(4)
             .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                RoundedRectangle(cornerRadius: AppTheme.Metrics.cardCornerRadius, style: .continuous)
                     .fill(AppTheme.Colors.elevatedBackground)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                RoundedRectangle(cornerRadius: AppTheme.Metrics.cardCornerRadius, style: .continuous)
                     .stroke(AppTheme.Colors.cardBorder, lineWidth: 1)
             )
             Spacer()

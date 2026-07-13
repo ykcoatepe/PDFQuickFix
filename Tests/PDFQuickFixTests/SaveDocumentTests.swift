@@ -195,6 +195,67 @@ final class SaveDocumentTests: XCTestCase {
         XCTAssertTrue(controller.logMessages.contains { $0.contains("Saved") })
     }
 
+    func testStudioSaveToDestinationFlattensRedactionSoOriginalTextIsNotExtractable() throws {
+        let controller = StudioController()
+        let sourceURL = try makeTextBackedPDFURL(text: "Secret studio redaction")
+        let destinationURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("pdf")
+        defer { try? FileManager.default.removeItem(at: destinationURL) }
+        controller.setDocument(try XCTUnwrap(PDFDocument(url: sourceURL)), url: sourceURL)
+
+        let document = try XCTUnwrap(controller.document)
+        let selection = try makeFullDocumentSelection(in: document)
+        let page = try XCTUnwrap(document.page(at: 0))
+        let cover = PDFAnnotation(
+            bounds: selection.bounds(for: page).insetBy(dx: -1, dy: -1),
+            forType: .square,
+            withProperties: nil
+        )
+        cover.color = .black
+        cover.interiorColor = .black
+        cover.userName = PDFOps.replacementTextAnnotationUserName
+        let border = PDFBorder()
+        border.lineWidth = 0
+        cover.border = border
+        page.addAnnotation(cover)
+
+        XCTAssertTrue(controller.saveDocument(to: destinationURL))
+
+        let reloaded = try XCTUnwrap(PDFDocument(url: destinationURL))
+        XCTAssertFalse((reloaded.string ?? "").contains("Secret studio redaction"))
+        XCTAssertTrue(reloaded.page(at: 0)?.annotations.isEmpty ?? false)
+    }
+
+    func testStudioSaveToDestinationThenSaveDoesNotOverwriteOriginal() throws {
+        let controller = StudioController()
+        let sourceURL = try TestPDFBuilder.makeSimplePDF(text: "Original studio file")
+        let originalData = try Data(contentsOf: sourceURL)
+        let destinationURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("pdf")
+        defer { try? FileManager.default.removeItem(at: destinationURL) }
+        controller.setDocument(try XCTUnwrap(PDFDocument(url: sourceURL)), url: sourceURL)
+
+        XCTAssertTrue(controller.saveDocument(to: destinationURL))
+        let note = PDFAnnotation(
+            bounds: CGRect(x: 20, y: 20, width: 32, height: 32),
+            forType: .text,
+            withProperties: nil
+        )
+        note.contents = "Saved only to new destination"
+        try XCTUnwrap(controller.document?.page(at: 0)).addAnnotation(note)
+        controller.saveDocument()
+
+        XCTAssertEqual(try Data(contentsOf: sourceURL), originalData)
+        let destination = try XCTUnwrap(PDFDocument(url: destinationURL))
+        XCTAssertTrue(destination.page(at: 0)?.annotations.contains {
+            $0.contents == "Saved only to new destination"
+        } ?? false)
+        XCTAssertEqual(controller.currentURL, destinationURL)
+        XCTAssertEqual(controller.sourceURL, destinationURL)
+    }
+
     func testStudioSaveDocumentDoesNotDropEncryptionWhenReplacementTextExists() throws {
         let controller = StudioController(passwordProvider: { _ in "user-pass" })
         let pdfView = PDFView()

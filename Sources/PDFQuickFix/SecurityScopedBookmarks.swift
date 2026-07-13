@@ -62,3 +62,59 @@ final class SecurityScopedAccess: @unchecked Sendable {
         }
     }
 }
+
+/// Owns resources acquired while an asynchronous document open is pending.
+/// A superseded open can discard the lease even if its repair work finishes later.
+final class DocumentOpenResourceLease: @unchecked Sendable {
+    private let lock = NSLock()
+    private var access: SecurityScopedAccess?
+    private var temporaryURL: URL?
+    private var isDiscarded = false
+
+    init(access: SecurityScopedAccess?) {
+        self.access = access
+    }
+
+    func registerWorkingURL(_ workingURL: URL, sourceURL: URL) {
+        guard workingURL != sourceURL else { return }
+        let shouldRemove = lock.withLock {
+            if isDiscarded {
+                return true
+            }
+            temporaryURL = workingURL
+            return false
+        }
+        if shouldRemove {
+            try? FileManager.default.removeItem(at: workingURL)
+        }
+    }
+
+    func commit() -> SecurityScopedAccess? {
+        lock.withLock {
+            guard !isDiscarded else { return nil }
+            let committedAccess = access
+            access = nil
+            temporaryURL = nil
+            return committedAccess
+        }
+    }
+
+    func discard() {
+        let resources: (SecurityScopedAccess?, URL?) = lock.withLock {
+            guard !isDiscarded else { return (nil, nil) }
+            isDiscarded = true
+            let resources = (access, temporaryURL)
+            access = nil
+            temporaryURL = nil
+            return resources
+        }
+        resources.0?.stopAccess()
+        if let temporaryURL = resources.1 {
+            try? FileManager.default.removeItem(at: temporaryURL)
+        }
+    }
+
+    deinit {
+        discard()
+    }
+}

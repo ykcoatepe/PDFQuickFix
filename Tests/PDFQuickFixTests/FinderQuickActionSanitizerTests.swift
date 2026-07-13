@@ -55,7 +55,7 @@ final class FinderQuickActionSanitizerTests: XCTestCase {
 
         let originalData = try Data(contentsOf: sourceURL)
 
-        try FinderQuickActionSanitizer.sanitizeFile(
+        _ = try FinderQuickActionSanitizer.sanitizeFile(
             sourceURL: sourceURL,
             outputURL: outputURL,
             profile: .lightClean
@@ -64,6 +64,77 @@ final class FinderQuickActionSanitizerTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: outputURL.path))
         XCTAssertEqual(try Data(contentsOf: sourceURL), originalData)
         XCTAssertNotNil(PDFDocument(url: outputURL))
+    }
+
+    func testSanitizeFileReturnsCleanupReviewForFinderReceipt() throws {
+        let sourceURL = try TestPDFBuilder.makeSimplePDF(text: "Private finder handoff")
+        let outputURL = sourceURL
+            .deletingLastPathComponent()
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("pdf")
+        defer {
+            try? FileManager.default.removeItem(at: sourceURL)
+            try? FileManager.default.removeItem(at: outputURL)
+        }
+
+        let outcome = try FinderQuickActionSanitizer.sanitizeFile(
+            sourceURL: sourceURL,
+            outputURL: outputURL,
+            profile: .lightClean
+        )
+        let review = try XCTUnwrap(outcome.review)
+        defer { review.removeTemporarySource() }
+
+        XCTAssertNil(outcome.reviewErrorDescription)
+        XCTAssertEqual(review.outputURL, outputURL)
+        XCTAssertEqual(review.evidence.source.fileName, sourceURL.lastPathComponent)
+        XCTAssertEqual(review.evidence.sanitizeProfile, SanitizeProfile.lightClean.rawValue)
+        XCTAssertNotEqual(review.evidence.verdict, .failed)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: review.sourceSnapshotURL.path))
+    }
+
+    func testSanitizeFileReviewPreservesOriginalCleanupFacts() throws {
+        let sourceURL = try TestPDFBuilder.makeSimplePDF(text: "Metadata finder handoff")
+        let outputURL = sourceURL
+            .deletingLastPathComponent()
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("pdf")
+        defer {
+            try? FileManager.default.removeItem(at: sourceURL)
+            try? FileManager.default.removeItem(at: outputURL)
+        }
+
+        let sourceDocument = try XCTUnwrap(PDFDocument(url: sourceURL))
+        sourceDocument.documentAttributes = [PDFDocumentAttribute.authorAttribute: "Private Author"]
+        let sourcePage = try XCTUnwrap(sourceDocument.page(at: 0))
+        let annotation = PDFAnnotation(
+            bounds: CGRect(x: 10, y: 10, width: 24, height: 24),
+            forType: .text,
+            withProperties: nil
+        )
+        sourcePage.addAnnotation(annotation)
+        XCTAssertTrue(sourceDocument.write(to: sourceURL))
+        let originalSourceData = try Data(contentsOf: sourceURL)
+        let persistedSource = try XCTUnwrap(PDFDocument(url: sourceURL))
+        let expectedAnnotationCount = (0 ..< persistedSource.pageCount).reduce(into: 0) { count, index in
+            count += persistedSource.page(at: index)?.annotations.count ?? 0
+        }
+        XCTAssertGreaterThan(expectedAnnotationCount, 0)
+
+        let outcome = try FinderQuickActionSanitizer.sanitizeFile(
+            sourceURL: sourceURL,
+            outputURL: outputURL,
+            profile: .privacyClean
+        )
+        let review = try XCTUnwrap(outcome.review)
+        defer { review.removeTemporarySource() }
+
+        XCTAssertTrue(review.evidence.source.metadataFieldLabels.contains("Author"))
+        XCTAssertTrue(review.comparison.metadataFieldsRemoved.contains("Author"))
+        XCTAssertFalse(review.evidence.output.metadataFieldLabels.contains("Author"))
+        XCTAssertEqual(review.evidence.source.annotationCount, expectedAnnotationCount)
+        XCTAssertEqual(review.evidence.output.annotationCount, 0)
+        XCTAssertEqual(try Data(contentsOf: review.sourceSnapshotURL), originalSourceData)
     }
 
     private func makeTemporaryDirectory() throws -> URL {

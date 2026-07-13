@@ -230,6 +230,62 @@ final class StudioControllerTests: XCTestCase {
         try assertPageColors(secondDocument, [.blue])
     }
 
+    func testThumbnailSnapshotReusesDetachedDocumentWithoutSerializingLiveDocument() throws {
+        let source = makeSolidColorDocument(colors: [.red, .green, .blue])
+        let sourceData = try XCTUnwrap(source.dataRepresentation())
+        let document = try XCTUnwrap(ThumbnailSnapshotTrackingDocument(data: sourceData))
+        let controller = StudioController()
+
+        controller.setDocument(document)
+        controller.ensureThumbnail(for: 0)
+        controller.ensureThumbnail(for: 1)
+        controller.prefetchThumbnails(around: 1, window: 1, farWindow: 2)
+
+        let thumbnailsRendered = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in
+                controller.pageSnapshots.filter { $0.thumbnail != nil }.count >= 2
+            },
+            object: nil
+        )
+        wait(for: [thumbnailsRendered], timeout: 5.0)
+
+        controller.ensureThumbnail(for: 2)
+        controller.prefetchThumbnails(around: 2, window: 1, farWindow: 2)
+
+        XCTAssertEqual(document.dataRepresentationCallCount, 0)
+        XCTAssertFalse(document.dataRepresentationWasCalledOnMainThread)
+    }
+
+    func testFileBackedThumbnailUsesUnsavedPageOrder() throws {
+        let source = makeSolidColorDocument(colors: [.red, .blue])
+        let sourceData = try XCTUnwrap(source.dataRepresentation())
+        let sourceURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pdfquickfix-thumbnail-\(UUID().uuidString).pdf")
+        try sourceData.write(to: sourceURL, options: .atomic)
+        defer { try? FileManager.default.removeItem(at: sourceURL) }
+        let document = try XCTUnwrap(PDFDocument(url: sourceURL))
+        let controller = StudioController()
+
+        controller.setDocument(document, url: sourceURL)
+        controller.movePage(at: 0, to: 1)
+        controller.ensureThumbnail(for: 0)
+
+        let thumbnailRendered = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in
+                controller.pageSnapshots.first?.thumbnail != nil
+            },
+            object: nil
+        )
+        wait(for: [thumbnailRendered], timeout: 5.0)
+
+        let thumbnail = try XCTUnwrap(controller.pageSnapshots.first?.thumbnail)
+        let sampled = try XCTUnwrap(thumbnail.color(at: CGPoint(
+            x: thumbnail.width / 2,
+            y: thumbnail.height / 2
+        )))
+        XCTAssertTrue(sampled.isApproximately(.blue), "Thumbnail should reflect the unsaved page order")
+    }
+
     func testAddedAnnotationCanUndoAndRedo() throws {
         let controller = StudioController()
         let pdfView = PDFView()
@@ -1008,6 +1064,27 @@ final class StudioControllerTests: XCTestCase {
             let sampled = try XCTUnwrap(rendered.color(at: CGPoint(x: 40, y: 40)), file: file, line: line)
             XCTAssertTrue(sampled.isApproximately(expectedColor), "Unexpected color at page index \(index)", file: file, line: line)
         }
+    }
+}
+
+private final class ThumbnailSnapshotTrackingDocument: PDFDocument {
+    private let trackingLock = NSLock()
+    private var callCount = 0
+    private var wasCalledOnMainThread = false
+    var dataRepresentationCallCount: Int {
+        trackingLock.withLock { callCount }
+    }
+
+    var dataRepresentationWasCalledOnMainThread: Bool {
+        trackingLock.withLock { wasCalledOnMainThread }
+    }
+
+    override func dataRepresentation() -> Data? {
+        trackingLock.withLock {
+            callCount += 1
+            wasCalledOnMainThread = wasCalledOnMainThread || Thread.isMainThread
+        }
+        return super.dataRepresentation()
     }
 }
 

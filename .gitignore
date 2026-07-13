@@ -40,3 +40,6 @@ dist/
 # Temporary
 .tmp/
 *.profraw
+
+# Claude Code worktrees/session data
+.claude/worktrees/

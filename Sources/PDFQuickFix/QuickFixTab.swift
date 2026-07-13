@@ -14,6 +14,11 @@ struct QuickFixTab: View {
     @State private var quickFixResult: QuickFixResult?
     @StateObject private var optionsModel = QuickFixOptionsModel()
     @State private var isProcessing: Bool = false
+    @State private var processedPages: Int = 0
+    @State private var totalPages: Int = 0
+    @State private var statusLine: String = ""
+    @State private var processError: String?
+    @State private var isTechnicalLogExpanded: Bool = false
     @State private var log: String = ""
     @State private var aiTask: LocalAITask = .summarize
     @State private var aiOutput: String = ""
@@ -40,6 +45,10 @@ struct QuickFixTab: View {
         .onChange(of: inputURL) { _ in
             cleanupTransientOutputs()
             quickFixResult = nil
+            statusLine = ""
+            processError = nil
+            processedPages = 0
+            totalPages = 0
             aiOutput = ""
             aiStatus = ""
             aiError = nil
@@ -82,7 +91,7 @@ struct QuickFixTab: View {
             VStack(alignment: .leading, spacing: 24) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Cleanup Workbench")
-                        .appFont(.largeTitle, weight: .bold)
+                        .font(AppTheme.Typography.displayXL)
                     Text("Repair, redact, replace, OCR, and local AI workflows for outbound PDFs that stay on your Mac.")
                         .appFont(.body)
                         .foregroundStyle(AppTheme.Colors.secondaryText)
@@ -148,96 +157,20 @@ struct QuickFixTab: View {
                 }
                 .cardStyle()
 
-                if !log.isEmpty {
-                    ScrollView {
-                        Text(log)
-                            .font(.caption.monospaced())
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding()
-                    }
-                    .frame(height: 120)
-                    .background(AppTheme.Colors.cardBackground)
-                    .cornerRadius(AppTheme.Metrics.smallCornerRadius)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: AppTheme.Metrics.smallCornerRadius)
-                            .stroke(AppTheme.Colors.cardBorder, lineWidth: 0.5)
-                    )
+                if isProcessing {
+                    processingCard
+                }
+
+                if let processError {
+                    processErrorCard(processError)
                 }
 
                 if let quickFixResult {
-                    let outputURL = quickFixResult.displayOutputURL
-                    VStack(alignment: .leading, spacing: 12) {
-                        sectionHeader("Output packet", detail: "Inspect the generated file and review attached evidence before handoff.")
+                    resultReceipt(quickFixResult)
+                }
 
-                        VStack(alignment: .leading, spacing: 10) {
-                            evidenceRow("Output", value: outputURL.lastPathComponent)
-                            evidenceRow("Folder", value: outputURL.deletingLastPathComponent().path)
-                            evidenceRow("Reports", value: availableReportsSummary(for: quickFixResult))
-                            if quickFixResult.isTemporaryOutput {
-                                evidenceRow("State", value: "Temporary until saved")
-                            }
-                        }
-                        .paperPanelStyle()
-
-                        HStack {
-                            Button("Open Result") {
-                                openQuickFixResult()
-                            }
-                            .buttonStyle(SecondaryButtonStyle())
-                            .disabled(isSavingQuickFixResult)
-
-                            Button("Reveal in Finder") {
-                                NSWorkspace.shared.activateFileViewerSelecting([outputURL])
-                            }
-                            .buttonStyle(SecondaryButtonStyle())
-                            .disabled(isSavingQuickFixResult)
-
-                            if quickFixResult.isTemporaryOutput {
-                                Button(isSavingQuickFixResult ? "Saving..." : "Save Result...") {
-                                    saveQuickFixResult()
-                                }
-                                .buttonStyle(SecondaryButtonStyle())
-                                .disabled(isSavingQuickFixResult)
-                            }
-
-                            Spacer()
-
-                            Label(quickFixResult.isTemporaryOutput ? "Save before handoff" : "Ready to review", systemImage: "checkmark.circle.fill")
-                                .font(.caption)
-                                .foregroundStyle(AppTheme.Colors.support)
-                        }
-
-                        Divider()
-
-                        HStack {
-                            Button("Review Evidence") {
-                                isPresentingCleanupEvidence = true
-                            }
-                            .buttonStyle(SecondaryButtonStyle())
-                            .disabled(quickFixResult.cleanupEvidence == nil)
-
-                            Button("Compare Before & After") {
-                                isPresentingCleanupComparison = true
-                            }
-                            .buttonStyle(SecondaryButtonStyle())
-                            .disabled(!canPresentComparison(quickFixResult))
-
-                            Button("Export Evidence…") {
-                                exportCleanupEvidence()
-                            }
-                            .buttonStyle(SecondaryButtonStyle())
-                            .disabled(quickFixResult.isTemporaryOutput || quickFixResult.cleanupEvidence == nil)
-
-                            Spacer()
-
-                            if let evidence = quickFixResult.cleanupEvidence {
-                                Label(evidenceVerdictTitle(evidence.verdict), systemImage: evidenceVerdictIcon(evidence.verdict))
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(evidenceVerdictColor(evidence.verdict))
-                            }
-                        }
-                    }
-                    .cardStyle()
+                if !log.isEmpty {
+                    technicalLog
                 }
 
                 if let report = quickFixResult?.redactionReport {
@@ -250,6 +183,231 @@ struct QuickFixTab: View {
             }
             .padding(24)
         }
+    }
+
+    private var processingCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Cleaning up", systemImage: "gearshape.2.fill")
+                .appFont(.headline)
+                .foregroundStyle(AppTheme.Colors.primaryText)
+            if totalPages > 0 {
+                ProgressView(value: Double(min(processedPages, totalPages)), total: Double(totalPages)) {
+                    Text("\(min(processedPages, totalPages)) of \(totalPages) pages")
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.Colors.secondaryText)
+                }
+                .tint(AppTheme.Colors.accent)
+            } else {
+                ProgressView()
+                    .progressViewStyle(.linear)
+                    .tint(AppTheme.Colors.accent)
+            }
+            Text(statusLine.isEmpty ? "Preparing the reviewed outbound copy…" : statusLine)
+                .font(.caption)
+                .foregroundStyle(AppTheme.Colors.secondaryText)
+        }
+        .cardStyle()
+    }
+
+    private func processErrorCard(_ message: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label("Cleanup failed", systemImage: "exclamationmark.triangle.fill")
+                .appFont(.headline)
+                .foregroundStyle(AppTheme.Colors.error)
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(AppTheme.Colors.secondaryText)
+                .textSelection(.enabled)
+        }
+        .cardStyle()
+    }
+
+    private var technicalLog: some View {
+        DisclosureGroup(isExpanded: $isTechnicalLogExpanded) {
+            ScrollView {
+                Text(log)
+                    .font(AppTheme.Typography.monoSmall)
+                    .foregroundStyle(AppTheme.Colors.secondaryText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+                    .padding(8)
+            }
+            .frame(height: 120)
+            .background(AppTheme.Colors.cardBackground)
+            .cornerRadius(AppTheme.Metrics.smallCornerRadius)
+            .overlay(
+                RoundedRectangle(cornerRadius: AppTheme.Metrics.smallCornerRadius)
+                    .stroke(AppTheme.Colors.cardBorder, lineWidth: 0.5)
+            )
+        } label: {
+            Label("Technical log", systemImage: "terminal")
+                .appFont(.subheadline)
+                .foregroundStyle(AppTheme.Colors.secondaryText)
+        }
+        .tint(AppTheme.Colors.secondaryText)
+        .padding(.vertical, 4)
+    }
+
+    @ViewBuilder
+    private func resultReceipt(_ result: QuickFixResult) -> some View {
+        let evidence = result.cleanupEvidence
+        let verdict = evidence?.verdict
+        let isPassing = (verdict == nil || verdict == .passed)
+        let outputURL = result.displayOutputURL
+        let beforeURL = result.sourceURL ?? inputURL
+        let pageIndex = result.previewPageIndex ?? 0
+
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Cleanup receipt")
+                        .appFont(.headline)
+                        .foregroundStyle(AppTheme.Colors.primaryText)
+                    Text(result.isTemporaryOutput
+                        ? "Temporary reviewed copy — save before handoff."
+                        : "Reviewed outbound copy ready to share.")
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.Colors.secondaryText)
+                }
+                Spacer()
+                if let verdict {
+                    Label(evidenceVerdictTitle(verdict), systemImage: evidenceVerdictIcon(verdict))
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(evidenceVerdictColor(verdict))
+                } else {
+                    Label(result.isTemporaryOutput ? "Save before handoff" : "Ready to review", systemImage: "checkmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.Colors.support)
+                }
+            }
+
+            HStack(alignment: .top, spacing: 12) {
+                receiptPreview(title: "Before", url: beforeURL, pageIndex: pageIndex)
+                Image(systemName: "arrow.right")
+                    .foregroundStyle(AppTheme.Colors.secondaryText)
+                    .padding(.top, 60)
+                receiptPreview(title: "After", url: outputURL, pageIndex: pageIndex)
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                evidenceRow("Output", value: outputURL.lastPathComponent)
+                evidenceRow("Folder", value: outputURL.deletingLastPathComponent().path)
+                evidenceRow("Reports", value: availableReportsSummary(for: result))
+                if result.isTemporaryOutput {
+                    evidenceRow("State", value: "Temporary until saved")
+                }
+            }
+            .paperPanelStyle()
+
+            HStack(spacing: 12) {
+                if isPassing {
+                    Button {
+                        NSWorkspace.shared.activateFileViewerSelecting([outputURL])
+                    } label: {
+                        Label("Reveal in Finder", systemImage: "folder")
+                    }
+                    .buttonStyle(PrimaryButtonStyle())
+                    .disabled(isSavingQuickFixResult)
+
+                    Button("Open Result") { openQuickFixResult() }
+                        .buttonStyle(SecondaryButtonStyle())
+                        .disabled(isSavingQuickFixResult)
+                } else if let verdict {
+                    Button {
+                        isPresentingCleanupEvidence = true
+                    } label: {
+                        Label("Review Evidence", systemImage: evidenceVerdictIcon(verdict))
+                    }
+                    .buttonStyle(PrimaryButtonStyle(tint: evidenceVerdictColor(verdict)))
+                    .disabled(evidence == nil)
+
+                    Button {
+                        NSWorkspace.shared.activateFileViewerSelecting([outputURL])
+                    } label: {
+                        Label("Reveal in Finder", systemImage: "folder")
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
+                    .disabled(isSavingQuickFixResult)
+                }
+
+                if result.isTemporaryOutput {
+                    Button(isSavingQuickFixResult ? "Saving…" : "Save Result…") {
+                        saveQuickFixResult()
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
+                    .disabled(isSavingQuickFixResult)
+                }
+
+                Menu {
+                    if isPassing {
+                        Button("Review Evidence") { isPresentingCleanupEvidence = true }
+                            .disabled(evidence == nil)
+                    } else {
+                        Button("Open Result") { openQuickFixResult() }
+                            .disabled(isSavingQuickFixResult)
+                    }
+                    Button("Compare Before & After") { isPresentingCleanupComparison = true }
+                        .disabled(!canPresentComparison(result))
+                    Button("Export Evidence…") { exportCleanupEvidence() }
+                        .disabled(result.isTemporaryOutput || evidence == nil)
+                } label: {
+                    Label("More", systemImage: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+
+                Spacer()
+            }
+        }
+        .cardStyle()
+    }
+
+    @ViewBuilder
+    private func receiptPreview(title: String, url: URL?, pageIndex: Int) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(AppTheme.Colors.secondaryText)
+            if let url, let image = Self.receiptThumbnail(for: url, pageIndex: pageIndex) {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 150)
+                    .padding(6)
+                    .background(AppTheme.Colors.paperBackground)
+                    .clipShape(RoundedRectangle(cornerRadius: AppTheme.Metrics.smallCornerRadius, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: AppTheme.Metrics.smallCornerRadius, style: .continuous)
+                            .stroke(AppTheme.Colors.paperBorder, lineWidth: 1)
+                    )
+                    .shadow(color: AppTheme.Shadows.card, radius: 5, x: 0, y: 2)
+            } else {
+                VStack(spacing: 6) {
+                    Image(systemName: "doc")
+                        .font(.title2)
+                    Text("Preview unavailable")
+                        .font(.caption2)
+                }
+                .foregroundStyle(AppTheme.Colors.secondaryText)
+                .frame(maxWidth: .infinity)
+                .frame(height: 150)
+                .background(AppTheme.Colors.cardBackground)
+                .clipShape(RoundedRectangle(cornerRadius: AppTheme.Metrics.smallCornerRadius, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: AppTheme.Metrics.smallCornerRadius, style: .continuous)
+                        .stroke(AppTheme.Colors.cardBorder, lineWidth: 1)
+                )
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    static func receiptThumbnail(for url: URL, pageIndex: Int) -> NSImage? {
+        guard let document = PDFDocument(url: url), document.pageCount > 0 else { return nil }
+        let clampedIndex = min(max(pageIndex, 0), document.pageCount - 1)
+        guard let page = document.page(at: clampedIndex) else { return nil }
+        return page.thumbnail(of: NSSize(width: 220, height: 300), for: .mediaBox)
     }
 
     private var aiToolsPane: some View {
@@ -405,6 +563,10 @@ struct QuickFixTab: View {
         cleanupTransientOutputs()
         quickFixResult = nil
         isProcessing = true
+        processError = nil
+        processedPages = 0
+        totalPages = 0
+        statusLine = "Preparing \(inputURL.lastPathComponent)…"
         log = "Processing \(inputURL.lastPathComponent)…\n"
 
         let model = optionsModel
@@ -433,8 +595,11 @@ struct QuickFixTab: View {
                     }
                 }
                 if let document = PDFDocument(url: prepared.sourceURL) {
+                    let pageCount = document.pageCount
                     await MainActor.run {
-                        log += "📄 Pages: \(document.pageCount)\n"
+                        totalPages = pageCount
+                        statusLine = "Cleaning up \(pageCount) page\(pageCount == 1 ? "" : "s")…"
+                        log += "📄 Pages: \(pageCount)\n"
                     }
                 }
                 let processedResult = try model.runQuickFixResult(
@@ -444,6 +609,9 @@ struct QuickFixTab: View {
                     shouldCancel: { Task.isCancelled },
                     progress: { current, total in
                         DispatchQueue.main.async {
+                            processedPages = current
+                            totalPages = total
+                            statusLine = "Cleaning up page \(current) of \(total)…"
                             log += "Progress: \(current)/\(total)\n"
                         }
                     }
@@ -463,12 +631,15 @@ struct QuickFixTab: View {
                     quickFixResult = result
                     QuickFixResultStore.shared.set(result, sourceURL: inputURL)
                     printCoordinator.outputURL = result.displayOutputURL
+                    statusLine = "Cleanup complete. Reviewed copy ready."
                     log += "✅ Done → temporary result at \(result.outputURL.path)\n"
                     isProcessing = false
                 }
             } catch {
                 try? FileManager.default.removeItem(at: temporaryOutputURL)
                 await MainActor.run {
+                    statusLine = ""
+                    processError = error.localizedDescription
                     log += "❌ Error: \(error.localizedDescription)\n"
                     isProcessing = false
                 }
@@ -718,7 +889,7 @@ struct QuickFixTab: View {
         switch verdict {
         case .passed: AppTheme.Colors.success
         case .reviewRequired: AppTheme.Colors.warning
-        case .failed: .red
+        case .failed: AppTheme.Colors.error
         }
     }
 
