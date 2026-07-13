@@ -61,16 +61,16 @@ PDFQuickFix is best thought of as a **privacy-first PDF reader/editor workstatio
 - **Accepts PDF, PNG, and JPEG inputs** (images are converted to searchable PDFs during OCR)
 - **Optional AI auto-crop, deskew, and enhancement** for image inputs (toggle in Options)
 - **Progress updates** during QuickFix runs (pages processed)
-- **Output Packet** actions to review cleanup evidence, compare before/after pages, and export a privacy-safe JSON receipt
+- **Cleanup receipt** actions to review evidence, compare before/after pages, and export a privacy-safe JSON receipt
 - **Visible in the top mode switcher** (Reader | QuickFix | Studio | Split)
 
-> ✅ All processing is **local** by default. When enabled, the app talks only to `127.0.0.1:11434` for Ollama. Optional **cloud OCR fallback** can be enabled in Options.
+> ✅ Processing is **local by default**. Local AI connects only to Ollama at `127.0.0.1:11434` or LM Studio at `127.0.0.1:1234`. Optional Google Vision OCR is an explicit cloud exception that must be enabled in Options.
 
 ## Batch and automation
 
 - Finder Quick Action: **Quick Actions → PDFQuickFix/Sanitize PDF for Sharing**
 - App menu: **File → Sanitize Folder…**
-- App menu: **File → Export → Sanitize for Sharing…**, **Optimize…**, **Metadata Clean…**, **Flatten…**, **Encrypt…**, **Export Images…**, **Export Text…**
+- App menu: **File → Export → Sanitize for Sharing…**, **Optimized PDF…**, **Metadata-Clean PDF…**, **Flattened PDF…**, **Encrypted PDF…**, **Images…**, **Text…**
 - CLI: `pdfquickfix-cli sanitize <input.pdf> <output.pdf>`
 - CLI: `pdfquickfix-cli sanitize-batch <inputDir> <outputDir>`
 - Guide: [Sanitize for Sharing](docs/sanitize-for-sharing.md)
@@ -81,7 +81,7 @@ The Finder service accepts one or more selected PDFs, writes side-by-side `-sani
 1. Install Xcode 15+ and Command Line Tools.
 2. `brew install xcodegen`
    - Optional: `brew install xcpretty` (nicer `xcodebuild` logs; Makefile falls back if missing)
-   - `make build` runs `./scripts/security_check.sh` and fails if non-local network entitlements or ATS arbitrary loads are enabled
+   - `make build` runs `./scripts/security_check.sh`. The check verifies sandbox wiring, rejects a network-server entitlement, and rejects ATS arbitrary loads; it does not restrict outbound destinations by itself.
 3. ```bash
    cd PDFQuickFix
    xcodegen generate
@@ -101,14 +101,6 @@ The Finder service accepts one or more selected PDFs, writes side-by-side `-sani
    - Optional OCR fallback: `ollama pull deepseek-ocr:3b`
    - Text tasks (default): `ollama pull deepseek-r1:8b` (or any local model you prefer)
 4. In **Settings → Local AI**, choose **Ollama** or **LM Studio**, click **Refresh Models**, and pick a default model.
-
-### Ollama model setup
-1. Install Ollama and start it.
-2. Pull models:
-   - OCR: `ollama pull qwen2.5vl:7b` (recommended) or `ollama pull minicpm-v:8b`
-   - Optional OCR fallback: `ollama pull deepseek-ocr:3b`
-   - Text tasks (default): `ollama pull deepseek-r1:8b` (or any local model you prefer)
-3. In **Settings → Local AI**, choose **Ollama**, click **Refresh Models**, and pick a default model.
 
 ### Notes
 - Local OCR is used **only** for the OCR overlay when no redaction/Find→Replace/manual redactions are active.
@@ -214,7 +206,6 @@ Repeatable smoke harness:
 - Tests now include `ReaderLoadingTests` that open a simple PDF through the reader/studio controllers and guard the runner, helping trace the freeze you saw when loading documents.
 
 ## Roadmap (optional)
-- Before/after cleanup report bundle with clearer audit trail
 - Digital ID signing (PAdES-Basic) + validation UI
 - Export to PDF/A
 - Stronger compression controls (image downsampling, grayscale presets)
@@ -254,6 +245,12 @@ In Debug builds the app emits signposts and basic performance metrics.
 Use this to compare branches and track regressions when working on large-document performance.
 
 ## Documentation map
+- [Documentation index](docs/README.md) for tutorials, task guides, reference, and architecture
+- [Getting started](docs/getting-started.md) for build, first sanitized copy, and output verification
+- [Sanitize for Sharing](docs/sanitize-for-sharing.md) for app, Finder, batch, and profile workflows
+- [CLI reference](docs/cli-reference.md) for all commands, options, JSON contracts, and exit behavior
+- [Cleanup Evidence](docs/cleanup-evidence.md) for receipts, verdicts, comparison, and privacy boundaries
+- [Architecture](docs/architecture.md) for module ownership, data flow, local AI, and security boundaries
 - [CHANGELOG.md](CHANGELOG.md) for release notes and user-visible changes
 - [CLAUDE.md](CLAUDE.md) for repo-specific agent and design-system routing
 - [CONTRIBUTING.md](CONTRIBUTING.md) for local setup, checks, and PR expectations
@@ -265,5 +262,7 @@ Use this to compare branches and track regressions when working on large-documen
 - [LOGBOOK.md](LOGBOOK.md) for historical task notes
 - [implementation-plan-ollama-deepseek-ocr-fallback-2026-01-18.md](implementation-plan-ollama-deepseek-ocr-fallback-2026-01-18.md) for the archived OCR implementation plan
 
+The files under `docs/superpowers/`, [AUTOPLAN_REVIEW.md](AUTOPLAN_REVIEW.md), and [LOGBOOK.md](LOGBOOK.md) are historical planning records. Use the documentation index and current source/tests for shipped behavior.
+
 ## Development
-For detailed development instructions, architecture notes, and workflows, please refer to [agent.md](agent.md).
+For setup and contribution checks, see [CONTRIBUTING.md](CONTRIBUTING.md). For repository operations, see [agent.md](agent.md).

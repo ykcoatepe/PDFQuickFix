@@ -1,5 +1,7 @@
 # LOGBOOK
 
+> Historical task ledger. Older `In Progress` labels reflect the status when each row was written and are not authoritative for current product behavior. Use [CHANGELOG.md](CHANGELOG.md), [docs/README.md](docs/README.md), and current tests for shipped status.
+
 | Date | Task | Branch | Owner | Status |
 | :--- | :--- | :--- | :--- | :--- |
 | 2025-12-11 | V1.0.0 Release | release/v1.0 | Yordam | Complete |

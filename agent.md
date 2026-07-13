@@ -1,18 +1,17 @@
 Agent Guide — PDFQuickFix
 
-Version: 2025-11-30 • Owner: CodeForge AI
+Version: 2026-07-13 • Owner: CodeForge AI
 
 0. Quickstart
    • `make bootstrap` (if available) or `brew install xcodegen`
    • `make generate` (or `xcodegen generate`)
    • `make build`
    • `make run` (or open `PDFQuickFix.xcodeproj` and run scheme)
-   • `python -m .scripts.memory bootstrap` (if memory scripts exist, else skip)
 
 1. Structure & Naming
    • `Sources/PDFQuickFix/`: SwiftUI macOS app, PDF tooling, utilities.
-   • `Sources/PDFQuickFixCLI/`: Local CLI entrypoints for sanitize and batch sanitize workflows.
-   • `docs/`: User-facing guides and implementation plans/specs.
+   • `Sources/PDFQuickFixCLI/`: Local CLI entrypoints for inspect, repair, sanitize, and batch sanitize workflows.
+   • `docs/`: Tutorials, how-to guides, technical reference, architecture explanations, and archived plans/specs.
    • `libs/pdfcore/`: Core PDF parsing logic (COS objects, Lexer, Parser).
    • `libs/pdfquickfix-kit/`: Repair and recovery services.
    • `scripts/`: Shell helpers (`build.sh`, `setup.sh`, `ci_run.sh`).
@@ -26,8 +25,8 @@ Version: 2025-11-30 • Owner: CodeForge AI
    • DMG: `make dmg`.
    • CI Local: `make ci-home`.
    • Security: `make security-check` (runs automatically from `make build` / `make debug`).
-   • Lint: `swiftformat .` (if installed), `swiftlint` (if installed).
-   • Test: `make sanity-fast` or `xcodebuild test`.
+   • Optional lint: `swiftformat --lint .`, `swiftlint --strict` (if installed).
+   • Test: `make sanity-fast`; use `make ui-test-cleanup-review` for cleanup-review UI changes.
 
 3. Repo Memory
    • `.codex/memory.json`: JSON memory for the agent.
@@ -44,13 +43,18 @@ Version: 2025-11-30 • Owner: CodeForge AI
 
 6. CI Gate
    • Build must pass.
-   • `make ci-cloud` runs on GitHub Actions.
+   • GitHub Actions runs `make smoke-ocr-fallback`, `make ci-cloud`, `make ui-test-cleanup-review`, and `make build`.
+   • `make smoke-ocr-fallback` proves deterministic OCR fallback behavior.
+   • `make ui-test-cleanup-review` verifies the Cleanup Evidence review UI.
    • Manual verification of OCR/redaction flows.
 
 7. Troubleshooting
    • `xcodegen` issues: Check `project.yml`.
-   • Build fails: Clean build folder, check Xcode CLT setup. `xcpretty` is optional (install for prettier logs).
+   • Build fails: Check `xcodebuild -version`, `xcode-select -p`, and logs under `build/logs/` before cleaning. `xcpretty` is optional.
+   • `XCODEBUILD_LOG_TAIL_LINES=200 make sanity-fast` prints a longer captured-log tail.
+   • `XCODEBUILD_USE_CLANG_WRAPPER=0 make sanity-fast` disables the repository's Xcode 26.4 compiler-probe workaround for diagnosis.
 
 8. Doc Control
    • Owner: CodeForge AI.
+   • Start at `docs/README.md`; keep user flows, CLI contracts, evidence schema, and architecture docs aligned with code and tests.
    • Update on material changes.

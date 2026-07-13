@@ -133,7 +133,7 @@ This means:
   AI stays supportive, not visually dominant. The gain is trust. The cost is less immediate "AI product" signaling.
 
 ## Implementation Notes
-- `AppTheme` in [Sources/PDFQuickFix/AppTheme.swift](/Users/yordamkocatepe/Projects/PDFQuickFix/Sources/PDFQuickFix/AppTheme.swift:6) is now the single token source. The old parallel `AppColors` / `AppLayout` system has been removed; do not reintroduce a second token namespace.
+- `AppTheme` in [`Sources/PDFQuickFix/AppTheme.swift`](Sources/PDFQuickFix/AppTheme.swift) is now the single token source. The old parallel `AppColors` / `AppLayout` system has been removed; do not reintroduce a second token namespace.
 - Token groups under `AppTheme`:
   - `Colors` — surfaces, text, accents, and semantic signals (`success`/`warning`/`error`), plus `onAccent` (warm off-white for labels on the vermilion accent, honoring "avoid pure white on pure black").
   - `Typography` — the DESIGN.md type scale as named SwiftUI `Font` tokens: `displayXL` (28), `displayL` (24), `title` (20), `section` (15 semibold), `body` (13), `bodySmall` (12), `caption` (11), `monoSmall` (11, SF Mono). All use `design: .default` (SF Pro Display/Text) except `monoSmall`. The legacy `.rounded` design has been removed app-wide (including the `appFont` helper).
@@ -141,10 +141,10 @@ This means:
   - `Motion` — durations (micro 80ms, short 160ms, medium 240ms, long 360ms) and pre-built animations: `enter` (easeOut), `panelShift` (easeInOut), `dismiss` (easeIn), `press` (easeInOut micro). `Animation.sidebarTransition` / `panelTransition` now delegate to these.
 - Future UI work should extend `AppTheme` tokens rather than hard-coding fonts, radii, colors, or durations at call sites.
 - Current UI already hints at the right direction:
-  - dark shell and focused toolbar in [ContentView.swift](/Users/yordamkocatepe/Projects/PDFQuickFix/Sources/PDFQuickFix/ContentView.swift:136)
-  - document-first empty state in [ReaderProView.swift](/Users/yordamkocatepe/Projects/PDFQuickFix/Sources/PDFQuickFix/ReaderProView.swift:970)
-  - workbench framing in [SplitView.swift](/Users/yordamkocatepe/Projects/PDFQuickFix/Sources/PDFQuickFix/SplitView.swift:17)
-  - card-based AI workflow in [QuickFixTab.swift](/Users/yordamkocatepe/Projects/PDFQuickFix/Sources/PDFQuickFix/QuickFixTab.swift:62)
+  - dark shell and focused toolbar in [`ContentView.swift`](Sources/PDFQuickFix/ContentView.swift)
+  - document-first empty state in [`ReaderProView.swift`](Sources/PDFQuickFix/ReaderProView.swift)
+  - workbench framing in [`SplitView.swift`](Sources/PDFQuickFix/SplitView.swift)
+  - card-based AI workflow in [`QuickFixTab.swift`](Sources/PDFQuickFix/QuickFixTab.swift)
 
 ## Screen-Level Guidance
 
