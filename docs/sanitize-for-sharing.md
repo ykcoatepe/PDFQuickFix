@@ -2,6 +2,8 @@
 
 Use Sanitize for Sharing when you need a safer outbound copy of a PDF while keeping the original untouched. The app, Finder Quick Action, batch sheet, and CLI all use the same sanitizer core, so choose the surface that fits the handoff.
 
+For a first run from build to verified output, start with [Get Started with PDFQuickFix](getting-started.md). For every CLI flag and JSON field, use the [CLI reference](cli-reference.md).
+
 ## Surfaces
 
 - Reader or Studio: **File > Export > Sanitize for Sharing...** for the open document.
@@ -79,3 +81,5 @@ pdfquickfix-cli sanitize-batch ~/Documents/PDFs ~/Documents/Sanitized --preset s
 ## Boundaries
 
 Sanitize for Sharing reduces accidental data exposure; it is not a compliance guarantee. Always review the final output when handling regulated, legal, medical, financial, or otherwise sensitive documents.
+
+Cleanup Evidence is also not a certification. See [Cleanup Evidence](cleanup-evidence.md) for its verdict rules, privacy boundary, and batch-manifest contract.

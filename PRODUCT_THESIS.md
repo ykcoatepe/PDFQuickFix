@@ -80,11 +80,11 @@ Avoid:
 
 ## Near-term bets
 
-- Move sanitize/privacy messaging to the front of the README, landing copy, and release notes
-- Make batch sanitize and CLI workflows impossible to miss
-- Add clearer cleanup evidence: before/after summaries, report bundles, or export receipts
-- Tighten the Finder Quick Action receipt into clearer cleanup evidence
-- Add vertical presets where they improve speed without fragmenting the product
+- Turn Cleanup Evidence from a shipped receipt into a faster review decision: make warnings, changed pages, and next actions unmistakable.
+- Make the CLI easier to build and install without weakening the shared sanitize contract.
+- Add vertical presets only where they shorten repeated cleanup work without fragmenting the product.
+- Keep privacy boundaries explicit whenever cloud OCR or persistent AI logs are enabled.
+- Validate real outbound handoffs with representative sensitive-document fixtures, not feature-count demos.
 
 ## Success test
 

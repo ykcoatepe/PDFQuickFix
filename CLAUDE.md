@@ -9,6 +9,12 @@ When touching existing UI, prefer converging toward the shared design system ove
 
 ## Project docs
 
+- `docs/README.md` for the Diataxis documentation index
+- `docs/getting-started.md` for the first-build and first-output tutorial
+- `docs/sanitize-for-sharing.md` for interactive and batch cleanup tasks
+- `docs/cli-reference.md` for CLI commands and output contracts
+- `docs/cleanup-evidence.md` for receipt, verdict, and privacy boundaries
+- `docs/architecture.md` for system and security design
 - `README.md` for the user-facing feature map and documentation index
 - `CHANGELOG.md` for release notes and user-visible changes
 - `CONTRIBUTING.md` for local setup, validation, and PR expectations

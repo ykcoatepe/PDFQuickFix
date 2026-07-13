@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Cleanup Evidence receipts for QuickFix and sanitize outputs with source/output SHA-256 hashes, document facts, OCR/redaction counters, warnings, and Passed/Review/Failed verdicts
+- Before/after cleanup review with changed-page navigation, visual and text-layer comparison, and removed metadata labels
+- Privacy-safe batch evidence manifests with aggregate and per-file verdicts, hashed identifiers, and no extracted text, metadata values, absolute paths, or raw errors
 - Fuller Reader/Studio editing suite with save/write-back, password-protected PDF open, search, undo/redo, annotation editing, signature stamps, form design, bookmark editing, metadata cleanup, and persistent measurement tools
 - Safer export workflows for optimized, metadata-clean, flattened, encrypted, image, text, selected-page, and sanitized copies
 - Document Health share-readiness signals, metadata warnings, replacement/redaction overlay warnings, and exportable health reports
@@ -31,6 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - AI request timeout setting and summary page selection
 
 ### Changed
+- Finder and batch sanitize receipts now expose detailed evidence and before/after review when a processed file is available
+- The UI now uses `AppTheme` as its single design-token source
 - Reader and Studio now protect export/save paths from leaking transient selection helpers or unsafe replacement/redaction text layers
 - Encrypted-document validation and export paths now prefer unlocked snapshots so locked source files do not block safe outbound copies
 - README and project docs now describe Finder, app-menu, batch, and CLI sanitize surfaces as shipped cleanup workflows

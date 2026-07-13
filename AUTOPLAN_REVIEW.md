@@ -1,8 +1,10 @@
 # Autoplan Review
 
+> Historical planning snapshot. It records the state of `codex/split-merge-workbench` on 2026-04-18 and is not a current roadmap or implementation-status source. Cleanup Evidence and the single `AppTheme` token system described as deferred below have since shipped.
+
 Captured: 2026-04-18
 Branch: `codex/split-merge-workbench`
-Base branch: `master`
+Base branch at capture time: `master`
 
 ## Plan Summary
 
