@@ -179,7 +179,7 @@ struct QuickFixOptionsForm: View {
     @State private var isCheckingLocalOCR: Bool = false
     @State private var isQuickVerifying: Bool = false
     @State private var quickVerifyMessage: String?
-    @State private var quickVerifySucceeded: Bool?
+    @State private var quickVerifyStatus: QuickVerifyOCRSample.Outcome?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -311,8 +311,12 @@ struct QuickFixOptionsForm: View {
     }
 
     private var quickVerifyStatusColor: Color {
-        guard let quickVerifySucceeded else { return .secondary }
-        return quickVerifySucceeded ? AppTheme.Colors.success : AppTheme.Colors.error
+        switch quickVerifyStatus {
+        case .matched: AppTheme.Colors.success
+        case .textWithoutMatch: AppTheme.Colors.warning
+        case .noText: AppTheme.Colors.error
+        case nil: .secondary
+        }
     }
 
     private func refreshLocalOCRStatus() {
@@ -337,14 +341,14 @@ struct QuickFixOptionsForm: View {
 
     private func runQuickVerify() {
         guard model.doOCR, model.ocrProvider == .autoLocalOCR else {
-            quickVerifySucceeded = false
+            quickVerifyStatus = .noText
             quickVerifyMessage = "Enable Auto (Local OCR) to verify."
             return
         }
         guard !isQuickVerifying else { return }
         isQuickVerifying = true
         quickVerifyMessage = nil
-        quickVerifySucceeded = nil
+        quickVerifyStatus = nil
 
         let selectedModel = resolvedLocalOCRModelName()
         Task.detached(priority: .userInitiated) {
@@ -355,7 +359,7 @@ struct QuickFixOptionsForm: View {
             }
             guard !selectedModel.isEmpty else {
                 await MainActor.run {
-                    quickVerifySucceeded = false
+                    quickVerifyStatus = .noText
                     quickVerifyMessage = "No local OCR model selected."
                 }
                 return
@@ -365,7 +369,7 @@ struct QuickFixOptionsForm: View {
             }
             guard let image else {
                 await MainActor.run {
-                    quickVerifySucceeded = false
+                    quickVerifyStatus = .noText
                     quickVerifyMessage = "Failed to build verification image."
                 }
                 return
@@ -380,21 +384,21 @@ struct QuickFixOptionsForm: View {
             do {
                 let runs = try provider.recognizeTextLines(cgImage: image)
                 let text = QuickVerifyOCRSample.extractText(from: runs)
-                let hasText = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                let looksCorrect = QuickVerifyOCRSample.looksCorrect(text)
+                let outcome = QuickVerifyOCRSample.outcome(forText: text)
                 await MainActor.run {
-                    quickVerifySucceeded = hasText
-                    if hasText {
-                        quickVerifyMessage = looksCorrect
-                            ? "OK (\(runs.count) lines)"
-                            : "OK (text detected)"
-                    } else {
+                    quickVerifyStatus = outcome
+                    switch outcome {
+                    case .matched:
+                        quickVerifyMessage = "Matched test fixture (\(runs.count) lines)"
+                    case .textWithoutMatch:
+                        quickVerifyMessage = "Text detected but did not match the test fixture"
+                    case .noText:
                         quickVerifyMessage = "No text detected."
                     }
                 }
             } catch {
                 await MainActor.run {
-                    quickVerifySucceeded = false
+                    quickVerifyStatus = .noText
                     quickVerifyMessage = "Verify failed: \(error.localizedDescription)"
                 }
             }

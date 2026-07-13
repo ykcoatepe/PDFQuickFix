@@ -346,6 +346,10 @@ struct UnifiedToolbar: View {
                 .disabled(readerController.document == nil)
 
                 Menu {
+                    Button { readerController.exportSanitized() } label: {
+                        Label("Sanitized PDF…", systemImage: "checkmark.shield")
+                    }
+                    Divider()
                     Menu("Images") {
                         Button("JPEG") { readerController.exportToImages(format: .jpeg) }
                         Button("PNG") { readerController.exportToImages(format: .png) }
@@ -356,8 +360,6 @@ struct UnifiedToolbar: View {
                     Button("Metadata-Clean PDF…") { readerController.exportMetadataCleaned() }
                     Button("Flattened PDF…") { readerController.exportFlattened() }
                     Button("Encrypted PDF…") { readerController.exportEncrypted() }
-                    Divider()
-                    Button("Sanitized PDF…") { readerController.exportSanitized() }
                 } label: {
                     Image(systemName: "square.and.arrow.up")
                 }
@@ -471,6 +473,10 @@ struct UnifiedToolbar: View {
                 .disabled(studioController.document == nil)
 
                 Menu {
+                    Button { studioController.exportSanitized() } label: {
+                        Label("Sanitized PDF…", systemImage: "checkmark.shield")
+                    }
+                    Divider()
                     Menu("Images") {
                         Button("JPEG") { studioController.exportToImages(format: .jpeg) }
                         Button("PNG") { studioController.exportToImages(format: .png) }
@@ -481,8 +487,6 @@ struct UnifiedToolbar: View {
                     Button("Metadata-Clean PDF…") { studioController.exportMetadataCleaned() }
                     Button("Flattened PDF…") { studioController.exportFlattened() }
                     Button("Encrypted PDF…") { studioController.exportEncrypted() }
-                    Divider()
-                    Button("Sanitized PDF…") { studioController.exportSanitized() }
                 } label: {
                     Image(systemName: "square.and.arrow.up")
                 }
@@ -514,7 +518,7 @@ struct UnifiedToolbar: View {
         case .studio:
             studioRightControls
         case .split, .quickFix:
-            BatchSanitizeLaunchButton(tone: .ghost)
+            BatchSanitizeLaunchButton(tone: .secondary)
         }
     }
 
@@ -607,7 +611,11 @@ struct UnifiedToolbar: View {
 
             Divider().frame(height: 16)
 
-            BatchSanitizeLaunchButton(tone: .ghost)
+            MakeSafeCopyButton(isEnabled: readerController.document != nil) {
+                readerController.exportSanitized()
+            }
+
+            BatchSanitizeLaunchButton(tone: .secondary)
         }
     }
 
@@ -736,7 +744,11 @@ struct UnifiedToolbar: View {
 
             Divider().frame(height: 16)
 
-            BatchSanitizeLaunchButton(tone: .ghost)
+            MakeSafeCopyButton(isEnabled: studioController.document != nil) {
+                studioController.exportSanitized()
+            }
+
+            BatchSanitizeLaunchButton(tone: .secondary)
         }
     }
 

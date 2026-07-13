@@ -6,6 +6,23 @@ enum BatchSanitizeButtonTone {
     case ghost
 }
 
+/// Persistent, prominent wedge action for the active document. Triggers the existing
+/// sanitize-for-sharing export flow so "make a safer outbound copy" is always one click away.
+struct MakeSafeCopyButton: View {
+    var isEnabled: Bool
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Label("Make Safe Copy…", systemImage: "shield.lefthalf.filled")
+        }
+        .buttonStyle(PrimaryButtonStyle(isDisabled: !isEnabled))
+        .disabled(!isEnabled)
+        .help("Sanitize this document into a safer outbound copy")
+        .accessibilityLabel("Make Safe Copy")
+    }
+}
+
 struct BatchSanitizeLaunchButton: View {
     var title: String = "Sanitize Folder…"
     var tone: BatchSanitizeButtonTone = .secondary

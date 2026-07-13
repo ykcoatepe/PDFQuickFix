@@ -364,8 +364,14 @@ struct CleanupComparisonSheet: View {
                     .resizable()
                     .scaledToFit()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color.white)
+                    .padding(8)
+                    .background(AppTheme.Colors.paperBackground)
                     .clipShape(RoundedRectangle(cornerRadius: AppTheme.Metrics.smallCornerRadius, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: AppTheme.Metrics.smallCornerRadius, style: .continuous)
+                            .stroke(AppTheme.Colors.paperBorder, lineWidth: 1)
+                    )
+                    .shadow(color: AppTheme.Shadows.card, radius: 6, x: 0, y: 2)
             } else {
                 VStack(spacing: 8) {
                     Image(systemName: "doc.questionmark")

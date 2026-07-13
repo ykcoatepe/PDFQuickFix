@@ -293,6 +293,12 @@ struct BatchSanitizeSheet: View {
         }
         .frame(minWidth: 600, minHeight: 580)
         .background(AppTheme.Colors.background.ignoresSafeArea())
+        .onChange(of: viewModel.evidenceManifest?.verdict) { verdict in
+            // Non-passing runs lead with the evidence: auto-expand the per-file list.
+            if let verdict, verdict != .passed {
+                isFileEvidenceExpanded = true
+            }
+        }
         .sheet(item: $selectedEvidenceEntry) { entry in
             if let evidence = entry.evidence {
                 CleanupEvidenceSheet(evidence: evidence)
@@ -613,12 +619,28 @@ struct BatchSanitizeSheet: View {
                 }
                 .buttonStyle(SecondaryButtonStyle())
             } else if viewModel.report != nil {
-                Button("Done") {
-                    // Close window
-                    NSApp.keyWindow?.close()
+                if let manifest = viewModel.evidenceManifest, manifest.verdict != .passed {
+                    // Review/Failed aggregate: lead with review, demote Close to secondary.
+                    Button("Close") {
+                        NSApp.keyWindow?.close()
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
+
+                    let count = needsReviewCount(manifest)
+                    Button("Review \(count) file\(count == 1 ? "" : "s")") {
+                        isFileEvidenceExpanded = true
+                        selectedEvidenceEntry = firstReviewableEntry(manifest)
+                    }
+                    .buttonStyle(PrimaryButtonStyle(tint: manifest.verdict == .failed ? AppTheme.Colors.error : AppTheme.Colors.warning))
+                    .keyboardShortcut(.defaultAction)
+                } else {
+                    Button("Done") {
+                        // Close window
+                        NSApp.keyWindow?.close()
+                    }
+                    .buttonStyle(PrimaryButtonStyle())
+                    .keyboardShortcut(.defaultAction)
                 }
-                .buttonStyle(PrimaryButtonStyle())
-                .keyboardShortcut(.defaultAction)
             } else {
                 Button("Start Run") {
                     viewModel.startBatch()
@@ -672,6 +694,15 @@ struct BatchSanitizeSheet: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .textSelection(.enabled)
         }
+    }
+
+    private func needsReviewCount(_ manifest: BatchCleanupEvidenceManifest) -> Int {
+        manifest.reviewRequiredCount + manifest.failedCount
+    }
+
+    private func firstReviewableEntry(_ manifest: BatchCleanupEvidenceManifest) -> BatchCleanupEvidenceManifest.FileEntry? {
+        manifest.files.first(where: { $0.evidence != nil && $0.verdict != .passed })
+            ?? manifest.files.first(where: { $0.verdict != .passed })
     }
 
     private func profileLabel(_ profile: SanitizeProfile) -> String {

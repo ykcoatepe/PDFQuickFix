@@ -233,17 +233,20 @@ struct PaperPanelModifier: ViewModifier {
 
 struct PrimaryButtonStyle: ButtonStyle {
     var isDisabled: Bool = false
+    /// Filled background tone. Defaults to the vermilion wedge accent; override with a
+    /// semantic color (e.g. warning/error) for review-oriented primary actions.
+    var tint: Color = AppTheme.Colors.accent
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .padding(.horizontal, 20)
             .padding(.vertical, 10)
-            .background(isDisabled ? Color.gray.opacity(0.3) : AppTheme.Colors.accent)
+            .background(isDisabled ? Color.gray.opacity(0.3) : tint)
             .foregroundColor(AppTheme.Colors.onAccent)
             .cornerRadius(AppTheme.Metrics.smallCornerRadius)
             .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
             .animation(AppTheme.Motion.press, value: configuration.isPressed)
-            .shadow(color: AppTheme.Colors.accent.opacity(0.3), radius: 4, x: 0, y: 2)
+            .shadow(color: tint.opacity(0.3), radius: 4, x: 0, y: 2)
     }
 }
 
