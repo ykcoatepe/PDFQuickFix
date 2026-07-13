@@ -74,6 +74,7 @@ enum FinderQuickActionSanitizer {
         guard let document = PDFDocument(url: sourceURL) else {
             throw PDFDocumentSanitizerError.unableToOpen(sourceURL)
         }
+        let evidenceSourceData = document.dataRepresentation()
 
         let sanitized = try PDFDocumentSanitizer.sanitize(
             document: document,
@@ -91,8 +92,13 @@ enum FinderQuickActionSanitizer {
         }
 
         do {
+            guard let evidenceSourceData,
+                  let evidenceSourceDocument = PDFDocument(data: evidenceSourceData)
+            else {
+                throw CleanupEvidenceError.unreadablePDF(fileName: sourceURL.lastPathComponent)
+            }
             let review = try CleanupReviewBuilder.build(
-                sourceDocument: document,
+                sourceDocument: evidenceSourceDocument,
                 sourceFileName: sourceURL.lastPathComponent,
                 outputURL: outputURL,
                 profile: profile
