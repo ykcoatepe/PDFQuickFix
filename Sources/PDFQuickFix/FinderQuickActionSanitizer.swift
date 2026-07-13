@@ -71,10 +71,10 @@ enum FinderQuickActionSanitizer {
                              profile: SanitizeProfile,
                              progress: PDFDocumentSanitizer.ProgressHandler? = nil) throws -> FinderSanitizeOutcome
     {
-        guard let document = PDFDocument(url: sourceURL) else {
+        let evidenceSourceData = try Data(contentsOf: sourceURL, options: [.mappedIfSafe])
+        guard let document = PDFDocument(data: evidenceSourceData) else {
             throw PDFDocumentSanitizerError.unableToOpen(sourceURL)
         }
-        let evidenceSourceData = document.dataRepresentation()
 
         let sanitized = try PDFDocumentSanitizer.sanitize(
             document: document,
@@ -92,13 +92,8 @@ enum FinderQuickActionSanitizer {
         }
 
         do {
-            guard let evidenceSourceData,
-                  let evidenceSourceDocument = PDFDocument(data: evidenceSourceData)
-            else {
-                throw CleanupEvidenceError.unreadablePDF(fileName: sourceURL.lastPathComponent)
-            }
             let review = try CleanupReviewBuilder.build(
-                sourceDocument: evidenceSourceDocument,
+                sourceData: evidenceSourceData,
                 sourceFileName: sourceURL.lastPathComponent,
                 outputURL: outputURL,
                 profile: profile

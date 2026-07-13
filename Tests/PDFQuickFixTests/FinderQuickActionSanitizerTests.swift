@@ -114,6 +114,7 @@ final class FinderQuickActionSanitizerTests: XCTestCase {
         )
         sourcePage.addAnnotation(annotation)
         XCTAssertTrue(sourceDocument.write(to: sourceURL))
+        let originalSourceData = try Data(contentsOf: sourceURL)
         let persistedSource = try XCTUnwrap(PDFDocument(url: sourceURL))
         let expectedAnnotationCount = (0 ..< persistedSource.pageCount).reduce(into: 0) { count, index in
             count += persistedSource.page(at: index)?.annotations.count ?? 0
@@ -133,6 +134,7 @@ final class FinderQuickActionSanitizerTests: XCTestCase {
         XCTAssertFalse(review.evidence.output.metadataFieldLabels.contains("Author"))
         XCTAssertEqual(review.evidence.source.annotationCount, expectedAnnotationCount)
         XCTAssertEqual(review.evidence.output.annotationCount, 0)
+        XCTAssertEqual(try Data(contentsOf: review.sourceSnapshotURL), originalSourceData)
     }
 
     private func makeTemporaryDirectory() throws -> URL {

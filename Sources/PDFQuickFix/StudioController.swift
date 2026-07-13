@@ -82,6 +82,19 @@ struct DocumentMetadataDraft: Equatable {
     var producer: String = ""
 }
 
+private final class ThumbnailSnapshotJob: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+
+    var isCancelled: Bool {
+        lock.withLock { cancelled }
+    }
+
+    func cancel() {
+        lock.withLock { cancelled = true }
+    }
+}
+
 @MainActor
 final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFActionable, StudioToolSwitchable {
     @Published var document: PDFDocument?
@@ -124,9 +137,13 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
 
     @Published private(set) var currentSelectionText: String?
     private let passwordProvider: PDFPasswordProvider
+    private let repairSourceURL: (URL) throws -> URL
 
-    init(passwordProvider: @escaping PDFPasswordProvider = PDFPasswordPrompt.requestPassword) {
+    init(passwordProvider: @escaping PDFPasswordProvider = PDFPasswordPrompt.requestPassword,
+         repairSourceURL: @escaping (URL) throws -> URL = { try PDFRepairService().repairIfNeeded(inputURL: $0) })
+    {
         self.passwordProvider = passwordProvider
+        self.repairSourceURL = repairSourceURL
         super.init()
     }
 
@@ -183,6 +200,10 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     private let thumbnailQueue = DispatchQueue(label: "com.pdfquickfix.thumbnails", qos: .userInitiated)
     private var inflightThumbnails: Set<Int> = []
     private let inflightLock = NSLock()
+    private var renderSnapshotData: Data?
+    private var isRenderSnapshotBuilding = false
+    private var renderSnapshotWaiters: [(Data?) -> Void] = []
+    private var renderSnapshotJob: ThumbnailSnapshotJob?
     private var selectionHelperAnnotation: PDFAnnotation?
     private let snapshotQueue: OperationQueue = {
         let queue = OperationQueue()
@@ -196,9 +217,11 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     private let largeDocumentPageThreshold = DocumentValidationRunner.largeDocumentPageThreshold
     private enum ValidationMode { case idle, quick, full }
     private var validationMode: ValidationMode = .idle
-    private var studioOpenSignpost: OSSignpostID?
+    private var openGeneration = UUID()
+    private var activeOpenLease: DocumentOpenResourceLease?
+    private var activeOpenSignpost: (generation: UUID, id: OSSignpostID)?
     #if DEBUG
-        private var studioOpenStart: Date?
+        private var activeOpenStart: (generation: UUID, date: Date)?
     #endif
     private var deferOutlineLoad = false
     private var deferAnnotationScan = false
@@ -276,26 +299,37 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     }
 
     func open(url: URL, access: SecurityScopedAccess? = nil) {
+        invalidatePendingOpen()
         validationRunner.cancelValidation()
         validationRunner.cancelOpen()
+        let generation = UUID()
+        openGeneration = generation
         let effectiveAccess = access ?? SecurityScopedAccess(url: url)
+        let resourceLease = DocumentOpenResourceLease(access: effectiveAccess)
+        activeOpenLease = resourceLease
         isDocumentLoading = true
         loadingStatus = "Opening \(url.lastPathComponent)…"
-        studioOpenSignpost = PerfLog.begin("StudioOpen")
+        activeOpenSignpost = (generation, PerfLog.begin("StudioOpen"))
         #if DEBUG
             PerfMetrics.shared.reset()
-            studioOpenStart = Date()
+            activeOpenStart = (generation, Date())
         #endif
+        let repairSourceURL = self.repairSourceURL
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
 
             if let encryptedDoc = PDFDocument(url: url), encryptedDoc.isEncrypted, encryptedDoc.isLocked {
                 DispatchQueue.main.async {
+                    guard self.isCurrentOpen(generation) else {
+                        self.rejectOpen(generation: generation, lease: resourceLease)
+                        return
+                    }
                     self.finishEncryptedOpen(document: encryptedDoc,
                                              sourceURL: url,
                                              workingURL: url,
-                                             access: effectiveAccess,
+                                             generation: generation,
+                                             resourceLease: resourceLease,
                                              isRepaired: false)
                 }
                 return
@@ -305,18 +339,28 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
             var finalURL = url
             var repaired = false
             do {
-                let repairedURL = try PDFRepairService().repairIfNeeded(inputURL: url)
+                let repairedURL = try repairSourceURL(url)
                 if repairedURL != url {
                     finalURL = repairedURL
                     repaired = true
+                    resourceLease.registerWorkingURL(repairedURL, sourceURL: url)
                 }
             } catch {
                 print("Studio repair failed: \(error)")
             }
 
             DispatchQueue.main.async {
+                guard self.isCurrentOpen(generation) else {
+                    self.rejectOpen(generation: generation, lease: resourceLease)
+                    return
+                }
                 if let rawDoc = PDFDocument(url: finalURL), rawDoc.isEncrypted, rawDoc.isLocked {
-                    self.finishEncryptedOpen(document: rawDoc, sourceURL: url, workingURL: finalURL, access: effectiveAccess, isRepaired: repaired)
+                    self.finishEncryptedOpen(document: rawDoc,
+                                             sourceURL: url,
+                                             workingURL: finalURL,
+                                             generation: generation,
+                                             resourceLease: resourceLease,
+                                             isRepaired: repaired)
                     return
                 }
 
@@ -324,19 +368,31 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
                                                    quickValidationPageLimit: 0,
                                                    progress: { [weak self] processed, total in
                                                        guard let self else { return }
+                                                       guard self.isCurrentOpen(generation) else { return }
                                                        guard total > 0 else { return }
                                                        let clamped = min(processed, total)
                                                        loadingStatus = "Validating \(clamped)/\(total)"
                                                    },
                                                    completion: { [weak self] result in
                                                        guard let self else { return }
+                                                       guard self.isCurrentOpen(generation) else {
+                                                           self.rejectOpen(generation: generation, lease: resourceLease)
+                                                           return
+                                                       }
                                                        isDocumentLoading = false
                                                        loadingStatus = nil
                                                        switch result {
                                                        case let .success(doc):
-                                                           finishOpen(document: doc, sourceURL: url, workingURL: finalURL, access: effectiveAccess, isRepaired: repaired)
+                                                           finishOpen(document: doc,
+                                                                      sourceURL: url,
+                                                                      workingURL: finalURL,
+                                                                      generation: generation,
+                                                                      resourceLease: resourceLease,
+                                                                      isRepaired: repaired)
                                                        case let .failure(error):
-                                                           handleOpenError(error)
+                                                           handleOpenError(error,
+                                                                           generation: generation,
+                                                                           resourceLease: resourceLease)
                                                        }
                                                    })
             }
@@ -346,15 +402,18 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     private func finishEncryptedOpen(document rawDoc: PDFDocument,
                                      sourceURL: URL,
                                      workingURL: URL,
-                                     access: SecurityScopedAccess?,
+                                     generation: UUID,
+                                     resourceLease: DocumentOpenResourceLease,
                                      isRepaired: Bool)
     {
+        guard isCurrentOpen(generation) else {
+            rejectOpen(generation: generation, lease: resourceLease)
+            return
+        }
         loadingStatus = "Unlocking \(sourceURL.lastPathComponent)…"
         guard PDFPasswordUnlock.unlockIfNeeded(document: rawDoc, url: sourceURL, passwordProvider: passwordProvider) else {
-            if let studioOpenSignpost {
-                PerfLog.end("StudioOpen", studioOpenSignpost)
-                self.studioOpenSignpost = nil
-            }
+            resourceLease.discard()
+            activeOpenLease = nil
             resetDocumentState()
             pushLog("Open failed: password required for \(sourceURL.lastPathComponent)")
             return
@@ -365,7 +424,8 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         finishOpen(document: rawDoc,
                    sourceURL: sourceURL,
                    workingURL: workingURL,
-                   access: access,
+                   generation: generation,
+                   resourceLease: resourceLease,
                    isRepaired: isRepaired,
                    requiresUnlockedValidation: true)
     }
@@ -373,17 +433,23 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     private func finishOpen(document newDocument: PDFDocument,
                             sourceURL: URL,
                             workingURL: URL,
-                            access: SecurityScopedAccess?,
+                            generation: UUID,
+                            resourceLease: DocumentOpenResourceLease,
                             isRepaired: Bool = false,
                             requiresUnlockedValidation: Bool = false)
     {
+        guard isCurrentOpen(generation) else {
+            rejectOpen(generation: generation, lease: resourceLease)
+            return
+        }
         let sp = PerfLog.begin("StudioFinishOpen")
         defer { PerfLog.end("StudioFinishOpen", sp) }
         clearEditUndoStacks()
         document = newDocument
         currentURL = workingURL
         self.sourceURL = sourceURL
-        activeSecurityScope = access
+        activeSecurityScope = resourceLease.commit()
+        activeOpenLease = nil
         let profile = DocumentProfile.from(pageCount: newDocument.pageCount)
         isLargeDocument = profile.isLarge
         isMassiveDocument = profile.isMassive
@@ -414,25 +480,28 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
             scheduleValidation(for: workingURL, pageLimit: 10, mode: .quick)
         }
 
-        if let openSP = studioOpenSignpost {
-            PerfLog.end("StudioOpen", openSP)
-            studioOpenSignpost = nil
-        }
+        endOpenMetrics(generation)
         #if DEBUG
-            if let start = studioOpenStart {
-                let duration = Date().timeIntervalSince(start)
+            if let start = activeOpenStart, start.generation == generation {
+                let duration = Date().timeIntervalSince(start.date)
                 PerfMetrics.shared.recordStudioOpen(duration: duration)
                 NSLog("%@", PerfMetrics.shared.summaryString())
-                studioOpenStart = nil
+                activeOpenStart = nil
             }
         #endif
     }
 
-    private func handleOpenError(_ error: Error) {
-        if let openSP = studioOpenSignpost {
-            PerfLog.end("StudioOpen", openSP)
-            studioOpenSignpost = nil
+    private func handleOpenError(_ error: Error,
+                                 generation: UUID,
+                                 resourceLease: DocumentOpenResourceLease)
+    {
+        guard isCurrentOpen(generation) else {
+            rejectOpen(generation: generation, lease: resourceLease)
+            return
         }
+        resourceLease.discard()
+        activeOpenLease = nil
+        endOpenMetrics(generation)
         resetDocumentState()
         pushLog("⚠️ \(error.localizedDescription)")
         present(error)
@@ -444,6 +513,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     }
 
     private func resetDocumentState(clearLog: Bool = false) {
+        invalidatePendingOpen()
         validationRunner.cancelValidation()
         validationRunner.cancelOpen()
         clearSearchState()
@@ -479,6 +549,36 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         }
         isRepaired = false
         streamingLoader.close()
+    }
+
+    private func isCurrentOpen(_ generation: UUID) -> Bool {
+        openGeneration == generation
+    }
+
+    private func invalidatePendingOpen() {
+        openGeneration = UUID()
+        // The background open closure retains its lease. Dropping the controller's
+        // reference supersedes publication without revoking scope mid-read.
+        activeOpenLease = nil
+        if let activeOpenSignpost {
+            PerfLog.end("StudioOpen", activeOpenSignpost.id)
+            self.activeOpenSignpost = nil
+        }
+        #if DEBUG
+            activeOpenStart = nil
+        #endif
+    }
+
+    private func rejectOpen(generation: UUID, lease: DocumentOpenResourceLease) {
+        lease.discard()
+        endOpenMetrics(generation)
+    }
+
+    private func endOpenMetrics(_ generation: UUID) {
+        guard activeOpenSignpost?.generation == generation,
+              let signpost = activeOpenSignpost?.id else { return }
+        PerfLog.end("StudioOpen", signpost)
+        activeOpenSignpost = nil
     }
 
     private func clearEditUndoStacks() {
@@ -1419,6 +1519,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     }
 
     func refreshPages() {
+        resetThumbnailState()
         snapshotOperation?.cancel()
         snapshotOperation = nil
         snapshotGenerationID = UUID()
@@ -1463,9 +1564,6 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
                          thumbnail: thumbnailCache.object(forKey: NSNumber(value: index)),
                          label: "Page \(index + 1)")
         }
-
-        // Initial prefetch around the first page.
-        prefetchThumbnails(around: 0, window: 2, farWindow: 6)
 
         // Mark loading finished; subsequent thumbnails will arrive via ensureThumbnail + renderService.
         if token == snapshotGenerationID {
@@ -2331,11 +2429,8 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
                     var cleanupReview: CleanupReview?
                     var reviewWarning: String?
                     do {
-                        guard let evidenceSourceDocument = PDFDocument(data: evidenceSourceData) else {
-                            throw CleanupEvidenceError.unreadablePDF(fileName: sourceFileName)
-                        }
                         cleanupReview = try CleanupReviewBuilder.build(
-                            sourceDocument: evidenceSourceDocument,
+                            sourceData: evidenceSourceData,
                             sourceFileName: sourceFileName,
                             outputURL: destination,
                             profile: profile
@@ -2795,8 +2890,122 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     private func resetThumbnailState() {
         renderService.cancelAll()
         renderDocumentIdentity = UUID().uuidString
+        renderSnapshotJob?.cancel()
+        renderSnapshotJob = nil
+        renderSnapshotData = nil
+        isRenderSnapshotBuilding = false
+        renderSnapshotWaiters.removeAll()
         thumbnailCache.removeAllObjects()
-        inflightThumbnails.removeAll()
+        inflightLock.withLock {
+            inflightThumbnails.removeAll()
+        }
+    }
+
+    private func withRenderSnapshot(_ completion: @escaping (Data?) -> Void) {
+        guard !isMassiveDocument, let document else {
+            completion(nil)
+            return
+        }
+        if let renderSnapshotData {
+            completion(renderSnapshotData)
+            return
+        }
+
+        renderSnapshotWaiters.append(completion)
+        guard !isRenderSnapshotBuilding else { return }
+        isRenderSnapshotBuilding = true
+        let identity = renderDocumentIdentity
+        let sourceDocument = SendablePDFDocument(document: document)
+        let job = ThumbnailSnapshotJob()
+        renderSnapshotJob = job
+
+        appendRenderSnapshotPage(sourceDocument: sourceDocument,
+                                 snapshotDocument: PDFDocument(),
+                                 pageIndex: 0,
+                                 pageCount: document.pageCount,
+                                 identity: identity,
+                                 job: job)
+    }
+
+    private func appendRenderSnapshotPage(sourceDocument: SendablePDFDocument,
+                                          snapshotDocument: PDFDocument,
+                                          pageIndex: Int,
+                                          pageCount: Int,
+                                          identity: String,
+                                          job: ThumbnailSnapshotJob)
+    {
+        guard !job.isCancelled,
+              renderDocumentIdentity == identity,
+              document === sourceDocument.document
+        else { return }
+
+        guard pageIndex < pageCount else {
+            serializeRenderSnapshot(sourceDocument: sourceDocument,
+                                    snapshotDocument: snapshotDocument,
+                                    identity: identity,
+                                    job: job)
+            return
+        }
+
+        guard pageIndex < sourceDocument.document.pageCount,
+              let sourcePage = sourceDocument.document.page(at: pageIndex),
+              let pageCopy = sourcePage.copy() as? PDFPage
+        else {
+            publishRenderSnapshot(nil,
+                                  sourceDocument: sourceDocument,
+                                  identity: identity,
+                                  job: job)
+            return
+        }
+        snapshotDocument.insert(pageCopy, at: pageIndex)
+
+        // Copy one page per run-loop turn so a large document never becomes
+        // one uninterruptible MainActor operation. The detached document is
+        // immutable once handed to the serialization queue below.
+        DispatchQueue.main.async { [weak self] in
+            self?.appendRenderSnapshotPage(sourceDocument: sourceDocument,
+                                           snapshotDocument: snapshotDocument,
+                                           pageIndex: pageIndex + 1,
+                                           pageCount: pageCount,
+                                           identity: identity,
+                                           job: job)
+        }
+    }
+
+    private func serializeRenderSnapshot(sourceDocument: SendablePDFDocument,
+                                         snapshotDocument: PDFDocument,
+                                         identity: String,
+                                         job: ThumbnailSnapshotJob)
+    {
+        let sendableSnapshot = SendablePDFDocument(document: snapshotDocument)
+
+        thumbnailQueue.async { [weak self, sourceDocument, sendableSnapshot] in
+            guard !job.isCancelled else { return }
+            let data = sendableSnapshot.document.dataRepresentation()
+            Task { @MainActor [weak self] in
+                self?.publishRenderSnapshot(data,
+                                            sourceDocument: sourceDocument,
+                                            identity: identity,
+                                            job: job)
+            }
+        }
+    }
+
+    private func publishRenderSnapshot(_ data: Data?,
+                                       sourceDocument: SendablePDFDocument,
+                                       identity: String,
+                                       job: ThumbnailSnapshotJob)
+    {
+        guard !job.isCancelled,
+              renderDocumentIdentity == identity,
+              document === sourceDocument.document
+        else { return }
+        isRenderSnapshotBuilding = false
+        renderSnapshotJob = nil
+        renderSnapshotData = data
+        let waiters = renderSnapshotWaiters
+        renderSnapshotWaiters.removeAll()
+        waiters.forEach { $0(data) }
     }
 
     #if DEBUG
@@ -2846,12 +3055,14 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         // For massive documents, use the streaming loader for faster thumbnail rendering
         if isMassiveDocument, streamingLoader.isOpen {
             let loader = streamingLoader
+            let identity = renderDocumentIdentity
             thumbnailQueue.async { [weak self, loader] in
                 let image = loader.renderThumbnail(at: index, size: thumbSize)
 
                 Task { @MainActor [weak self] in
                     guard let self else { return }
                     inflightThumbnails.remove(index)
+                    guard renderDocumentIdentity == identity else { return }
 
                     guard let image else { return }
                     thumbnailCache.setObject(image, forKey: key)
@@ -2861,29 +3072,29 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
             return
         }
 
-        // Standard path for non-massive documents
-        let docURL = doc.documentURL
-        let docData: Data? = if !isMassiveDocument {
-            doc.dataRepresentation()
-        } else {
-            nil
-        }
+        // Standard path for non-massive documents. Build one immutable source
+        // off-main and reuse it for every thumbnail in this document revision.
+        let identity = renderDocumentIdentity
+        withRenderSnapshot { [weak self] docData in
+            guard let self, renderDocumentIdentity == identity else { return }
+            guard let docData else {
+                _ = inflightLock.withLock { self.inflightThumbnails.remove(index) }
+                return
+            }
+            renderService.thumbnail(pageIndex: index,
+                                    targetSize: thumbSize,
+                                    documentURL: nil,
+                                    documentData: docData,
+                                    documentIdentity: identity,
+                                    priority: .high)
+            { [weak self] image in
+                guard let self, renderDocumentIdentity == identity else { return }
+                _ = inflightLock.withLock { self.inflightThumbnails.remove(index) }
 
-        renderService.thumbnail(pageIndex: index,
-                                targetSize: thumbSize,
-                                documentURL: docURL,
-                                documentData: docData,
-                                documentIdentity: renderDocumentIdentity,
-                                priority: .high)
-        { [weak self] image in
-            guard let self else { return }
-            inflightLock.lock()
-            inflightThumbnails.remove(index)
-            inflightLock.unlock()
-
-            guard let image else { return }
-            thumbnailCache.setObject(image, forKey: key)
-            updateSnapshot(at: index, thumbnail: image)
+                guard let image else { return }
+                thumbnailCache.setObject(image, forKey: key)
+                updateSnapshot(at: index, thumbnail: image)
+            }
         }
     }
 
@@ -2910,44 +3121,45 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
                                     size: targetSize)
         }
 
-        let docURL = doc.documentURL
-        let docData: Data?
-        docData = isMassiveDocument ? nil : doc.dataRepresentation()
+        let identity = renderDocumentIdentity
+        withRenderSnapshot { [weak self] docData in
+            guard let self, let docData, renderDocumentIdentity == identity else { return }
 
-        // Near window (±window) with high priority.
-        for offset in -window ... window {
-            let idx = centerIndex + offset
-            guard let request = makeRequest(idx) else { continue }
-            if thumbnailCache.object(forKey: NSNumber(value: idx)) != nil { continue }
-            renderService.image(for: request,
-                                documentURL: docURL,
-                                documentData: docData,
-                                documentIdentity: renderDocumentIdentity,
-                                priority: .veryHigh)
-            { [weak self] image in
-                guard let self, let image else { return }
-                let key = NSNumber(value: idx)
-                thumbnailCache.setObject(image, forKey: key)
-                updateSnapshot(at: idx, thumbnail: image)
+            // Near window (±window) with high priority.
+            for offset in -window ... window {
+                let idx = centerIndex + offset
+                guard let request = makeRequest(idx) else { continue }
+                if thumbnailCache.object(forKey: NSNumber(value: idx)) != nil { continue }
+                renderService.image(for: request,
+                                    documentURL: nil,
+                                    documentData: docData,
+                                    documentIdentity: identity,
+                                    priority: .veryHigh)
+                { [weak self] image in
+                    guard let self, let image, renderDocumentIdentity == identity else { return }
+                    let key = NSNumber(value: idx)
+                    thumbnailCache.setObject(image, forKey: key)
+                    updateSnapshot(at: idx, thumbnail: image)
+                }
             }
-        }
 
-        // Far window (±farWindow) with lower priority.
-        for offset in -farWindow ... farWindow {
-            if abs(offset) <= window { continue }
-            let idx = centerIndex + offset
-            guard let request = makeRequest(idx) else { continue }
-            if thumbnailCache.object(forKey: NSNumber(value: idx)) != nil { continue }
-            renderService.image(for: request,
-                                documentURL: docURL,
-                                documentData: docData,
-                                documentIdentity: renderDocumentIdentity,
-                                priority: .low)
-            { [weak self] image in
-                guard let self, let image else { return }
-                let key = NSNumber(value: idx)
-                thumbnailCache.setObject(image, forKey: key)
-                updateSnapshot(at: idx, thumbnail: image)
+            // Far window (±farWindow) with lower priority.
+            for offset in -farWindow ... farWindow {
+                if abs(offset) <= window { continue }
+                let idx = centerIndex + offset
+                guard let request = makeRequest(idx) else { continue }
+                if thumbnailCache.object(forKey: NSNumber(value: idx)) != nil { continue }
+                renderService.image(for: request,
+                                    documentURL: nil,
+                                    documentData: docData,
+                                    documentIdentity: identity,
+                                    priority: .low)
+                { [weak self] image in
+                    guard let self, let image, renderDocumentIdentity == identity else { return }
+                    let key = NSNumber(value: idx)
+                    thumbnailCache.setObject(image, forKey: key)
+                    updateSnapshot(at: idx, thumbnail: image)
+                }
             }
         }
     }

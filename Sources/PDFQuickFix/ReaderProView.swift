@@ -74,6 +74,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
     private var copilotService: any DocumentCopilotServicing
     private let usesCustomCopilotService: Bool
     private let passwordProvider: PDFPasswordProvider
+    private let repairSourceURL: (URL) throws -> URL
     private weak var aiSettings: LocalAISettings?
     private var searchDebounceWorkItem: DispatchWorkItem?
     private var activeCopilotRequestID: UInt64 = 0
@@ -81,13 +82,18 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
     private var validationMode: ValidationMode = .idle
     private let largeDocumentPageThreshold = DocumentValidationRunner.largeDocumentPageThreshold
     private let editUndoManager = UndoManager()
+    private var openGeneration = UUID()
+    private var activeOpenLease: DocumentOpenResourceLease?
+    private var activeOpenSignpost: (generation: UUID, id: OSSignpostID)?
 
     init(copilotService: (any DocumentCopilotServicing)? = nil,
-         passwordProvider: @escaping PDFPasswordProvider = PDFPasswordPrompt.requestPassword)
+         passwordProvider: @escaping PDFPasswordProvider = PDFPasswordPrompt.requestPassword,
+         repairSourceURL: @escaping (URL) throws -> URL = { try PDFRepairService().repairIfNeeded(inputURL: $0) })
     {
         self.copilotService = copilotService ?? DocumentCopilotService(interactionStore: AIInteractionStore())
         usesCustomCopilotService = copilotService != nil
         self.passwordProvider = passwordProvider
+        self.repairSourceURL = repairSourceURL
         super.init()
     }
 
@@ -102,13 +108,20 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
     }
 
     func open(url: URL, access: SecurityScopedAccess? = nil) {
+        invalidatePendingOpen()
         validationRunner.cancelValidation()
         validationRunner.cancelOpen()
+        let generation = UUID()
+        openGeneration = generation
         let effectiveAccess = access ?? SecurityScopedAccess(url: url)
+        let resourceLease = DocumentOpenResourceLease(access: effectiveAccess)
+        activeOpenLease = resourceLease
         isLoadingDocument = true
         loadingStatus = "Opening \(url.lastPathComponent)…"
         let readerOpenSP = PerfLog.begin("ReaderOpen")
+        activeOpenSignpost = (generation, readerOpenSP)
         let openStart = Date()
+        let repairSourceURL = self.repairSourceURL
 
         let massiveThreshold = DocumentValidationRunner.massiveDocumentPageThreshold
 
@@ -117,12 +130,16 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
 
             if let encryptedDoc = PDFDocument(url: url), encryptedDoc.isEncrypted, encryptedDoc.isLocked {
                 DispatchQueue.main.async {
+                    guard self.isCurrentOpen(generation) else {
+                        self.rejectOpen(generation: generation, lease: resourceLease)
+                        return
+                    }
                     self.finishEncryptedOpen(document: encryptedDoc,
                                              sourceURL: url,
                                              workingURL: url,
-                                             access: effectiveAccess,
+                                             generation: generation,
+                                             resourceLease: resourceLease,
                                              isRepaired: false,
-                                             signpostID: readerOpenSP,
                                              openStart: openStart)
                 }
                 return
@@ -132,10 +149,11 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
             var finalURL = url
             var repaired = false
             do {
-                let repairedURL = try PDFRepairService().repairIfNeeded(inputURL: url)
+                let repairedURL = try repairSourceURL(url)
                 if repairedURL != url {
                     finalURL = repairedURL
                     repaired = true
+                    resourceLease.registerWorkingURL(repairedURL, sourceURL: url)
                 }
             } catch {
                 // Fallback to original is automatic if repairIfNeeded throws or returns original
@@ -145,22 +163,29 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
 
             guard let rawDoc = PDFDocument(url: finalURL) else {
                 DispatchQueue.main.async {
-                    self.isLoadingDocument = false
-                    self.loadingStatus = nil
-                    self.handleOpenError(PDFDocumentSanitizerError.unableToOpen(url))
-                    PerfLog.end("ReaderOpen", readerOpenSP)
+                    guard self.isCurrentOpen(generation) else {
+                        self.rejectOpen(generation: generation, lease: resourceLease)
+                        return
+                    }
+                    self.handleOpenError(PDFDocumentSanitizerError.unableToOpen(url),
+                                         generation: generation,
+                                         resourceLease: resourceLease)
                 }
                 return
             }
 
             if rawDoc.isEncrypted, rawDoc.isLocked {
                 DispatchQueue.main.async {
+                    guard self.isCurrentOpen(generation) else {
+                        self.rejectOpen(generation: generation, lease: resourceLease)
+                        return
+                    }
                     self.finishEncryptedOpen(document: rawDoc,
                                              sourceURL: url,
                                              workingURL: finalURL,
-                                             access: effectiveAccess,
+                                             generation: generation,
+                                             resourceLease: resourceLease,
                                              isRepaired: repaired,
-                                             signpostID: readerOpenSP,
                                              openStart: openStart)
                 }
                 return
@@ -171,40 +196,64 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
 
             if isMassive {
                 DispatchQueue.main.async {
+                    guard self.isCurrentOpen(generation) else {
+                        self.rejectOpen(generation: generation, lease: resourceLease)
+                        return
+                    }
                     self.loadingStatus = nil
                     self.isLoadingDocument = false
-                    self.finishOpen(document: rawDoc, sourceURL: url, workingURL: finalURL, access: effectiveAccess, isRepaired: repaired)
+                    self.finishOpen(document: rawDoc,
+                                    sourceURL: url,
+                                    workingURL: finalURL,
+                                    generation: generation,
+                                    resourceLease: resourceLease,
+                                    isRepaired: repaired)
                     #if DEBUG
                         let duration = Date().timeIntervalSince(openStart)
                         PerfMetrics.shared.recordReaderOpen(duration: duration)
                     #endif
-                    PerfLog.end("ReaderOpen", readerOpenSP)
+                    self.endOpenSignpost(generation)
                 }
             } else {
                 DispatchQueue.main.async {
+                    guard self.isCurrentOpen(generation) else {
+                        self.rejectOpen(generation: generation, lease: resourceLease)
+                        return
+                    }
                     self.validationRunner.openDocument(at: finalURL,
                                                        quickValidationPageLimit: 0,
                                                        progress: { [weak self] processed, total in
                                                            guard let self else { return }
+                                                           guard self.isCurrentOpen(generation) else { return }
                                                            guard total > 0 else { return }
                                                            let clamped = min(processed, total)
                                                            loadingStatus = "Validating \(clamped)/\(total)"
                                                        },
                                                        completion: { [weak self] result in
                                                            guard let self else { return }
+                                                           guard self.isCurrentOpen(generation) else {
+                                                               self.rejectOpen(generation: generation, lease: resourceLease)
+                                                               return
+                                                           }
                                                            isLoadingDocument = false
                                                            loadingStatus = nil
                                                            switch result {
                                                            case let .success(doc):
-                                                               finishOpen(document: doc, sourceURL: url, workingURL: finalURL, access: effectiveAccess, isRepaired: repaired)
+                                                               finishOpen(document: doc,
+                                                                          sourceURL: url,
+                                                                          workingURL: finalURL,
+                                                                          generation: generation,
+                                                                          resourceLease: resourceLease,
+                                                                          isRepaired: repaired)
                                                                #if DEBUG
                                                                    let duration = Date().timeIntervalSince(openStart)
                                                                    PerfMetrics.shared.recordReaderOpen(duration: duration)
                                                                #endif
-                                                               PerfLog.end("ReaderOpen", readerOpenSP)
+                                                               endOpenSignpost(generation)
                                                            case let .failure(error):
-                                                               handleOpenError(error)
-                                                               PerfLog.end("ReaderOpen", readerOpenSP)
+                                                               handleOpenError(error,
+                                                                               generation: generation,
+                                                                               resourceLease: resourceLease)
                                                            }
                                                        })
                 }
@@ -215,16 +264,22 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
     private func finishEncryptedOpen(document rawDoc: PDFDocument,
                                      sourceURL: URL,
                                      workingURL: URL,
-                                     access: SecurityScopedAccess?,
+                                     generation: UUID,
+                                     resourceLease: DocumentOpenResourceLease,
                                      isRepaired: Bool,
-                                     signpostID: OSSignpostID,
                                      openStart: Date)
     {
+        guard isCurrentOpen(generation) else {
+            rejectOpen(generation: generation, lease: resourceLease)
+            return
+        }
         loadingStatus = "Unlocking \(sourceURL.lastPathComponent)…"
         guard PDFPasswordUnlock.unlockIfNeeded(document: rawDoc, url: sourceURL, passwordProvider: passwordProvider) else {
+            resourceLease.discard()
+            activeOpenLease = nil
             resetDocumentState()
             log = "Open failed: password required for \(sourceURL.lastPathComponent)"
-            PerfLog.end("ReaderOpen", signpostID)
+            endOpenSignpost(generation)
             return
         }
 
@@ -233,28 +288,35 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         finishOpen(document: rawDoc,
                    sourceURL: sourceURL,
                    workingURL: workingURL,
-                   access: access,
+                   generation: generation,
+                   resourceLease: resourceLease,
                    isRepaired: isRepaired,
                    requiresUnlockedValidation: true)
         #if DEBUG
             let duration = Date().timeIntervalSince(openStart)
             PerfMetrics.shared.recordReaderOpen(duration: duration)
         #endif
-        PerfLog.end("ReaderOpen", signpostID)
+        endOpenSignpost(generation)
     }
 
     private func finishOpen(document newDocument: PDFDocument,
                             sourceURL: URL,
                             workingURL: URL,
-                            access: SecurityScopedAccess?,
+                            generation: UUID,
+                            resourceLease: DocumentOpenResourceLease,
                             isRepaired: Bool = false,
                             requiresUnlockedValidation: Bool = false)
     {
+        guard isCurrentOpen(generation) else {
+            rejectOpen(generation: generation, lease: resourceLease)
+            return
+        }
         let sp = PerfLog.begin("ReaderApplyDocument")
         defer { PerfLog.end("ReaderApplyDocument", sp) }
         currentURL = workingURL
         self.sourceURL = sourceURL
-        activeSecurityScope = access
+        activeSecurityScope = resourceLease.commit()
+        activeOpenLease = nil
         clearEditUndoStacks()
         document = newDocument
 
@@ -301,12 +363,23 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
 
         // Add to Recent Files
         DispatchQueue.main.async {
+            guard self.isCurrentOpen(generation) else { return }
             RecentFilesManager.shared.add(url: sourceURL, pageCount: newDocument.pageCount)
             NotificationCenter.default.post(name: .readerDidOpenDocument, object: sourceURL)
         }
     }
 
-    private func handleOpenError(_ error: Error) {
+    private func handleOpenError(_ error: Error,
+                                 generation: UUID,
+                                 resourceLease: DocumentOpenResourceLease)
+    {
+        guard isCurrentOpen(generation) else {
+            rejectOpen(generation: generation, lease: resourceLease)
+            return
+        }
+        resourceLease.discard()
+        activeOpenLease = nil
+        endOpenSignpost(generation)
         resetDocumentState()
         log = "❌ \(error.localizedDescription)"
         present(error)
@@ -331,6 +404,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
     }
 
     private func resetDocumentState(clearLog: Bool = false) {
+        invalidatePendingOpen()
         validationRunner.cancelOpen()
         validationRunner.cancelValidation()
         isLoadingDocument = false
@@ -359,6 +433,34 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         currentSelectionTextState = nil
         annotationRows = []
         clearCopilotOutput()
+    }
+
+    private func isCurrentOpen(_ generation: UUID) -> Bool {
+        openGeneration == generation
+    }
+
+    private func invalidatePendingOpen() {
+        openGeneration = UUID()
+        // The background open closure retains its lease. Dropping the controller's
+        // reference supersedes publication without revoking scope mid-read; the
+        // stale closure (or lease deinit) releases resources at its next boundary.
+        activeOpenLease = nil
+        if let activeOpenSignpost {
+            PerfLog.end("ReaderOpen", activeOpenSignpost.id)
+            self.activeOpenSignpost = nil
+        }
+    }
+
+    private func rejectOpen(generation: UUID, lease: DocumentOpenResourceLease) {
+        lease.discard()
+        endOpenSignpost(generation)
+    }
+
+    private func endOpenSignpost(_ generation: UUID) {
+        guard activeOpenSignpost?.generation == generation,
+              let signpost = activeOpenSignpost?.id else { return }
+        PerfLog.end("ReaderOpen", signpost)
+        activeOpenSignpost = nil
     }
 
     private func clearEditUndoStacks() {
@@ -1543,11 +1645,8 @@ extension ReaderControllerPro: FileExportable {
                     var cleanupReview: CleanupReview?
                     var reviewWarning: String?
                     do {
-                        guard let evidenceSourceDocument = PDFDocument(data: evidenceSourceData) else {
-                            throw CleanupEvidenceError.unreadablePDF(fileName: sourceFileName)
-                        }
                         cleanupReview = try CleanupReviewBuilder.build(
-                            sourceDocument: evidenceSourceDocument,
+                            sourceData: evidenceSourceData,
                             sourceFileName: sourceFileName,
                             outputURL: destination,
                             profile: profile

@@ -63,14 +63,25 @@ enum CleanupReviewBuilder {
                       outputURL: URL,
                       profile: SanitizeProfile) throws -> CleanupReview
     {
+        guard let sourceData = sourceDocument.dataRepresentation() else {
+            throw CleanupEvidenceError.unreadablePDF(fileName: sourceFileName)
+        }
+        return try build(sourceData: sourceData,
+                         sourceFileName: sourceFileName,
+                         outputURL: outputURL,
+                         profile: profile)
+    }
+
+    static func build(sourceData: Data,
+                      sourceFileName: String,
+                      outputURL: URL,
+                      profile: SanitizeProfile) throws -> CleanupReview
+    {
         let snapshotURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("PDFQuickFix-CleanupReview-\(UUID().uuidString)")
             .appendingPathExtension("pdf")
 
         do {
-            guard let sourceData = sourceDocument.dataRepresentation() else {
-                throw CleanupEvidenceError.unreadablePDF(fileName: sourceFileName)
-            }
             try sourceData.write(to: snapshotURL, options: .atomic)
             guard let sourceSnapshot = PDFDocument(data: sourceData),
                   let outputDocument = PDFDocument(url: outputURL)
