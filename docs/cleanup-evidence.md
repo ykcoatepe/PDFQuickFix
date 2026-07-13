@@ -62,7 +62,7 @@ QuickFix telemetry contains counts for redaction rectangles, suppressed OCR runs
 
 ## Batch manifest
 
-The folder workflow builds a batch manifest from the batch plan and report. It includes the sanitize profile, totals, elapsed time, aggregate verdict, review count, and one status entry per planned file.
+The folder workflow builds a batch manifest from the batch plan and report. The exported schema contains `schemaVersion`, `generatedAt`, `sanitizeProfile`, `recursive`, the aggregate `verdict`, and one entry in `files` for every planned file. Passed, review-required, failed, and needs-review counts are derived by the app for display; they and the batch report's elapsed time are not encoded in the evidence manifest.
 
 The export uses basenames and hashed identifiers. It excludes absolute paths, extracted document text, metadata values, and raw processing errors. A skipped, failed, not-processed, or evidence-unavailable entry stays visible so a partial run cannot look complete.
 
