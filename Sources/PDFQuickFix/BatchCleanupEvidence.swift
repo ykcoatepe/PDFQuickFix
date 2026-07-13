@@ -39,6 +39,14 @@ struct BatchCleanupEvidenceManifest: Codable, Equatable, Sendable {
         files.count(where: { $0.verdict == .failed })
     }
 
+    var needsReviewCount: Int {
+        reviewRequiredCount + failedCount
+    }
+
+    var firstReviewableEntry: FileEntry? {
+        files.first(where: { $0.evidence != nil && $0.verdict != .passed })
+    }
+
     struct FileEntry: Codable, Equatable, Sendable, Identifiable {
         let id: String
         let fileName: String

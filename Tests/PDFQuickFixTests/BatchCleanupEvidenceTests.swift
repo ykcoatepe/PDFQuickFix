@@ -119,6 +119,8 @@ final class BatchCleanupEvidenceTests: XCTestCase {
             manifest.files.map(\.reason),
             [.existingOutputNotEvaluated, .sanitizeFailed, .notProcessed]
         )
+        XCTAssertEqual(manifest.needsReviewCount, 3)
+        XCTAssertNil(manifest.firstReviewableEntry)
         XCTAssertEqual(Set(manifest.files.map(\.id)).count, 3)
 
         let data = try BatchCleanupEvidenceWriter.jsonData(for: manifest)

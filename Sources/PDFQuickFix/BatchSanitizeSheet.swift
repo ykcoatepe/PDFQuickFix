@@ -626,10 +626,10 @@ struct BatchSanitizeSheet: View {
                     }
                     .buttonStyle(SecondaryButtonStyle())
 
-                    let count = needsReviewCount(manifest)
+                    let count = manifest.needsReviewCount
                     Button("Review \(count) file\(count == 1 ? "" : "s")") {
                         isFileEvidenceExpanded = true
-                        selectedEvidenceEntry = firstReviewableEntry(manifest)
+                        selectedEvidenceEntry = manifest.firstReviewableEntry
                     }
                     .buttonStyle(PrimaryButtonStyle(tint: manifest.verdict == .failed ? AppTheme.Colors.error : AppTheme.Colors.warning))
                     .keyboardShortcut(.defaultAction)
@@ -694,15 +694,6 @@ struct BatchSanitizeSheet: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .textSelection(.enabled)
         }
-    }
-
-    private func needsReviewCount(_ manifest: BatchCleanupEvidenceManifest) -> Int {
-        manifest.reviewRequiredCount + manifest.failedCount
-    }
-
-    private func firstReviewableEntry(_ manifest: BatchCleanupEvidenceManifest) -> BatchCleanupEvidenceManifest.FileEntry? {
-        manifest.files.first(where: { $0.evidence != nil && $0.verdict != .passed })
-            ?? manifest.files.first(where: { $0.verdict != .passed })
     }
 
     private func profileLabel(_ profile: SanitizeProfile) -> String {
