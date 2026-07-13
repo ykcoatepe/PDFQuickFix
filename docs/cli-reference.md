@@ -148,8 +148,9 @@ Missing `version` is treated as version 1. Future versions are rejected.
 
 ## Exit behavior
 
-- Success exits with status `0`.
-- Missing arguments, unknown commands/options/profiles, unreadable inputs, invalid presets, write failures, and repair/sanitize errors exit nonzero.
+- Successful `inspect` and `sanitize` operations exit with status `0`. Missing `inspect` input, unreadable or malformed inputs, invalid profile values and presets, processing failures, and write failures exit nonzero.
+- `repair` reports the service outcome in its JSON `outcome` field. Outcomes such as `parseFailed`, `ioError`, and `skippedTooLarge` currently still exit with status `0`, so automation must inspect `outcome` instead of relying on the process status. Supplying fewer than two repair arguments or failing to encode the result exits nonzero.
+- A missing top-level command or an unknown top-level command exits nonzero. The `inspect`, `repair`, and `sanitize` parsers do not consistently reject extra options or missing option values; for example, `sanitize <input> <output> --profile` uses the default profile. Callers should pass only the documented forms and must not treat status `0` as argument validation.
 - `sanitize-batch` exits nonzero when one or more files fail. Skipped files alone do not make the command fail.
 
 ## Related

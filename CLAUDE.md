@@ -22,5 +22,5 @@ When touching existing UI, prefer converging toward the shared design system ove
 - `DESIGN.md` for the shared visual system and UI direction
 - `PRODUCT_THESIS.md` for product positioning and scope decisions
 - `TODOS.md` for the active backlog
-- `AUTOPLAN_REVIEW.md` for the current branch review summary
+- `AUTOPLAN_REVIEW.md` for the archived April 2026 planning snapshot
 - `LOGBOOK.md` for historical task notes

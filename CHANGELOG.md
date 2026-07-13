@@ -34,7 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - AI request timeout setting and summary page selection
 
 ### Changed
-- Finder and batch sanitize receipts now expose detailed evidence and before/after review when a processed file is available
+- Finder sanitize receipts now expose detailed evidence and before/after review; batch receipts expose aggregate and per-file evidence when processed files are available
 - The UI now uses `AppTheme` as its single design-token source
 - Reader and Studio now protect export/save paths from leaking transient selection helpers or unsafe replacement/redaction text layers
 - Encrypted-document validation and export paths now prefer unlocked snapshots so locked source files do not block safe outbound copies
