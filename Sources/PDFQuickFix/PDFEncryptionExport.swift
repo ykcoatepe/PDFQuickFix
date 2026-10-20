@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import PDFKit
+import PDFQuickFixKit
 import UniformTypeIdentifiers
 
 struct PDFEncryptionOptions {
@@ -40,14 +41,16 @@ enum PDFEncryptionExport {
 
     static func writeEncryptedCopy(document: PDFDocument,
                                    sourceURL: URL?,
-                                   options: PDFEncryptionOptions) throws -> URL?
+                                   options: PDFEncryptionOptions,
+                                   remoteBaseline: PDFDocumentSerializer.RemoteOutlineBaseline? = nil) throws -> URL?
     {
-        let exportDocument = try PDFOps.privacyPreservingDocumentForExport(document)
+        let exportDocument = try PDFOps.privacyPreservingDocumentForExport(document, remoteBaseline: remoteBaseline)
         guard let data = PDFSecurity.encrypt(
             document: exportDocument,
             userPassword: options.userPassword,
             ownerPassword: options.ownerPassword,
-            keyLength: 128
+            keyLength: 128,
+            remoteBaseline: try PDFDocumentSerializer.remoteBaseline(for: exportDocument)
         ) else {
             throw PDFOpsError.saveFailed
         }

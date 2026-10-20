@@ -7,8 +7,6 @@ struct OutlineLoadResult {
 }
 
 enum PDFOutlineLoader {
-    static let massiveDocumentRowLimit = 500
-
     static func rows(from root: PDFOutline?, limit: Int? = nil) -> OutlineLoadResult {
         guard let root else {
             return OutlineLoadResult(rows: [], isTruncated: false)

@@ -19,25 +19,25 @@ security-check:
 	./scripts/security_check.sh
 
 build: generate security-check
-	./scripts/run_xcodebuild.sh -project $(PROJECT) -scheme $(SCHEME) -configuration Release -derivedDataPath $(DERIVED) build
+	./scripts/run_xcodebuild.sh -project "$(PROJECT)" -scheme "$(SCHEME)" -configuration Release -derivedDataPath "$(DERIVED)" build
 	@echo "✅ Build done"
-	@ls -1 $(DERIVED)/Build/Products/Release/$(APP).app >/dev/null && echo "Artifact: $(DERIVED)/Build/Products/Release/$(APP).app"
+	@ls -1 "$(DERIVED)/Build/Products/Release/$(APP).app" >/dev/null && echo "Artifact: $(DERIVED)/Build/Products/Release/$(APP).app"
 
 debug: generate security-check
-	./scripts/run_xcodebuild.sh -project $(PROJECT) -scheme $(SCHEME) -configuration Debug -derivedDataPath $(DERIVED) build
-	open $(DERIVED)/Build/Products/Debug/$(APP).app || true
+	./scripts/run_xcodebuild.sh -project "$(PROJECT)" -scheme "$(SCHEME)" -configuration Debug -derivedDataPath "$(DERIVED)" build
+	open "$(DERIVED)/Build/Products/Debug/$(APP).app" || true
 
 run:
-	open $(DERIVED)/Build/Products/Release/$(APP).app
+	open "$(DERIVED)/Build/Products/Release/$(APP).app"
 
 clean:
-	rm -rf $(DERIVED) $(PROJECT)
+	rm -rf "$(DERIVED)" "$(PROJECT)"
 
 dmg: build
 	which create-dmg >/dev/null 2>&1 || (echo "Install create-dmg: brew install create-dmg" && exit 1)
 	mkdir -p dist
-	rm -f dist/$(APP).dmg
-	create-dmg --volname "$(APP)" --window-size 500 300 --icon-size 100 --app-drop-link 380 120 dist/$(APP).dmg $(DERIVED)/Build/Products/Release/$(APP).app
+	rm -f "dist/$(APP).dmg"
+	create-dmg --volname "$(APP)" --window-size 500 300 --icon-size 100 --app-drop-link 380 120 "dist/$(APP).dmg" "$(DERIVED)/Build/Products/Release/$(APP).app"
 	@echo "✅ DMG: dist/$(APP).dmg"
 
 release: dmg
@@ -58,4 +58,4 @@ smoke-ocr-fallback:
 	./scripts/smoke_ocr_fallback.sh
 
 ui-test-cleanup-review: generate
-	./scripts/run_xcodebuild.sh -project $(PROJECT) -scheme PDFQuickFixUI -destination 'platform=macOS' -derivedDataPath $(DERIVED)/ui-tests test
+	./scripts/run_xcodebuild.sh -project "$(PROJECT)" -scheme PDFQuickFixUI -destination 'platform=macOS' -derivedDataPath "$(DERIVED)/ui-tests" test

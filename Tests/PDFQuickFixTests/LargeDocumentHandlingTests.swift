@@ -69,19 +69,67 @@ final class LargeDocumentHandlingTests: XCTestCase {
         wait(for: [thumbExpectation], timeout: 3.0)
     }
 
-    func testOutlineLoaderCapsMassiveOutlineRows() throws {
-        let document = try makeDocumentWithOutline(pageCount: 1, outlineCount: PDFOutlineLoader.massiveDocumentRowLimit + 25)
+    func testOutlineLoaderHonorsExplicitLimit() throws {
+        let document = try makeDocumentWithOutline(pageCount: 1, outlineCount: 500 + 25)
 
-        let result = PDFOutlineLoader.rows(from: document.outlineRoot, limit: PDFOutlineLoader.massiveDocumentRowLimit)
+        let result = PDFOutlineLoader.rows(from: document.outlineRoot, limit: 500)
 
-        XCTAssertEqual(result.rows.count, PDFOutlineLoader.massiveDocumentRowLimit)
+        XCTAssertEqual(result.rows.count, 500)
         XCTAssertTrue(result.isTruncated)
     }
 
-    func testReaderLoadsMassiveOutlineOnDemandWithCap() throws {
+    func testCompleteOutlinePreservesNestedOrderAndLateDestination() throws {
+        let document = try makeDocumentWithOutline(pageCount: 2, outlineCount: 600)
+        let root = try XCTUnwrap(document.outlineRoot)
+        let lastPage = try XCTUnwrap(document.page(at: 1))
+        for index in 0 ..< 600 {
+            let parent = try XCTUnwrap(root.child(at: index))
+            let child = PDFOutline()
+            child.label = "Section \(index + 1)"
+            child.destination = PDFDestination(page: lastPage, at: .zero)
+            parent.insertChild(child, at: 0)
+        }
+
+        let reader = ReaderControllerPro()
+        reader.document = document
+        reader.isMassiveDocument = true
+        reader.loadOutlineIfNeeded()
+        let studio = StudioController()
+        studio.document = document
+        studio.isMassiveDocument = true
+        studio.loadOutlineIfNeeded()
+
+        for rows in [reader.outlineRows, studio.outlineRows] {
+            XCTAssertEqual(rows.count, 1200)
+            XCTAssertEqual(Set(rows.map(\.id)).count, 1200)
+            for index in 0 ..< 600 {
+                XCTAssertEqual(rows[index * 2].outline.label, "Chapter \(index + 1)")
+                XCTAssertEqual(rows[index * 2].depth, 0)
+                XCTAssertEqual(rows[index * 2 + 1].outline.label, "Section \(index + 1)")
+                XCTAssertEqual(rows[index * 2 + 1].depth, 1)
+            }
+            let destination = try XCTUnwrap(rows.last?.outline.destination)
+            XCTAssertTrue(destination.page === lastPage)
+            let pdfView = PDFView()
+            pdfView.document = document
+            pdfView.go(to: destination)
+            XCTAssertTrue(pdfView.currentPage === lastPage)
+        }
+    }
+
+    func testOutlineLoaderHandlesMissingOutlineAndExactLimit() throws {
+        XCTAssertTrue(PDFOutlineLoader.rows(from: nil).rows.isEmpty)
+        XCTAssertFalse(PDFOutlineLoader.rows(from: nil).isTruncated)
+        let document = try makeDocumentWithOutline(pageCount: 1, outlineCount: 500)
+        let result = PDFOutlineLoader.rows(from: document.outlineRoot, limit: 500)
+        XCTAssertEqual(result.rows.count, 500)
+        XCTAssertFalse(result.isTruncated)
+    }
+
+    func testReaderLoadsCompleteMassiveOutlineOnDemand() throws {
         let controller = ReaderControllerPro()
         let document = try makeDocumentWithOutline(pageCount: DocumentValidationRunner.massiveDocumentPageThreshold,
-                                                   outlineCount: PDFOutlineLoader.massiveDocumentRowLimit + 10)
+                                                   outlineCount: 500 + 10)
         controller.document = document
         controller.isMassiveDocument = true
 
@@ -91,8 +139,9 @@ final class LargeDocumentHandlingTests: XCTestCase {
         controller.loadOutlineIfNeeded()
 
         XCTAssertTrue(controller.hasLoadedOutline)
-        XCTAssertEqual(controller.outlineRows.count, PDFOutlineLoader.massiveDocumentRowLimit)
-        XCTAssertTrue(controller.isOutlineTruncated)
+        XCTAssertEqual(controller.outlineRows.count, 500 + 10)
+        XCTAssertFalse(controller.isOutlineTruncated)
+        XCTAssertEqual(controller.outlineRows.last?.outline.label, "Chapter 510")
     }
 
     func testReaderInvalidatesCachedOutlineWhenDocumentIsReplaced() throws {
@@ -116,10 +165,10 @@ final class LargeDocumentHandlingTests: XCTestCase {
         XCTAssertEqual(controller.outlineRows.first?.outline.label, "New 1")
     }
 
-    func testStudioDefersThenCapsMassiveOutlineLoading() throws {
+    func testStudioDefersThenLoadsCompleteMassiveOutline() throws {
         let controller = StudioController()
         let document = try makeDocumentWithOutline(pageCount: DocumentValidationRunner.massiveDocumentPageThreshold,
-                                                   outlineCount: PDFOutlineLoader.massiveDocumentRowLimit + 10)
+                                                   outlineCount: 500 + 10)
 
         controller.setDocument(document)
 
@@ -128,36 +177,37 @@ final class LargeDocumentHandlingTests: XCTestCase {
 
         controller.loadOutlineIfNeeded()
 
-        XCTAssertEqual(controller.outlineRows.count, PDFOutlineLoader.massiveDocumentRowLimit)
-        XCTAssertTrue(controller.isOutlineTruncated)
+        XCTAssertEqual(controller.outlineRows.count, 500 + 10)
+        XCTAssertFalse(controller.isOutlineTruncated)
+        XCTAssertEqual(controller.outlineRows.last?.outline.label, "Chapter 510")
     }
 
-    func testStudioKeepsAddedBookmarkVisibleWhenMassiveOutlineIsCapped() throws {
+    func testStudioKeepsAddedBookmarkVisibleBeyondFormerCap() throws {
         let controller = StudioController()
         let document = try makeDocumentWithOutline(pageCount: DocumentValidationRunner.massiveDocumentPageThreshold,
-                                                   outlineCount: PDFOutlineLoader.massiveDocumentRowLimit)
+                                                   outlineCount: 500)
 
         controller.setDocument(document)
         controller.loadOutlineIfNeeded()
-        XCTAssertEqual(controller.outlineRows.count, PDFOutlineLoader.massiveDocumentRowLimit)
+        XCTAssertEqual(controller.outlineRows.count, 500)
 
         controller.addOutline(title: "Added Bookmark")
 
-        XCTAssertEqual(document.outlineRoot?.numberOfChildren, PDFOutlineLoader.massiveDocumentRowLimit + 1)
+        XCTAssertEqual(document.outlineRoot?.numberOfChildren, 500 + 1)
         XCTAssertEqual(controller.outlineRows.last?.outline.label, "Added Bookmark")
-        XCTAssertEqual(controller.outlineRows.count, PDFOutlineLoader.massiveDocumentRowLimit + 1)
-        XCTAssertTrue(controller.isOutlineTruncated)
+        XCTAssertEqual(controller.outlineRows.count, 500 + 1)
+        XCTAssertFalse(controller.isOutlineTruncated)
 
         controller.refreshOutline()
 
         let addedRow = try XCTUnwrap(controller.outlineRows.last)
         XCTAssertEqual(addedRow.outline.label, "Added Bookmark")
-        XCTAssertEqual(controller.outlineRows.count, PDFOutlineLoader.massiveDocumentRowLimit + 1)
+        XCTAssertEqual(controller.outlineRows.count, 500 + 1)
 
         controller.renameOutline(addedRow, title: "Renamed Bookmark")
 
         XCTAssertEqual(controller.outlineRows.last?.outline.label, "Renamed Bookmark")
-        XCTAssertEqual(controller.outlineRows.count, PDFOutlineLoader.massiveDocumentRowLimit + 1)
+        XCTAssertEqual(controller.outlineRows.count, 500 + 1)
     }
 
     private func makeDocumentWithOutline(pageCount: Int, outlineCount: Int, labelPrefix: String = "Chapter") throws -> PDFDocument {

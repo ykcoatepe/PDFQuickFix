@@ -37,7 +37,7 @@ struct ContentView: View {
     var body: some View {
         VStack(spacing: 0) {
             UnifiedToolbar(
-                selectedTab: $currentMode,
+                selectedTab: modeSelection,
                 readerController: readerController,
                 studioController: studioController,
                 readerSyncEnabled: $documentHub.syncEnabled,
@@ -57,14 +57,14 @@ struct ContentView: View {
                 case .reader:
                     ReaderProView(
                         controller: readerController,
-                        selectedTab: $currentMode
+                        selectedTab: modeSelection
                     )
                 case .quickFix:
                     QuickFixTab()
                 case .studio:
                     StudioView(
                         controller: studioController,
-                        selectedTab: $currentMode,
+                        selectedTab: modeSelection,
                         selectedTool: $studioController.selectedTool,
                         showQuickFix: $showQuickFix,
                         quickFixURL: $quickFixURL,
@@ -75,12 +75,19 @@ struct ContentView: View {
                         showingMetadataSheet: $showingMetadataSheet
                     )
                 case .split:
-                    SplitView(selectedTab: $currentMode)
+                    SplitView(selectedTab: modeSelection)
                 }
             }
         }
         .frame(minWidth: 960, minHeight: 640)
         .environmentObject(documentHub)
+        .background {
+            DocumentWindowCloseGuard(
+                isDocumentEdited: readerController.hasUnsavedChanges || studioController.hasUnsavedChanges,
+                prepare: authorizeWindowClose
+            )
+            .frame(width: 0, height: 0)
+        }
         .task {
             readerController.configureCopilotAI(settings: aiSettings, interactionStore: aiInteractions)
             #if DEBUG
@@ -100,6 +107,7 @@ struct ContentView: View {
         }
         #if DEBUG
         .overlay(alignment: .bottomLeading) {
+            VStack(alignment: .leading, spacing: 4) {
                 if isCleanupReviewUITestFixtureReady {
                     Text("UI Test Fixture Ready")
                         .font(.caption2)
@@ -107,7 +115,39 @@ struct ContentView: View {
                         .padding(4)
                 }
             }
+        }
         #endif
+    }
+
+    private var modeSelection: Binding<AppMode> {
+        Binding(get: { currentMode }, set: { mode in
+            guard mode != currentMode else { return }
+            // Commit the active native editor while its view still exists.
+            // If it refuses to end editing, keep that workbench visible.
+            guard readerController.commitNativeEditing(),
+                  studioController.commitNativeEditing() else { return }
+            currentMode = mode
+        })
+    }
+
+    @MainActor
+    private func authorizeWindowClose() -> DocumentCloseAuthorization? {
+        DocumentCloseTransaction.authorize([
+            {
+                guard let revision = readerController.authorizeDiscardingChanges() else { return nil }
+                return DocumentCloseAuthorization {
+                    readerController.commitNativeEditing()
+                        && readerController.changeState.isCurrent(revision)
+                }
+            },
+            {
+                guard let revision = studioController.authorizeDiscardingChanges() else { return nil }
+                return DocumentCloseAuthorization {
+                    studioController.commitNativeEditing()
+                        && studioController.changeState.isCurrent(revision)
+                }
+            },
+        ])
     }
 
     #if DEBUG
@@ -532,7 +572,8 @@ struct UnifiedToolbar: View {
                     .frame(width: 40)
                     .multilineTextAlignment(.center)
                     .onSubmit {
-                        let target = max(pageBinding.wrappedValue - 1, 0)
+                        let lastPage = max((readerController.document?.pageCount ?? 1) - 1, 0)
+                        let target = min(max(pageBinding.wrappedValue - 1, 0), lastPage)
                         if let page = readerController.document?.page(at: target) {
                             readerController.pdfView?.go(to: page)
                         }
@@ -780,7 +821,10 @@ struct UnifiedToolbar: View {
     private var pageBinding: Binding<Int> {
         Binding<Int>(
             get: { (readerController.currentPageIndex) + 1 },
-            set: { readerController.currentPageIndex = max(0, $0 - 1) }
+            set: {
+                let lastPage = max((readerController.document?.pageCount ?? 1) - 1, 0)
+                readerController.currentPageIndex = min(max(0, $0 - 1), lastPage)
+            }
         )
     }
 

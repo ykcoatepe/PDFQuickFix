@@ -1,6 +1,6 @@
 Agent Guide — PDFQuickFix
 
-Version: 2026-07-13 • Owner: CodeForge AI
+Version: 2026-10-20 • Owner: CodeForge AI
 
 0. Quickstart
    • `make bootstrap` (if available) or `brew install xcodegen`
@@ -27,6 +27,8 @@ Version: 2026-07-13 • Owner: CodeForge AI
    • Security: `make security-check` (runs automatically from `make build` / `make debug`).
    • Optional lint: `swiftformat --lint .`, `swiftlint --strict` (if installed).
    • Test: `make sanity-fast`; use `make ui-test-cleanup-review` for cleanup-review UI changes.
+   • Document lifecycle: preserve current edits on failed/cancelled replacement; commit native editors before save, replacement, workbench switch and close.
+   • Serialization: use `PDFDocumentSerializer` and controller revision checks; do not bypass failed validation with an unverified PDFKit write.
 
 3. Repo Memory
    • `.codex/memory.json`: JSON memory for the agent.

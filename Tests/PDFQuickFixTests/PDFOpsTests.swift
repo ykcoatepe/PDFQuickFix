@@ -170,6 +170,7 @@ final class PDFOpsTests: XCTestCase {
         let child = PDFOutline()
         child.label = "Chapter 1"
         child.destination = PDFDestination(page: page, at: CGPoint(x: 24, y: 120))
+        child.destination?.zoom = 2.5
         root.insertChild(child, at: 0)
         document.outlineRoot = root
         let encryptedData = try XCTUnwrap(PDFSecurity.encrypt(document: document, userPassword: "user-pass"))
@@ -181,6 +182,7 @@ final class PDFOpsTests: XCTestCase {
         let copiedChild = try XCTUnwrap(snapshot.outlineRoot?.child(at: 0))
         XCTAssertEqual(copiedChild.label, "Chapter 1")
         XCTAssertTrue(copiedChild.destination?.page === snapshot.page(at: 0))
+        XCTAssertEqual(copiedChild.destination?.zoom, 2.5)
     }
 
     func testPrivacyPreservingSnapshotPreservesURLBookmarkActionsForEncryptedDocument() throws {

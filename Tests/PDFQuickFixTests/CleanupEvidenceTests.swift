@@ -2,6 +2,7 @@ import AppKit
 import CryptoKit
 import PDFKit
 @testable import PDFQuickFix
+import PDFQuickFixKit
 import XCTest
 
 final class CleanupEvidenceTests: XCTestCase {
@@ -177,6 +178,11 @@ final class CleanupEvidenceTests: XCTestCase {
             root.insertChild(child, at: 0)
             document.outlineRoot = root
         }
-        return try XCTUnwrap(document.dataRepresentation())
+        let data = try PDFDocumentSerializer.data(from: document)
+        if includeStructure {
+            XCTAssertEqual(PDFDocument(data: data)?.outlineRoot?.numberOfChildren, 1,
+                           "The evidence fixture must contain a persisted outline")
+        }
+        return data
     }
 }

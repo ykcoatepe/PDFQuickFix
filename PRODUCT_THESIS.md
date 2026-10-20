@@ -2,13 +2,16 @@
 
 ## One-line thesis
 
-PDFQuickFix should become the best **local-first macOS workstation for cleaning up sensitive PDFs before they leave your machine**.
+PDFQuickFix should be a **local-first macOS PDF workstation with a strong everyday reader and reliable editing, cleanup, and sharing tools**.
+
+The current product direction gives reading and editing equal weight. Large manuals must remain useful to navigate, and edits must survive saving without silently losing structure or protection.
 
 ## The job to be done
 
 Users do not wake up wanting "another PDF editor."
 
 They need to:
+- read and navigate a long manual without artificial limits,
 - open a messy or risky PDF,
 - inspect what is inside,
 - repair broken structure or searchability,
@@ -28,9 +31,11 @@ The best early customers are people who handle sensitive PDFs often enough that 
 
 ## Wedge
 
-The wedge is **privacy-first document cleanup**, not "general AI PDF editor."
+The differentiator is **dependable local document work**, from reading a large manual to preparing a sensitive outbound copy.
 
 Winning means being trusted for:
+- complete chapter navigation and accurate page/search state,
+- clear save outcomes and protection against accidental loss of unsaved edits,
 - permanent redaction,
 - sanitization for sharing,
 - local OCR repair,
@@ -38,7 +43,7 @@ Winning means being trusted for:
 - batch sanitize workflows,
 - predictable local automation.
 
-Reader, Studio, Split/Merge, and AI Tools should support that workflow, not compete to become separate product lines.
+Reader and Studio are equally important parts of that workflow. Split/Merge and AI Tools should support them without fragmenting the document experience.
 
 ## Why this can win
 
@@ -59,7 +64,7 @@ Do not try to beat Acrobat, PDF Expert, or Foxit as a feature-checklist PDF edit
 Avoid:
 - leading with generic AI assistant messaging,
 - adding broad "me too" editor features that do not strengthen cleanup workflows,
-- letting batch/privacy features stay hidden while surface-level editing features dominate the story.
+- hiding either everyday reading or batch/privacy workflows behind unrelated tools.
 
 ## Product principles
 
@@ -78,8 +83,14 @@ Avoid:
 5. AI is assistive
    AI should help detect, extract, summarize, and repair. It should not become the main product story.
 
+6. Navigation and persistence are product contracts
+   A long outline must remain complete; page and search controls must describe the current document. Saving must preserve intended edits and document protection. Closing or replacing a document must not silently discard work.
+
 ## Near-term bets
 
+- Fix demonstrated navigation, search lifecycle, and save/close defects before adding more tools.
+- Validate complete outline loading and practical navigation against a representative large manual, alongside synthetic boundary tests.
+- Prove bookmark, annotation, form, and encryption preservation with saved-and-reopened outputs.
 - Turn Cleanup Evidence from a shipped receipt into a faster review decision: make warnings, changed pages, and next actions unmistakable.
 - Make the CLI easier to build and install without weakening the shared sanitize contract.
 - Add vertical presets only where they shorten repeated cleanup work without fragmenting the product.
@@ -90,4 +101,4 @@ Avoid:
 
 If a user asks, "Why should I use PDFQuickFix instead of another PDF app?", the answer should be immediate:
 
-"Because it is the fastest local way to repair, clean, redact, and prepare sensitive PDFs for safe sharing."
+"Because I can read large PDFs comfortably, edit them reliably, and prepare sensitive documents for sharing without leaving my Mac."

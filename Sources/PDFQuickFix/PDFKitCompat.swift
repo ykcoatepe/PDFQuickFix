@@ -3,16 +3,15 @@ import PDFKit
 
 extension PDFWidgetControlType {
     static var checkBoxSafe: PDFWidgetControlType? {
-        // 3 çoğu SDK’da checkbox; yoksa 0 (unknown) ile fallback
-        PDFWidgetControlType(rawValue: 3) ?? PDFWidgetControlType(rawValue: 0)
+        .checkBoxControl
     }
 
     static var radioSafe: PDFWidgetControlType? {
-        PDFWidgetControlType(rawValue: 2) ?? PDFWidgetControlType(rawValue: 0)
+        .radioButtonControl
     }
 
     static var pushButtonSafe: PDFWidgetControlType? {
-        PDFWidgetControlType(rawValue: 1) ?? PDFWidgetControlType(rawValue: 0)
+        .pushButtonControl
     }
 }
 

@@ -222,17 +222,19 @@ enum PDFOps {
         }
     }
 
-    static func optimize(document: PDFDocument) -> Data? {
+    static func optimize(document: PDFDocument, remoteBaseline: PDFDocumentSerializer.RemoteOutlineBaseline? = nil) -> Data? {
         // dataRepresentation() rebuilds the PDF and strips transient state,
         // which is often enough to compact simple documents.
-        guard let exportDocument = try? privacyPreservingDocumentForExport(document) else {
+        guard let exportDocument = try? privacyPreservingDocumentForExport(document, remoteBaseline: remoteBaseline) else {
             return nil
         }
-        return exportDocument.dataRepresentation()
+        return try? PDFDocumentSerializer.data(from: exportDocument,
+                                                 remoteBaseline: PDFDocumentSerializer.remoteBaseline(for: exportDocument))
     }
 
-    static func metadataCleanedData(document: PDFDocument, sourceURL: URL? = nil) throws -> Data {
-        let workingDocument = try privacyPreservingSnapshot(document: document)
+    static func metadataCleanedData(document: PDFDocument, sourceURL: URL? = nil,
+                                    remoteBaseline: PDFDocumentSerializer.RemoteOutlineBaseline? = nil) throws -> Data {
+        let workingDocument = try privacyPreservingSnapshot(document: document, remoteBaseline: remoteBaseline)
 
         let options = PDFDocumentSanitizer.Options(
             rebuildMode: .alwaysRebuildVectorOrData,
@@ -245,17 +247,20 @@ enum PDFOps {
         let cleaned = try PDFDocumentSanitizer.sanitize(
             document: workingDocument,
             sourceURL: nil,
-            options: options
+            options: options,
+            remoteBaseline: try PDFDocumentSerializer.remoteBaseline(for: workingDocument)
         )
         cleaned.documentAttributes = [:]
 
-        guard let data = cleaned.dataRepresentation() else {
-            throw PDFOpsError.saveFailed
-        }
-        return data
+        return try PDFDocumentSerializer.data(from: cleaned, remoteBaseline: PDFDocumentSerializer.remoteBaseline(for: cleaned))
     }
 
     static func flattenedData(document: PDFDocument) throws -> Data {
+        guard try !PDFDocumentSerializer.remoteBaseline(for: document).hasRemoteTargets else {
+            throw PDFOpsError.invalidInput(
+                "Flattening a PDF with linked remote bookmarks is unsupported because their targets cannot be preserved. The destination was not changed."
+            )
+        }
         let flattened = PDFDocument()
         flattened.documentAttributes = document.documentAttributes
 
@@ -286,7 +291,8 @@ enum PDFOps {
         return false
     }
 
-    static func privacyPreservingDocumentForExport(_ document: PDFDocument) throws -> PDFDocument {
+    static func privacyPreservingDocumentForExport(_ document: PDFDocument,
+                                                   remoteBaseline: PDFDocumentSerializer.RemoteOutlineBaseline? = nil) throws -> PDFDocument {
         let detachedSelectionAnnotations = detachSelectionAnnotations(from: document)
         defer { restoreSelectionAnnotations(detachedSelectionAnnotations) }
 
@@ -302,21 +308,23 @@ enum PDFOps {
             return try unlockedPageCopy(of: document)
         }
 
-        guard let data = document.dataRepresentation(),
-              let snapshot = PDFDocument(data: data)
+        let data = try PDFDocumentSerializer.data(from: document, remoteBaseline: remoteBaseline)
+        guard let snapshot = PDFDocument(data: data)
         else {
             throw PDFOpsError.saveFailed
         }
         return snapshot
     }
 
-    static func privacyPreservingSnapshot(document: PDFDocument) throws -> PDFDocument {
-        let exportDocument = try privacyPreservingDocumentForExport(document)
+    static func privacyPreservingSnapshot(document: PDFDocument,
+                                          remoteBaseline: PDFDocumentSerializer.RemoteOutlineBaseline? = nil) throws -> PDFDocument {
+        let exportDocument = try privacyPreservingDocumentForExport(document, remoteBaseline: remoteBaseline)
         if exportDocument.isEncrypted {
             return try unlockedPageCopy(of: exportDocument)
         }
-        guard let data = exportDocument.dataRepresentation(),
-              let snapshot = PDFDocument(data: data)
+        let data = try PDFDocumentSerializer.data(from: exportDocument,
+                                                  remoteBaseline: PDFDocumentSerializer.remoteBaseline(for: exportDocument))
+        guard let snapshot = PDFDocument(data: data)
         else {
             throw PDFOpsError.missingDocument
         }
@@ -398,7 +406,9 @@ enum PDFOps {
         else {
             return nil
         }
-        return PDFDestination(page: targetPage, at: destination?.point ?? .zero)
+        let copy = PDFDestination(page: targetPage, at: destination?.point ?? .zero)
+        copy.zoom = destination?.zoom ?? 0
+        return copy
     }
 
     static func extractTextForExport(document: PDFDocument) throws -> String {
