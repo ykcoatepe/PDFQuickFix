@@ -1,7 +1,7 @@
 # Design System — PDFQuickFix
 
 ## Product Context
-- **What this is:** A native macOS app for repairing, redacting, sanitizing, organizing, splitting, and merging sensitive PDFs before they are shared.
+- **What this is:** A native macOS app for reading long PDFs, editing documents reliably, and repairing, redacting, sanitizing, organizing, splitting, and merging PDFs before they are shared.
 - **Who it's for:** Operations-heavy users, consultants, finance/travel/aviation-adjacent teams, and privacy-conscious power users who handle risky PDFs often enough that mistakes matter.
 - **Space/industry:** PDF tools, document utilities, privacy-first desktop productivity.
 - **Project type:** Native macOS productivity app with multi-workbench flows.
@@ -13,7 +13,7 @@
 - **Reference sites:** [PDF Expert](https://pdfexpert.com/), [Adobe Acrobat](https://www.adobe.com/acrobat.html)
 
 ### Design thesis
-PDFQuickFix should look like the fastest safe place to inspect a document, clean it, and produce a safer outbound copy.
+PDFQuickFix should make long-document reading and reliable editing equally clear: find the right section, understand the current document state, and save or produce a safer outbound copy with confidence.
 
 The visual language should borrow:
 - the speed and Mac-likeness of PDF Expert,

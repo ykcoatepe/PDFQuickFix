@@ -15,10 +15,12 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install deps
         run: brew install xcodegen create-dmg
-      - name: Generate project
-        run: xcodegen generate
+      - name: Run regression tests
+        run: make sanity-fast
+      - name: Run deterministic OCR fallback smoke
+        run: make smoke-ocr-fallback
       - name: Build (Release)
-        run: xcodebuild -project PDFQuickFix.xcodeproj -scheme PDFQuickFix -configuration Release -derivedDataPath build build
+        run: make build
       - name: Create DMG
         run: |
           mkdir -p dist

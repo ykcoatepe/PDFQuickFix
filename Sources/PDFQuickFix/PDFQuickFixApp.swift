@@ -93,6 +93,11 @@ final class PDFQuickFixAppDelegate: NSObject, NSApplicationDelegate {
     private var hasCompletedInitialActivation = false
 
     @MainActor
+    func applicationShouldTerminate(_: NSApplication) -> NSApplication.TerminateReply {
+        DocumentCloseRegistry.shared.authorizeTermination() ? .terminateNow : .terminateCancel
+    }
+
+    @MainActor
     func applicationDidFinishLaunching(_: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.servicesProvider = finderQuickActionService

@@ -41,6 +41,16 @@ The app and frameworks target macOS 13. Unit and UI test bundles target macOS 14
 
 Reader and Studio share document handoff state, but each controller owns its loading and editing lifecycle. `DocumentValidationRunner` centralizes open/validation progress and cancellation so those surfaces do not implement competing job-state rules.
 
+## Editing and persistence
+
+`DocumentChangeState` associates edits and save checkpoints with an exact document adoption and revision. A Save / Don't Save / Cancel decision is provisional: asynchronous replacement and window/quit transactions recheck it before discarding a document. Failed or cancelled replacement retains the original document, URL, resource access and undo history.
+
+`NativeDocumentChangeObserver` observes form values, button states and annotation contents on visible or previously visited pages. Controllers mark application edits explicitly. Before transitions and saves they commit the native field editor and synchronously compare tracked values, so queued notifications cannot arrive too late to protect a change. Search and view callbacks are similarly scoped to their current document/query/view.
+
+`PDFDocumentSerializer` tries ordinary PDFKit serialization, then a supported Core Graphics linearized write when the semantic checks require it. It verifies supported ordered outline entries, local destinations, remote action dictionaries, page count and supported protection settings before an atomic destination write. Remote actions are tied to the baseline of the exact adopted document; unsupported or edited remote structures fail closed. This is a bounded preservation check, not a complete PDF fidelity or signature validator.
+
+Implicit owner-access saves are rejected because public PDFKit owner permissions do not prove the underlying user restrictions. Explicit encrypted exports validate supplied credentials and requested permissions. Runtime encryption key length is not independently observable through these public APIs. Relative remote-file links are preserved without rebasing them for another output directory.
+
 ## Sanitization boundary
 
 All sanitize surfaces map a `SanitizeProfile` to `PDFDocumentSanitizer.Options` in `PDFQuickFixKit`:

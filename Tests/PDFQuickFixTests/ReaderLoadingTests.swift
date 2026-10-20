@@ -122,7 +122,7 @@ final class ReaderLoadingTests: XCTestCase {
         XCTAssertNotNil(snapshot.page(at: 0))
     }
 
-    func testReaderControllerClearsExistingDocumentWhenEncryptedUnlockFails() throws {
+    func testReaderControllerPreservesExistingDocumentWhenEncryptedUnlockFails() throws {
         let controller = ReaderControllerPro(passwordProvider: { _ in "wrong-pass" })
         let view = PDFView()
         controller.pdfView = view
@@ -145,8 +145,11 @@ final class ReaderLoadingTests: XCTestCase {
         XCTAssertNotNil(view.document)
         XCTAssertNotNil(controller.currentURL)
         XCTAssertNotNil(controller.sourceURL)
+        let originalDocument = controller.document
+        let originalCurrentURL = controller.currentURL
+        let originalSourceURL = controller.sourceURL
 
-        let failedOpen = expectation(description: "Reader cleared state after encrypted open failed")
+        let failedOpen = expectation(description: "Reader retained state after encrypted open failed")
         controller.$log
             .first { $0.contains("password required") }
             .sink { _ in failedOpen.fulfill() }
@@ -157,10 +160,10 @@ final class ReaderLoadingTests: XCTestCase {
         }
 
         wait(for: [failedOpen], timeout: 5.0)
-        XCTAssertNil(controller.document)
-        XCTAssertNil(view.document)
-        XCTAssertNil(controller.currentURL)
-        XCTAssertNil(controller.sourceURL)
+        XCTAssertTrue(controller.document === originalDocument)
+        XCTAssertTrue(view.document === originalDocument)
+        XCTAssertEqual(controller.currentURL, originalCurrentURL)
+        XCTAssertEqual(controller.sourceURL, originalSourceURL)
         XCTAssertFalse(controller.isLoadingDocument)
     }
 
@@ -278,7 +281,7 @@ final class ReaderLoadingTests: XCTestCase {
         XCTAssertNotNil(snapshot.page(at: 0))
     }
 
-    func testStudioControllerClearsExistingDocumentWhenEncryptedUnlockFails() throws {
+    func testStudioControllerPreservesExistingDocumentWhenEncryptedUnlockFails() throws {
         let controller = StudioController(passwordProvider: { _ in "wrong-pass" })
         let view = PDFView()
         controller.attach(pdfView: view)
@@ -301,8 +304,11 @@ final class ReaderLoadingTests: XCTestCase {
         XCTAssertNotNil(view.document)
         XCTAssertNotNil(controller.currentURL)
         XCTAssertNotNil(controller.sourceURL)
+        let originalDocument = controller.document
+        let originalCurrentURL = controller.currentURL
+        let originalSourceURL = controller.sourceURL
 
-        let failedOpen = expectation(description: "Studio cleared state after encrypted open failed")
+        let failedOpen = expectation(description: "Studio retained state after encrypted open failed")
         controller.$logMessages
             .first { $0.contains { $0.contains("password required") } }
             .sink { _ in failedOpen.fulfill() }
@@ -313,10 +319,10 @@ final class ReaderLoadingTests: XCTestCase {
         }
 
         wait(for: [failedOpen], timeout: 5.0)
-        XCTAssertNil(controller.document)
-        XCTAssertNil(view.document)
-        XCTAssertNil(controller.currentURL)
-        XCTAssertNil(controller.sourceURL)
+        XCTAssertTrue(controller.document === originalDocument)
+        XCTAssertTrue(view.document === originalDocument)
+        XCTAssertEqual(controller.currentURL, originalCurrentURL)
+        XCTAssertEqual(controller.sourceURL, originalSourceURL)
         XCTAssertFalse(controller.isDocumentLoading)
     }
 

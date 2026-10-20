@@ -151,12 +151,16 @@ extension NSImage {
 }
 
 func visionRectToPixelRect(_ bb: CGRect, imageSize: CGSize) -> CGRect {
-    // Vision uses normalized coords with origin at bottom-left
+    // Vision and the engine's unflipped Quartz contexts both use bottom-left.
     let x = bb.origin.x * imageSize.width
-    let y = (1 - bb.origin.y - bb.size.height) * imageSize.height
+    let y = bb.origin.y * imageSize.height
     let w = bb.size.width * imageSize.width
     let h = bb.size.height * imageSize.height
     return CGRect(x: x, y: y, width: w, height: h)
+}
+
+func topLeftPixelRectToQuartzRect(_ rect: CGRect, imageSize: CGSize) -> CGRect {
+    CGRect(x: rect.minX, y: imageSize.height - rect.maxY, width: rect.width, height: rect.height)
 }
 
 func pixelsToPoints(_ px: CGFloat, dpi: CGFloat) -> CGFloat {

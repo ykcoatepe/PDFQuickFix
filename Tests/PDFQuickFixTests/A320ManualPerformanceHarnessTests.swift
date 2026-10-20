@@ -45,6 +45,12 @@ final class A320ManualPerformanceHarnessTests: XCTestCase {
         XCTAssertTrue(studio.outlineRows.isEmpty)
 
         let outline = try measureOutlineLoad(url: url)
+        reader.loadOutlineIfNeeded()
+        studio.loadOutlineIfNeeded()
+        XCTAssertEqual(reader.outlineRows.count, outline.rows)
+        XCTAssertEqual(studio.outlineRows.count, outline.rows)
+        XCTAssertFalse(reader.isOutlineTruncated)
+        XCTAssertFalse(studio.isOutlineTruncated)
         let report = String(
             format: "PDFQF manual perf: file=%@ pages=%d readerOpen=%.3fs studioOpen=%.3fs outlineLoad=%.3fs outlineRows=%d truncated=%@",
             url.lastPathComponent,
@@ -99,7 +105,7 @@ final class A320ManualPerformanceHarnessTests: XCTestCase {
     private func measureOutlineLoad(url: URL) throws -> (duration: TimeInterval, rows: Int, truncated: Bool, pageCount: Int) {
         let document = try XCTUnwrap(PDFDocument(url: url))
         let start = Date()
-        let result = PDFOutlineLoader.rows(from: document.outlineRoot, limit: PDFOutlineLoader.massiveDocumentRowLimit)
+        let result = PDFOutlineLoader.rows(from: document.outlineRoot)
         return (Date().timeIntervalSince(start), result.rows.count, result.isTruncated, document.pageCount)
     }
 }

@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import PDFKit
 @testable import PDFQuickFix
@@ -5,6 +6,60 @@ import PDFQuickFixKit
 import XCTest
 
 final class PDFDocumentSanitizerTests: XCTestCase {
+    func testSanitizeRemovesPersistedOutlineFromSourceBackedDocument() throws {
+        let source = PDFDocument()
+        source.insert(PDFPage(), at: 0)
+        let root = PDFOutline()
+        let chapter = PDFOutline()
+        chapter.label = "Private chapter"
+        chapter.destination = PDFDestination(page: try XCTUnwrap(source.page(at: 0)), at: .zero)
+        root.insertChild(chapter, at: 0)
+        source.outlineRoot = root
+        let loaded = try XCTUnwrap(PDFDocument(data: try XCTUnwrap(source.dataRepresentation())))
+        XCTAssertEqual(loaded.outlineRoot?.numberOfChildren, 1)
+
+        let sanitized = try PDFDocumentSanitizer.sanitize(
+            document: loaded,
+            options: .init(rebuildMode: .alwaysRebuildVectorOrData, validationPageLimit: 1,
+                           sanitizeAnnotations: false, sanitizeOutline: false, removeOutline: true)
+        )
+        let reloaded = try XCTUnwrap(PDFDocument(data: try XCTUnwrap(sanitized.dataRepresentation())))
+
+        XCTAssertEqual(reloaded.outlineRoot?.numberOfChildren ?? 0, 0)
+    }
+
+    func testKeepEditablePersistedOutlineRemovalSurvivesFinalOrdinaryWriteWithoutFlattening() throws {
+        let view = NSTextView(frame: CGRect(x: 0, y: 0, width: 300, height: 300))
+        view.font = NSFont.systemFont(ofSize: 12)
+        view.string = "Editable searchable text"
+        let source = try XCTUnwrap(PDFDocument(data: view.dataWithPDF(inside: view.bounds)))
+        let page = try XCTUnwrap(source.page(at: 0))
+        let field = PDFAnnotation(bounds: CGRect(x: 10, y: 10, width: 100, height: 20), forType: .widget, withProperties: nil)
+        field.widgetFieldType = .text
+        field.fieldName = "Editable field"
+        field.widgetStringValue = "Retain value"
+        page.addAnnotation(field)
+        let root = PDFOutline()
+        let chapter = PDFOutline()
+        chapter.label = "Sensitive chapter"
+        chapter.destination = PDFDestination(page: page, at: .zero)
+        root.insertChild(chapter, at: 0)
+        source.outlineRoot = root
+        let persisted = try PDFDocumentSerializer.data(from: source)
+        let loaded = try XCTUnwrap(PDFDocument(data: persisted))
+        XCTAssertEqual(loaded.outlineRoot?.numberOfChildren, 1)
+        let originalText = try XCTUnwrap(loaded.string)
+        XCTAssertFalse(originalText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        let sanitized = try PDFDocumentSanitizer.sanitize(document: loaded, options: .from(profile: .keepEditable))
+        let outputURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: outputURL) }
+        XCTAssertTrue(sanitized.write(to: outputURL))
+        let reloaded = try XCTUnwrap(PDFDocument(url: outputURL))
+        XCTAssertEqual(reloaded.outlineRoot?.numberOfChildren ?? 0, 0)
+        XCTAssertEqual(reloaded.string, originalText)
+        XCTAssertEqual(reloaded.page(at: 0)?.annotations.first { $0.fieldName == "Editable field" }?.widgetStringValue, "Retain value")
+    }
+
     func testSanitizeCoercesAttributeTypes() throws {
         let url = try TestPDFBuilder.makeSimplePDF(text: "Metadata Test")
         guard let document = PDFDocument(url: url) else {

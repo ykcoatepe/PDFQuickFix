@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
-xcodegen generate
-./scripts/run_xcodebuild.sh -project PDFQuickFix.xcodeproj -scheme PDFQuickFix -configuration Release -derivedDataPath build build
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "${ROOT_DIR}"
+
+make build
 open build/Build/Products/Release/PDFQuickFix.app || true

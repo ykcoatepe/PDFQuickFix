@@ -1,4 +1,5 @@
 import PDFKit
+import PDFQuickFixKit
 @testable import PDFQuickFix
 import XCTest
 
@@ -151,7 +152,9 @@ final class PDFSplitterTests: XCTestCase {
             root.insertChild(child, at: root.numberOfChildren)
         }
         document.outlineRoot = root
-        XCTAssertTrue(document.write(to: url))
+        try PDFDocumentSerializer.write(document, to: url)
+        XCTAssertEqual(PDFDocument(url: url)?.outlineRoot?.numberOfChildren, breakPages.count,
+                       "The chapter fixture must contain persisted bookmarks")
         return url
     }
 }

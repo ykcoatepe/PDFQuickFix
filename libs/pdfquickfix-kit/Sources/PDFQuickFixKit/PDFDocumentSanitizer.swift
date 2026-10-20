@@ -102,6 +102,7 @@ public enum PDFDocumentSanitizer {
                                 sourceURL: URL? = nil,
                                 options: Options = .full,
                                 progress: ProgressHandler? = nil,
+                                remoteBaseline: PDFDocumentSerializer.RemoteOutlineBaseline? = nil,
                                 shouldCancel: () -> Bool = { false }) throws -> PDFDocument
     {
         enforceStructureTreeOff(original)
@@ -140,7 +141,9 @@ public enum PDFDocumentSanitizer {
         case .rasterize:
             true
         case .never:
-            false
+            // Preserve editable content while committing outline changes to new
+            // validated bytes; source-backed PDFKit writers can resurrect old trees.
+            options.removeOutline || outlineChanged
         case .auto:
             attributesChanged || outlineChanged || annotationsChanged
         case .alwaysRebuildVectorOrData:
@@ -163,8 +166,9 @@ public enum PDFDocumentSanitizer {
             }
             workingDocument = redrawn
         } else if requiresRebuild {
-            guard let data = original.dataRepresentation(),
-                  let rebuilt = PDFDocument(data: data)
+            let data = try PDFDocumentSerializer.data(from: original, removingOutline: options.removeOutline,
+                                                       remoteBaseline: remoteBaseline)
+            guard let rebuilt = PDFDocument(data: data)
             else {
                 throw PDFDocumentSanitizerError.pageRenderFailed(
                     page: 0,

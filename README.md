@@ -29,10 +29,12 @@ PDFQuickFix is best thought of as a **privacy-first PDF reader/editor workstatio
 - Open / Save / Save As / Print, including password-protected PDFs
 - Search inside PDF
 - Thumbnails sidebar, continuous scroll, zoom
+- Full PDF outline navigation in Reader and Studio, including headings beyond 500 items; massive documents load the outline on demand
 - **Copilot side panel** for quick summary, ask-this-document, explain-selection, and current-page digest flows
 - **Citation jump buttons** that take answers back to the source page
 - Annotations: **highlight selection**, **notes**, **rectangles**, **free text**, **links**, **lines**, **arrows**, and **ink**
 - **Form filling** (AcroForm) directly in the viewer
+- Save / Don't Save / Cancel protection for edited documents when opening another PDF, closing a document or window, or quitting
 - **Sign**: create a reusable handwritten signature and **stamp** it anywhere
 - **Replace selected text** and **redact selected text** with safer flattened/sanitized export guidance
 - **Manual redaction boxes**: place black boxes, then *Apply Permanent Redactions* (burned into the page bitmap)
@@ -48,6 +50,16 @@ PDFQuickFix is best thought of as a **privacy-first PDF reader/editor workstatio
 - Page thumbnails, drag-and-drop ordering, and quick actions
 - Shared document handoff from Reader for edit/organize flows
 - Large-document guards and background validation during open
+
+### Saving edited documents
+
+Reader and Studio preserve the current document and its undo history if opening a replacement fails or its password prompt is cancelled. Native form changes participate in the same unsaved-change protection as annotation and page edits. Switching workbenches commits the active form editor before hiding its view.
+
+Saves validate the resulting PDF before atomically replacing the destination. The checks cover page count, supported outline destinations and actions, and supported encryption/permission settings. An unsupported or mismatched result leaves the destination unchanged and keeps the edits open.
+
+Some PDFs with remote-file bookmarks can be saved unchanged but cannot safely persist bookmark edits through PDFKit; those edits are blocked with an explanation. Relative file links remain relative and are not rebased when saving to another folder. Ordinary saves opened with owner access are also blocked when the original user restrictions cannot be verified; use **Export → Encrypted PDF…** to choose protection explicitly. These checks do not certify every PDF feature or digital signature.
+
+PDFKit's write support varies across macOS versions. If it drops a remote bookmark's target or produces an encrypted copy that cannot be opened with a requested password, PDFQuickFix refuses the output and preserves the existing destination. Choosing explicit encryption settings still requires the resulting copy to pass verification.
 
 **Split tab**
 - Split PDFs by **max pages**, **number of parts**, **explicit page breaks**, **target size**, or **outline chapters**
@@ -244,6 +256,16 @@ In Debug builds the app emits signposts and basic performance metrics.
 
 Use this to compare branches and track regressions when working on large-document performance.
 
+The optional manual performance harness checks Reader/Studio opening and complete outline loading against a local PDF. It skips when no PDF path is supplied. To run it:
+
+```bash
+xcodegen generate
+TEST_RUNNER_PDFQF_PERF_PDF="/path/to/manual.pdf" ./scripts/run_xcodebuild.sh \
+  -project PDFQuickFix.xcodeproj -scheme PDFQuickFix -configuration Debug \
+  -destination 'platform=macOS' \
+  -only-testing:PDFQuickFixTests/A320ManualPerformanceHarnessTests test
+```
+
 ## Documentation map
 - [Documentation index](docs/README.md) for tutorials, task guides, reference, and architecture
 - [Getting started](docs/getting-started.md) for build, first sanitized copy, and output verification
@@ -258,7 +280,7 @@ Use this to compare branches and track regressions when working on large-documen
 - [DESIGN.md](DESIGN.md) for the shared visual system and UI direction
 - [PRODUCT_THESIS.md](PRODUCT_THESIS.md) for the product wedge and positioning
 - [TODOS.md](TODOS.md) for the active product, design, workflow, and repo backlog
-- [AUTOPLAN_REVIEW.md](AUTOPLAN_REVIEW.md) for the current branch review summary and applied design/product decisions
+- [AUTOPLAN_REVIEW.md](AUTOPLAN_REVIEW.md) for the archived April 2026 planning snapshot
 - [LOGBOOK.md](LOGBOOK.md) for historical task notes
 - [implementation-plan-ollama-deepseek-ocr-fallback-2026-01-18.md](implementation-plan-ollama-deepseek-ocr-fallback-2026-01-18.md) for the archived OCR implementation plan
 

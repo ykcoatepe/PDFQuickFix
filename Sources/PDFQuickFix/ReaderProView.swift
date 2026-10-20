@@ -8,7 +8,31 @@ import UniformTypeIdentifiers
 /// Controller coordinating PDF viewing, search, and page operations.
 @MainActor
 final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
-    @Published var document: PDFDocument?
+    @Published var document: PDFDocument? {
+        willSet {
+            if document !== newValue {
+                flushNativeChanges()
+                clearSearchState()
+            }
+        }
+        didSet {
+            if document !== oldValue {
+                persistenceGeneration = UUID()
+                saveVerificationCredential = nil
+                remoteOutlineBaseline = document.flatMap { try? PDFDocumentSerializer.remoteBaseline(for: $0) }
+                nativeChanges.detach()
+                changeState.adopt(document)
+                hasUnsavedChanges = changeState.hasUnsavedChanges
+            }
+        }
+    }
+    let changeState = DocumentChangeState()
+    @Published private(set) var hasUnsavedChanges = false
+    private let nativeChanges = NativeDocumentChangeObserver()
+    private let discardDecision: (String) -> DocumentDiscardDecision
+    private let saveDestination: ((String) -> URL?)?
+    private let errorPresenter: ((Error) -> Void)?
+    private var pendingOpenAuthorization: DocumentRevision?
     @Published var currentPageIndex: Int = 0
     @Published var zoomScale: CGFloat = 1.0
     @Published var searchQuery: String = ""
@@ -54,9 +78,14 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
     @Published private(set) var currentSelectionTextState: String?
 
     weak var pdfView: PDFView? {
+        willSet {
+            if pdfView !== newValue { flushNativeChanges() }
+        }
         didSet {
             rebindPDFViewObservers(from: oldValue, to: pdfView)
             refreshSelectionState()
+            attachNativeChanges()
+            refreshPageState()
         }
     }
 
@@ -70,10 +99,15 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
 
     private var findObserver: NSObjectProtocol?
     private var selectionObserver: NSObjectProtocol?
+    private var pageObserver: NSObjectProtocol?
+    private var searchGeneration = UUID()
     private let validationRunner = DocumentValidationRunner()
     private var copilotService: any DocumentCopilotServicing
     private let usesCustomCopilotService: Bool
     private let passwordProvider: PDFPasswordProvider
+    private var saveVerificationCredential: PDFDocumentPassword?
+    private var persistenceGeneration = UUID()
+    fileprivate var remoteOutlineBaseline: PDFDocumentSerializer.RemoteOutlineBaseline?
     private let repairSourceURL: (URL) throws -> URL
     private weak var aiSettings: LocalAISettings?
     private var searchDebounceWorkItem: DispatchWorkItem?
@@ -88,12 +122,18 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
 
     init(copilotService: (any DocumentCopilotServicing)? = nil,
          passwordProvider: @escaping PDFPasswordProvider = PDFPasswordPrompt.requestPassword,
-         repairSourceURL: @escaping (URL) throws -> URL = { try PDFRepairService().repairIfNeeded(inputURL: $0) })
+         repairSourceURL: @escaping (URL) throws -> URL = { try PDFRepairService().repairIfNeeded(inputURL: $0) },
+         discardDecision: @escaping (String) -> DocumentDiscardDecision = DocumentDiscardPrompt.decide,
+         saveDestination: ((String) -> URL?)? = nil,
+         errorPresenter: ((Error) -> Void)? = nil)
     {
         self.copilotService = copilotService ?? DocumentCopilotService(interactionStore: AIInteractionStore())
         usesCustomCopilotService = copilotService != nil
         self.passwordProvider = passwordProvider
         self.repairSourceURL = repairSourceURL
+        self.discardDecision = discardDecision
+        self.saveDestination = saveDestination
+        self.errorPresenter = errorPresenter
         super.init()
     }
 
@@ -104,11 +144,60 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         if let observer = selectionObserver {
             NotificationCenter.default.removeObserver(observer)
         }
+        if let pageObserver { NotificationCenter.default.removeObserver(pageObserver) }
+        searchDebounceWorkItem?.cancel()
         validationRunner.cancelAll()
     }
 
+    func flushNativeChanges() {
+        nativeChanges.flush()
+        hasUnsavedChanges = changeState.hasUnsavedChanges
+    }
+
+    func commitNativeEditing() -> Bool {
+        guard pdfView?.window?.makeFirstResponder(nil) != false else { return false }
+        flushNativeChanges()
+        return true
+    }
+
+    func authorizeDiscardingChanges() -> DocumentRevision? {
+        guard commitNativeEditing() else { return nil }
+        let authorization = changeState.authorizeTransition(
+            decide: {
+                let decision = discardDecision(sourceURL?.lastPathComponent ?? "Untitled PDF")
+                guard commitNativeEditing() else { return .cancel }
+                return decision
+            },
+            save: { saveDocumentOutcome() }
+        )
+        flushNativeChanges()
+        guard let authorization, changeState.isCurrent(authorization) else { return nil }
+        return authorization
+    }
+
+    private func markDocumentChanged() {
+        guard let document else { return }
+        changeState.markChanged(in: document)
+        hasUnsavedChanges = changeState.hasUnsavedChanges
+        nativeChanges.refresh()
+    }
+
+    fileprivate func attachNativeChanges() {
+        guard let document, let pdfView, pdfView.document === document else {
+            nativeChanges.detach()
+            return
+        }
+        nativeChanges.attach(document: document, view: pdfView) { [weak self] edited in
+            guard let self else { return }
+            self.changeState.markChanged(in: edited)
+            self.hasUnsavedChanges = self.changeState.hasUnsavedChanges
+        }
+    }
+
     func open(url: URL, access: SecurityScopedAccess? = nil) {
+        guard let authorization = authorizeDiscardingChanges() else { return }
         invalidatePendingOpen()
+        pendingOpenAuthorization = authorization
         validationRunner.cancelValidation()
         validationRunner.cancelOpen()
         let generation = UUID()
@@ -274,15 +363,30 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
             return
         }
         loadingStatus = "Unlocking \(sourceURL.lastPathComponent)…"
-        guard PDFPasswordUnlock.unlockIfNeeded(document: rawDoc, url: sourceURL, passwordProvider: passwordProvider) else {
+        var unlockedPassword: String?
+        guard PDFPasswordUnlock.unlockIfNeeded(document: rawDoc, url: sourceURL, passwordProvider: { url in
+            let password = passwordProvider(url)
+            unlockedPassword = password
+            return password
+        }) else {
+            guard isCurrentOpen(generation) else {
+                rejectOpen(generation: generation, lease: resourceLease)
+                return
+            }
             resourceLease.discard()
             activeOpenLease = nil
-            resetDocumentState()
+            pendingOpenAuthorization = nil
+            isLoadingDocument = false
+            loadingStatus = nil
             log = "Open failed: password required for \(sourceURL.lastPathComponent)"
             endOpenSignpost(generation)
             return
         }
 
+        guard isCurrentOpen(generation) else {
+            rejectOpen(generation: generation, lease: resourceLease)
+            return
+        }
         isLoadingDocument = false
         loadingStatus = nil
         finishOpen(document: rawDoc,
@@ -292,6 +396,9 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
                    resourceLease: resourceLease,
                    isRepaired: isRepaired,
                    requiresUnlockedValidation: true)
+        if document === rawDoc, let password = unlockedPassword {
+            saveVerificationCredential = PDFDocumentPassword(document: rawDoc, password: password)
+        }
         #if DEBUG
             let duration = Date().timeIntervalSince(openStart)
             PerfMetrics.shared.recordReaderOpen(duration: duration)
@@ -311,6 +418,21 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
             rejectOpen(generation: generation, lease: resourceLease)
             return
         }
+        let committed = commitNativeEditing()
+        guard isCurrentOpen(generation) else {
+            rejectOpen(generation: generation, lease: resourceLease)
+            return
+        }
+        guard committed, let authorization = pendingOpenAuthorization,
+              changeState.isCurrent(authorization) else {
+            rejectOpen(generation: generation, lease: resourceLease)
+            activeOpenLease = nil
+            pendingOpenAuthorization = nil
+            isLoadingDocument = false
+            loadingStatus = nil
+            log = "Open cancelled because the current document changed."
+            return
+        }
         let sp = PerfLog.begin("ReaderApplyDocument")
         defer { PerfLog.end("ReaderApplyDocument", sp) }
         currentURL = workingURL
@@ -319,6 +441,11 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         activeOpenLease = nil
         clearEditUndoStacks()
         document = newDocument
+        pendingOpenAuthorization = nil
+        if newDocument.isEncrypted {
+            saveVerificationCredential = PDFDocumentPassword(document: newDocument, password: nil,
+                                                             requiresUserPassword: requiresUnlockedValidation)
+        }
 
         let fileSize = (try? FileManager.default.attributesOfItem(atPath: workingURL.path)[.size] as? Int64) ?? 0
         let profile = DocumentProfile.from(pageCount: newDocument.pageCount, fileSizeBytes: fileSize)
@@ -340,7 +467,8 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
             refreshSelectionState()
         }
         currentPageIndex = 0
-        searchMatches.removeAll()
+        attachNativeChanges()
+        refreshPageState()
         invalidateOutlineCache()
         refreshAnnotationsForReader()
         validationStatus = nil
@@ -380,7 +508,9 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         resourceLease.discard()
         activeOpenLease = nil
         endOpenSignpost(generation)
-        resetDocumentState()
+        pendingOpenAuthorization = nil
+        isLoadingDocument = false
+        loadingStatus = nil
         log = "❌ \(error.localizedDescription)"
         present(error)
     }
@@ -400,6 +530,8 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
 
     /// Closes the current document and resets all state.
     func closeDocument() {
+        guard let authorization = authorizeDiscardingChanges(),
+              changeState.isCurrent(authorization) else { return }
         resetDocumentState(clearLog: true)
     }
 
@@ -412,6 +544,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         clearEditUndoStacks()
         document = nil
         pdfView?.document = nil
+        currentPageIndex = 0
         currentURL = nil
         sourceURL = nil
         activeSecurityScope = nil
@@ -441,6 +574,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
 
     private func invalidatePendingOpen() {
         openGeneration = UUID()
+        pendingOpenAuthorization = nil
         // The background open closure retains its lease. Dropping the controller's
         // reference supersedes publication without revoking scope mid-read; the
         // stale closure (or lease deinit) releases resources at its next boundary.
@@ -468,64 +602,101 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         editUndoManager.removeAllActions()
     }
 
-    func saveAs() {
-        guard let doc = document else { return }
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [.pdf]
-        panel.nameFieldStringValue = (doc.documentURL?.deletingPathExtension().lastPathComponent ?? "Document") + "-copy.pdf"
-        if panel.runModal() == .OK, let url = panel.url {
-            if writeDocument(doc, to: url) {
-                currentURL = url
-                sourceURL = url
-                log = "Saved as \(url.lastPathComponent)"
-            } else if !log.contains("Save blocked") {
-                log = "Save As failed: \(url.lastPathComponent)"
-            }
+    func saveAs() { _ = saveAsOutcome() }
+
+    func saveAsOutcome() -> DocumentSaveOutcome {
+        guard commitNativeEditing(), let doc = document else { return .failed }
+        let revision = changeState.captureRevision()
+        let generation = persistenceGeneration
+        let openRequest = openGeneration
+        let name = (sourceURL?.deletingPathExtension().lastPathComponent ?? "Document") + "-copy.pdf"
+        let url: URL?
+        if let saveDestination {
+            url = saveDestination(name)
+        } else {
+            let panel = NSSavePanel()
+            panel.allowedContentTypes = [.pdf]
+            panel.nameFieldStringValue = name
+            url = panel.runModal() == .OK ? panel.url : nil
         }
+        guard commitNativeEditing(), document === doc, changeState.isCurrent(revision),
+              persistenceGeneration == generation, openGeneration == openRequest else { return .failed }
+        guard let url else { return .cancelled }
+        return saveDocument(doc, to: url, savedAs: true)
     }
 
-    func saveDocument() {
-        guard let doc = document else { return }
-        guard let url = sourceURL ?? currentURL ?? doc.documentURL else {
-            saveAs()
-            return
-        }
+    func saveDocument() { _ = saveDocumentOutcome() }
 
-        if writeDocument(doc, to: url) {
+    func saveDocumentOutcome() -> DocumentSaveOutcome {
+        guard commitNativeEditing(), let doc = document else { return .failed }
+        guard let url = sourceURL ?? currentURL ?? doc.documentURL else { return saveAsOutcome() }
+        return saveDocument(doc, to: url, savedAs: false)
+    }
+
+    private func saveDocument(_ doc: PDFDocument, to url: URL, savedAs: Bool) -> DocumentSaveOutcome {
+        let outcome = writeDocument(doc, to: url)
+        if outcome == .saved {
             currentURL = url
             sourceURL = url
-            log = "Saved \(url.lastPathComponent)"
-        } else if !log.contains("Save blocked") {
-            log = "Save failed: \(url.lastPathComponent)"
+            activeSecurityScope = SecurityScopedAccess(url: url)
+            log = "Saved\(savedAs ? " as" : "") \(url.lastPathComponent)"
+            hasUnsavedChanges = changeState.hasUnsavedChanges
+            return .saved
         }
+        if !log.contains("Save blocked") { log = "Save failed: \(url.lastPathComponent)" }
+        return outcome
     }
 
-    private func writeDocument(_ doc: PDFDocument, to url: URL) -> Bool {
+    private func writeDocument(_ doc: PDFDocument, to url: URL) -> DocumentSaveOutcome {
+        let generation = persistenceGeneration
+        let openRequest = openGeneration
+        let revision = changeState.captureRevision()
+        let isCurrent = {
+            self.flushNativeChanges()
+            return self.document === doc && self.persistenceGeneration == generation
+                && self.openGeneration == openRequest && self.changeState.isCurrent(revision)
+        }
+        guard isCurrent() else { return .failed }
         guard PDFOps.containsReplacementTextAnnotations(in: doc) else {
-            return doc.write(to: url)
+            var passwordCancelled = false
+            do {
+                let credential = try PDFVerifiedSave.write(doc, to: url, sourceURL: sourceURL ?? currentURL,
+                                                           credential: saveVerificationCredential, remoteBaseline: remoteOutlineBaseline,
+                                                           isCurrent: isCurrent, passwordProvider: { url in
+                                                               let password = self.passwordProvider(url)
+                                                               passwordCancelled = password == nil
+                                                               return password
+                                                           })
+                guard isCurrent() else { return .failed }
+                saveVerificationCredential = credential
+                return changeState.markSaved(doc, revision: revision) ? .saved : .failed
+            } catch {
+                log = "Save blocked: \(error.localizedDescription)"
+                return passwordCancelled && isCurrent() ? .cancelled : .failed
+            }
         }
         guard !doc.isEncrypted else {
             log = "Save blocked: export an encrypted copy after replacing text in a protected PDF."
-            return false
+            return .failed
         }
 
         do {
             let data = try PDFOps.flattenedData(document: doc)
+            guard let flattened = PDFDocument(data: data) else { throw PDFOpsError.saveFailed }
+            guard isCurrent() else { return .failed }
             try data.write(to: url, options: .atomic)
-            guard let flattened = PDFDocument(data: data) else {
-                throw PDFOpsError.saveFailed
-            }
             document = flattened
             pdfView?.document = flattened
+            attachNativeChanges()
             currentSelectionTextState = nil
             clearEditUndoStacks()
             invalidateOutlineCache()
             refreshAnnotationsForReader(includeMassiveDocument: true)
-            return true
+            return .saved
         } catch {
             log = "Save failed: \(error.localizedDescription)"
             present(error)
-            return false
+            return .failed
         }
     }
 
@@ -551,10 +722,10 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
 
                     if panel.runModal() == .OK, let destination = panel.url {
                         do {
-                            if FileManager.default.fileExists(atPath: destination.path) {
-                                try FileManager.default.removeItem(at: destination)
+                            try PDFDocumentSerializer.copyValidatedPDF(from: repairedURL, to: destination)
+                            if repairedURL.standardizedFileURL != destination.standardizedFileURL {
+                                try? FileManager.default.removeItem(at: repairedURL)
                             }
-                            try FileManager.default.moveItem(at: repairedURL, to: destination)
                             // Optional: Ask to open? For now just notify or do nothing.
                             // Maybe show in Finder
                             NSWorkspace.shared.activateFileViewerSelecting([destination])
@@ -644,7 +815,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
 
     func imageExportSnapshotData() throws -> Data {
         guard let document else { throw PDFOpsError.missingDocument }
-        let snapshot = try PDFOps.privacyPreservingSnapshot(document: document)
+        let snapshot = try PDFOps.privacyPreservingSnapshot(document: document, remoteBaseline: remoteOutlineBaseline)
         guard let data = snapshot.dataRepresentation() else {
             throw PDFOpsError.saveFailed
         }
@@ -710,47 +881,46 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
 
     // MARK: - Search
 
-    func find(_ text: String) {
-        searchMatches.removeAll()
-        currentMatchIndex = nil
-        let query = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if query.isEmpty {
-            document?.cancelFindString()
-            if let findObserver {
-                NotificationCenter.default.removeObserver(findObserver)
-                self.findObserver = nil
-            }
-            return
-        }
-        guard let doc = document else { return }
-        // PDFKit's beginFindString is asynchronous and fires per-match notifications,
-        // so it's safe to run on massive documents without freezing the UI.
-
-        findObserver.flatMap { NotificationCenter.default.removeObserver($0) }
+    private func clearSearchState(resetQuery: Bool = true) {
+        searchGeneration = UUID()
+        searchDebounceWorkItem?.cancel()
+        searchDebounceWorkItem = nil
+        document?.cancelFindString()
+        if let findObserver { NotificationCenter.default.removeObserver(findObserver) }
         findObserver = nil
+        searchMatches = []
+        currentMatchIndex = nil
+        if resetQuery { searchQuery = "" }
+    }
+
+    func find(_ text: String) {
+        clearSearchState(resetQuery: false)
+        let query = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty, let doc = document else { return }
+        let generation = searchGeneration
         findObserver = NotificationCenter.default.addObserver(
-            forName: .PDFDocumentDidFindMatch,
-            object: doc,
-            queue: .main
-        ) { [weak self] note in
+            forName: .PDFDocumentDidFindMatch, object: doc, queue: .main
+        ) { [weak self, weak doc] note in
             guard let selection = note.userInfo?["PDFDocumentFoundSelection"] as? PDFSelection else { return }
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                searchMatches.append(selection)
-                if let idx = searchMatches.indices.last, currentMatchIndex == nil {
-                    focusSelection(selection, at: idx)
+            Task { @MainActor [weak self, weak doc] in
+                guard let self, let doc, self.document === doc,
+                      self.searchGeneration == generation else { return }
+                self.searchMatches.append(selection)
+                if let idx = self.searchMatches.indices.last, self.currentMatchIndex == nil {
+                    self.focusSelection(selection, at: idx)
                 }
             }
         }
-
-        doc.cancelFindString()
         doc.beginFindString(query, withOptions: [.caseInsensitive])
     }
 
     func updateSearchQueryDebounced(_ text: String) {
-        searchDebounceWorkItem?.cancel()
-        let item = DispatchWorkItem { [weak self] in
-            self?.find(text)
+        clearSearchState(resetQuery: false)
+        let generation = searchGeneration
+        let doc = document
+        let item = DispatchWorkItem { [weak self, weak doc] in
+            guard let self, self.searchGeneration == generation, self.document === doc else { return }
+            self.find(text)
         }
         searchDebounceWorkItem = item
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: item)
@@ -908,8 +1078,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
 
     func loadOutlineIfNeeded() {
         guard !hasLoadedOutline else { return }
-        let limit = isMassiveDocument ? PDFOutlineLoader.massiveDocumentRowLimit : nil
-        let result = PDFOutlineLoader.rows(from: document?.outlineRoot, limit: limit)
+        let result = PDFOutlineLoader.rows(from: document?.outlineRoot)
         outlineRows = result.rows
         isOutlineTruncated = result.isTruncated
         hasLoadedOutline = true
@@ -951,7 +1120,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         let oldContents = annotation.contents
         let newContents = PDFStringNormalizer.normalizedNonEmpty(draft.contents, context: "annotation contents")
         let oldURL = annotation.url
-        let newURL = draft.urlString.flatMap(Self.annotationURL)
+        let newURL = draft.urlString == nil ? oldURL : draft.urlString.flatMap(Self.annotationURL)
         guard oldContents != newContents || oldURL != newURL else { return }
         registerAnnotationEditUndo(annotation: annotation,
                                    oldContents: oldContents,
@@ -1063,6 +1232,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
     }
 
     private func registerRotationUndo(page: PDFPage, oldRotation: Int, newRotation: Int) {
+        markDocumentChanged()
         let undoManager = activeUndoManager
         undoManager.registerUndo(withTarget: self) { [weak self] _ in
             guard let self else { return }
@@ -1075,6 +1245,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
 
     private func registerAnnotationAddition(_ annotation: PDFAnnotation, actionName: String) {
         guard let page = annotation.page else { return }
+        markDocumentChanged()
         let undoManager = activeUndoManager
         undoManager.registerUndo(withTarget: self) { target in
             page.removeAnnotation(annotation)
@@ -1092,6 +1263,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
             return (annotation, page)
         }
         guard !entries.isEmpty else { return }
+        markDocumentChanged()
         let undoManager = activeUndoManager
         undoManager.registerUndo(withTarget: self) { target in
             for (annotation, page) in entries {
@@ -1111,6 +1283,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
 
     private func registerAnnotationRemovals(_ entries: [(PDFAnnotation, PDFPage)], actionName: String) {
         guard !entries.isEmpty else { return }
+        markDocumentChanged()
         let undoManager = activeUndoManager
         undoManager.registerUndo(withTarget: self) { target in
             for (annotation, page) in entries {
@@ -1130,6 +1303,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
                                             newContents: String?,
                                             newURL: URL?)
     {
+        markDocumentChanged()
         let undoManager = activeUndoManager
         undoManager.registerUndo(withTarget: self) { target in
             annotation.contents = oldContents
@@ -1166,6 +1340,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
     }
 
     private func registerPageDeletionUndo(page: PDFPage, index: Int, actionName: String) {
+        markDocumentChanged()
         let undoManager = activeUndoManager
         undoManager.registerUndo(withTarget: self) { target in
             guard let doc = target.document else { return }
@@ -1182,6 +1357,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
     }
 
     private func registerPageInsertionUndo(page: PDFPage, index: Int, actionName: String) {
+        markDocumentChanged()
         let undoManager = activeUndoManager
         undoManager.registerUndo(withTarget: self) { target in
             guard let doc = target.document else { return }
@@ -1306,6 +1482,8 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         view.delegate = self
         zoomScale = view.scaleFactor
         refreshSelectionState()
+        attachNativeChanges()
+        refreshPageState()
     }
 
     private func makeCopilotSession() -> DocumentTextSession? {
@@ -1367,17 +1545,39 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
             NotificationCenter.default.removeObserver(observer)
             selectionObserver = nil
         }
+        if let pageObserver {
+            NotificationCenter.default.removeObserver(pageObserver)
+            self.pageObserver = nil
+        }
 
         guard let newValue else { return }
         selectionObserver = NotificationCenter.default.addObserver(
             forName: .PDFViewSelectionChanged,
             object: newValue,
             queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.refreshSelectionState()
+        ) { [weak self, weak newValue] _ in
+            Task { @MainActor [weak self, weak newValue] in
+                guard let self, let newValue, self.pdfView === newValue,
+                      newValue.document === self.document else { return }
+                self.refreshSelectionState()
             }
         }
+        pageObserver = NotificationCenter.default.addObserver(
+            forName: .PDFViewPageChanged, object: newValue, queue: .main
+        ) { [weak self, weak newValue] _ in
+            MainActor.assumeIsolated {
+                guard let self, let newValue, self.pdfView === newValue else { return }
+                self.refreshPageState()
+            }
+        }
+    }
+
+    private func refreshPageState() {
+        guard let document, let view = pdfView, view.document === document,
+              let page = view.currentPage, page.document === document else { return }
+        let index = document.index(for: page)
+        guard index >= 0, index < document.pageCount else { return }
+        currentPageIndex = index
     }
 
     private func annotationRects(for selection: PDFSelection, on page: PDFPage) -> [CGRect] {
@@ -1439,6 +1639,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
     }
 
     private func present(_ error: Error) {
+        if let errorPresenter { errorPresenter(error); return }
         DispatchQueue.main.async {
             let alert = NSAlert()
             alert.alertStyle = .warning
@@ -1546,7 +1747,7 @@ extension ReaderControllerPro: FileExportable {
         guard let doc = document else { return }
         let snapshotDoc: PDFDocument
         do {
-            snapshotDoc = try PDFOps.privacyPreservingSnapshot(document: doc)
+            snapshotDoc = try PDFOps.privacyPreservingSnapshot(document: doc, remoteBaseline: remoteOutlineBaseline)
         } catch {
             log = "Export failed: couldn't read current document state"
             return
@@ -1689,7 +1890,7 @@ extension ReaderControllerPro: FileExportable {
 
         let snapshotData: Data
         do {
-            let snapshot = try PDFOps.privacyPreservingSnapshot(document: doc)
+            let snapshot = try PDFOps.privacyPreservingSnapshot(document: doc, remoteBaseline: remoteOutlineBaseline)
             guard let data = snapshot.dataRepresentation() else {
                 throw PDFOpsError.saveFailed
             }
@@ -1705,7 +1906,7 @@ extension ReaderControllerPro: FileExportable {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             do {
                 guard let snapshot = PDFDocument(data: snapshotData),
-                      let optimizedData = PDFOps.optimize(document: snapshot)
+                      let optimizedData = PDFOps.optimize(document: snapshot, remoteBaseline: try PDFDocumentSerializer.remoteBaseline(for: snapshot))
                 else {
                     throw PDFOpsError.saveFailed
                 }
@@ -1737,7 +1938,7 @@ extension ReaderControllerPro: FileExportable {
 
         if panel.runModal() == .OK, let url = panel.url {
             do {
-                let cleanedData = try PDFOps.metadataCleanedData(document: doc, sourceURL: currentURL)
+                let cleanedData = try PDFOps.metadataCleanedData(document: doc, sourceURL: currentURL, remoteBaseline: remoteOutlineBaseline)
                 try cleanedData.write(to: url, options: .atomic)
                 log = "Exported metadata-clean copy to \(url.lastPathComponent)"
                 NSWorkspace.shared.activateFileViewerSelecting([url])
@@ -1782,7 +1983,8 @@ extension ReaderControllerPro: FileExportable {
             if let url = try PDFEncryptionExport.writeEncryptedCopy(
                 document: doc,
                 sourceURL: currentURL ?? doc.documentURL,
-                options: options
+                options: options,
+                remoteBaseline: remoteOutlineBaseline
             ) {
                 log = "Exported encrypted copy to \(url.lastPathComponent)"
                 NSWorkspace.shared.activateFileViewerSelecting([url])
@@ -1940,8 +2142,10 @@ struct ReaderProView: View, Equatable {
     private func encryptCurrent() {
         guard let doc = controller.document else { return }
         let exportDocument: PDFDocument
+        let exportBaseline: PDFDocumentSerializer.RemoteOutlineBaseline
         do {
-            exportDocument = try PDFOps.privacyPreservingDocumentForExport(doc)
+            exportDocument = try PDFOps.privacyPreservingDocumentForExport(doc, remoteBaseline: controller.remoteOutlineBaseline)
+            exportBaseline = try PDFDocumentSerializer.remoteBaseline(for: exportDocument)
         } catch {
             controller.log = "Encrypt failed: \(error.localizedDescription)"
             return
@@ -1950,7 +2154,8 @@ struct ReaderProView: View, Equatable {
             document: exportDocument,
             userPassword: userPassword,
             ownerPassword: ownerPassword.isEmpty ? nil : ownerPassword,
-            keyLength: 128
+            keyLength: 128,
+            remoteBaseline: exportBaseline
         ) else {
             controller.log = "Encrypt failed: unsupported encryption settings"
             return
@@ -2418,12 +2623,6 @@ struct ReaderSidebarLeft: View {
                         .padding()
                     } else if controller.hasLoadedOutline, !controller.outlineRows.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
-                            if controller.isOutlineTruncated {
-                                Label("Showing the first \(PDFOutlineLoader.massiveDocumentRowLimit) outline items", systemImage: "list.bullet.rectangle")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .padding(.horizontal, 8)
-                            }
                             OutlineTreeView(rows: controller.outlineRows, pdfView: controller.pdfView)
                         }
                     } else {
@@ -2825,6 +3024,16 @@ struct PDFViewProRepresented: NSViewRepresentable {
         if let readerView = nsView as? ReaderPDFView {
             readerView.controller = controller
         }
+        controller.attachNativeChanges()
+    }
+
+    static func dismantleNSView(_ nsView: PDFView, coordinator: ()) {
+        guard let readerView = nsView as? ReaderPDFView, let controller = readerView.controller else { return }
+        if controller.pdfView === nsView {
+            guard controller.commitNativeEditing() else { return }
+            controller.pdfView = nil
+        }
+        readerView.controller = nil
     }
 }
 
