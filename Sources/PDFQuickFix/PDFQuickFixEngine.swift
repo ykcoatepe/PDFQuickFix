@@ -281,6 +281,7 @@ final class PDFQuickFixEngine {
         // Scale to pixel space
         ctx.saveGState()
         ctx.scaleBy(x: CGFloat(widthPx) / mediaBox.width, y: CGFloat(heightPx) / mediaBox.height)
+        ctx.translateBy(x: -mediaBox.minX, y: -mediaBox.minY)
         ctx.drawPDFPage(cgPage)
         ctx.restoreGState()
 
@@ -317,8 +318,8 @@ final class PDFQuickFixEngine {
 
         for rect in manualRedactions {
             let converted = CGRect(
-                x: rect.origin.x * scaleX,
-                y: rect.origin.y * scaleY,
+                x: (rect.origin.x - mediaBox.minX) * scaleX,
+                y: (rect.origin.y - mediaBox.minY) * scaleY,
                 width: rect.size.width * scaleX,
                 height: rect.size.height * scaleY
             )
@@ -452,10 +453,9 @@ final class PDFQuickFixEngine {
                 .foregroundColor: NSColor.black,
             ]
             let attributed = NSAttributedString(string: run.replacement, attributes: attrs)
-            // Flip context for text drawing
+            // Core Text shares the bottom-left coordinates of the bitmap.
             editCtx.saveGState()
-            editCtx.translateBy(x: run.rect.minX, y: run.rect.minY + run.rect.height)
-            editCtx.scaleBy(x: 1, y: -1)
+            editCtx.translateBy(x: run.rect.minX, y: run.rect.minY)
             let framesetter = CTFramesetterCreateWithAttributedString(attributed as CFAttributedString)
             let path = CGPath(rect: CGRect(x: 0, y: 0, width: run.rect.width, height: run.rect.height), transform: nil)
             let frame = CTFramesetterCreateFrame(framesetter, CFRange(location: 0, length: attributed.length), path, nil)
@@ -477,14 +477,14 @@ final class PDFQuickFixEngine {
             if localEligible, let provider = localOCRProvider,
                let localRuns = runLocalOCROverlay(provider: provider, image: baseImage)
             {
-                overlayRuns = localRuns
+                overlayRuns = quartzRuns(fromTopLeftRuns: localRuns, image: baseImage)
                 localSucceeded = true
                 ocrSource = .localOCR
             } else {
                 if allowLocalOverlay, let cloudProvider = cloudOCRProvider,
                    let cloudRuns = runCloudOCROverlay(provider: cloudProvider, image: baseImage)
                 {
-                    overlayRuns = cloudRuns
+                    overlayRuns = quartzRuns(fromTopLeftRuns: cloudRuns, image: baseImage)
                     ocrSource = .cloudOCR
                 } else {
                     if visionTextRuns.isEmpty {
@@ -510,10 +510,10 @@ final class PDFQuickFixEngine {
                     continue
                 }
                 let rectPt = CGRect(
-                    x: pixelsToPoints(r.rectInPixels.origin.x, dpi: options.dpi),
-                    y: pixelsToPoints(r.rectInPixels.origin.y, dpi: options.dpi),
-                    width: pixelsToPoints(r.rectInPixels.width, dpi: options.dpi),
-                    height: pixelsToPoints(r.rectInPixels.height, dpi: options.dpi)
+                    x: r.rectInPixels.origin.x / scaleX,
+                    y: r.rectInPixels.origin.y / scaleY,
+                    width: r.rectInPixels.width / scaleX,
+                    height: r.rectInPixels.height / scaleY
                 )
                 runsInPoints.append(RecognizedRun(kind: r.kind, rectInPixels: rectPt))
             }
@@ -574,6 +574,13 @@ final class PDFQuickFixEngine {
             return nil
         }
         return try? result?.get()
+    }
+
+    private func quartzRuns(fromTopLeftRuns runs: [RecognizedRun], image: CGImage) -> [RecognizedRun] {
+        let size = CGSize(width: image.width, height: image.height)
+        return runs.map {
+            RecognizedRun(kind: $0.kind, rectInPixels: topLeftPixelRectToQuartzRect($0.rectInPixels, imageSize: size))
+        }
     }
 
     private func runCloudOCROverlay(provider: CloudOCRProviding, image: CGImage) -> [RecognizedRun]? {

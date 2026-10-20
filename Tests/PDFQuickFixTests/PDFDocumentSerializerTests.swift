@@ -6,6 +6,41 @@ import PDFQuickFixKit
 import XCTest
 
 final class PDFDocumentSerializerTests: XCTestCase {
+    func testLoadedDeepOutlineSavesAndPreservesDeepestEdit() throws {
+        for depth in [600, 1_000] {
+            let source = try reload(rawDeepOutlinePDF(depth: depth))
+            let root = try XCTUnwrap(source.outlineRoot)
+            let baseline = try PDFDocumentSerializer.remoteBaseline(for: source)
+            var leaf = root
+            for _ in 0 ..< depth { leaf = try XCTUnwrap(leaf.child(at: 0)) }
+            XCTAssertEqual(leaf.label, "Level \(depth - 1)")
+            let originalOutput = try syntheticVerifiedWrite(source, baseline: baseline)
+            XCTAssertEqual(try deepOutlineLabels(in: reload(originalOutput)).count, depth)
+
+            leaf.label = "Edited deepest bookmark"
+            let editedOutput = try syntheticVerifiedWrite(source, baseline: baseline)
+            let reloaded = try reload(editedOutput)
+            let labels = try deepOutlineLabels(in: reloaded)
+            XCTAssertEqual(labels.count, depth)
+            XCTAssertEqual(labels.last, "Edited deepest bookmark")
+            XCTAssertEqual(reloaded.pageCount, 1)
+            XCTAssertTrue(source.outlineRoot === root)
+        }
+    }
+
+    func testDeepRemoteOutlineValidationRetainsExactRawTargets() throws {
+        let original = rawDeepOutlinePDF(depth: 1_000, remoteLeaf: true)
+        let source = try XCTUnwrap(SerializationStubDocument(data: original))
+        let baseline = try PDFDocumentSerializer.remoteBaseline(for: source)
+        XCTAssertTrue(baseline.hasRemoteTargets)
+        // Isolate validation from the older native writer's remote-action
+        // capability: a backend returning intact bytes must pass at this depth.
+        source.result = original
+        let output = try syntheticVerifiedWrite(source, baseline: baseline)
+        XCTAssertEqual(output, original)
+        XCTAssertEqual(try deepOutlineLabels(in: reload(output)).count, 1_000)
+    }
+
     func testRemoteFileSpecificationLargeIntegerMismatchCannotReplaceDestination() throws {
         let original = rawRemotePDF(fileExtension: "/Extension 9007199254740992")
         let source = try XCTUnwrap(SerializationStubDocument(data: original))
@@ -102,28 +137,20 @@ final class PDFDocumentSerializerTests: XCTestCase {
     }
 
     func testValidRawRemoteBookmarkPreservesFileSpecificationAndAllXYZOperands() throws {
-        enableSyntheticSerializerDiagnostics()
-        defer { disableSyntheticSerializerDiagnostics() }
+        let original = rawRemotePDF()
+        let intact = try XCTUnwrap(SerializationStubDocument(data: original))
+        intact.result = original
+        let baseline = try PDFDocumentSerializer.remoteBaseline(for: intact)
+        try assertSingleRemoteTarget(syntheticVerifiedWrite(intact, baseline: baseline))
+
         let sourceURL = temporaryURL()
-        try rawRemotePDF().write(to: sourceURL)
+        try original.write(to: sourceURL)
         defer { try? FileManager.default.removeItem(at: sourceURL) }
-        let source = try XCTUnwrap(PDFDocument(url: sourceURL))
-        let baseline = try PDFDocumentSerializer.remoteBaseline(for: source)
-        let output = try syntheticVerifiedWrite(source, baseline: baseline)
-        let reloaded = try reload(output)
-        let action = try firstRawRemoteAction(in: reloaded)
-        var operands: CGPDFArrayRef?
-        XCTAssertTrue(CGPDFDictionaryGetArray(action, "D", &operands))
-        let destination = try XCTUnwrap(operands)
-        XCTAssertEqual(CGPDFArrayGetCount(destination), 5)
-        var zoom: CGPDFReal = 0
-        XCTAssertTrue(CGPDFArrayGetNumber(destination, 4, &zoom))
-        XCTAssertEqual(zoom, 1.25)
-        var fileSpec: CGPDFDictionaryRef?
-        XCTAssertTrue(CGPDFDictionaryGetDictionary(action, "F", &fileSpec))
-        var description: CGPDFStringRef?
-        XCTAssertTrue(CGPDFDictionaryGetString(try XCTUnwrap(fileSpec), "Desc", &description))
-        XCTAssertEqual(CGPDFStringCopyTextString(try XCTUnwrap(description)) as String?, "Remote document")
+        let native = try XCTUnwrap(PDFDocument(url: sourceURL))
+        if let output = try nativeRemoteOutputOrAssertMissingFileRejection(native, expectedCount: 1) {
+            try assertSingleRemoteTarget(output)
+        }
+        XCTAssertEqual(try Data(contentsOf: sourceURL), original)
     }
 
     func testChangedRemoteZoomOrFileSpecificationCannotReplaceDestination() throws {
@@ -150,30 +177,17 @@ final class PDFDocumentSerializerTests: XCTestCase {
     }
 
     func testDuplicateRemoteLabelsWithDifferentRawPagesRetainFullOrderedTargets() throws {
-        enableSyntheticSerializerDiagnostics()
-        defer { disableSyntheticSerializerDiagnostics() }
-        let source = try reload(rawRemotePDF(ambiguousDuplicate: true))
-        XCTAssertThrowsError(try PDFDocumentSerializer.data(from: source), "A bare caller must capture context before edits")
-        let baseline = try PDFDocumentSerializer.remoteBaseline(for: source)
-        let output = try syntheticVerifiedWrite(source, baseline: baseline)
-        let reloaded = try reload(output)
-        XCTAssertEqual(reloaded.outlineRoot?.numberOfChildren, 2)
-        let first = try firstRawRemoteAction(in: reloaded)
-        var destination: CGPDFArrayRef?
-        XCTAssertTrue(CGPDFDictionaryGetArray(first, "D", &destination))
-        var page: CGPDFInteger = -1
-        XCTAssertTrue(CGPDFArrayGetInteger(try XCTUnwrap(destination), 0, &page))
-        XCTAssertEqual(page, 0)
-        let catalog = try XCTUnwrap(reloaded.documentRef?.catalog)
-        var outlines: CGPDFDictionaryRef?
-        var secondNode: CGPDFDictionaryRef?
-        var secondAction: CGPDFDictionaryRef?
-        XCTAssertTrue(CGPDFDictionaryGetDictionary(catalog, "Outlines", &outlines))
-        XCTAssertTrue(CGPDFDictionaryGetDictionary(try XCTUnwrap(outlines), "Last", &secondNode))
-        XCTAssertTrue(CGPDFDictionaryGetDictionary(try XCTUnwrap(secondNode), "A", &secondAction))
-        XCTAssertTrue(CGPDFDictionaryGetArray(try XCTUnwrap(secondAction), "D", &destination))
-        XCTAssertTrue(CGPDFArrayGetInteger(try XCTUnwrap(destination), 0, &page))
-        XCTAssertEqual(page, 7, "The SDK's public GoToR pageIndex may report zero for both targets")
+        let original = rawRemotePDF(ambiguousDuplicate: true)
+        let intact = try XCTUnwrap(SerializationStubDocument(data: original))
+        intact.result = original
+        XCTAssertThrowsError(try PDFDocumentSerializer.data(from: intact), "A bare caller must capture context before edits")
+        let baseline = try PDFDocumentSerializer.remoteBaseline(for: intact)
+        try assertDuplicateRemoteTargets(syntheticVerifiedWrite(intact, baseline: baseline))
+
+        let native = try reload(original)
+        if let output = try nativeRemoteOutputOrAssertMissingFileRejection(native, expectedCount: 2) {
+            try assertDuplicateRemoteTargets(output)
+        }
     }
 
     func testRemoteBaselineRejectsTargetOrderDeletionAndWrongDocument() throws {
@@ -333,73 +347,93 @@ final class PDFDocumentSerializerTests: XCTestCase {
     }
 
     func testDefaultEncryptionAndRestrictedPasswordsSurviveLoadedOutlineEdit() throws {
-        enableSyntheticSerializerDiagnostics()
-        defer { disableSyntheticSerializerDiagnostics() }
-        for keyLength in [40, 128] {
-            print("[serializer-test-context] encryption.\(keyLength == 40 ? "legacy" : "modern").initial-export")
-            let source = try loadedDocument(withOutline: false)
-            let options: [AnyHashable: Any] = [
-                PDFDocumentWriteOption.userPasswordOption: "user-pass",
-                PDFDocumentWriteOption.ownerPasswordOption: "owner-pass",
-                PDFDocumentWriteOption.accessPermissionsOption: NSNumber(value: 2),
-                kCGPDFContextEncryptionKeyLength as String: keyLength,
-            ]
-            let encryptedBytes = try syntheticVerifiedWrite(source, options: options)
-            let encryptionHeader = String(data: encryptedBytes, encoding: .isoLatin1) ?? ""
-            let encryptionObject = try XCTUnwrap(encryptionHeader.components(separatedBy: "endobj").first {
-                $0.range(of: #"/Filter\s*/Standard\b"#, options: .regularExpression) != nil
-            })
-            XCTAssertNotNil(encryptionObject.range(of: "/Length\\s+\(keyLength)\\b", options: .regularExpression))
-            let encrypted = try reload(encryptedBytes)
-            XCTAssertTrue(encrypted.isLocked)
-            XCTAssertFalse(encrypted.unlock(withPassword: "wrong"))
-            XCTAssertTrue(encrypted.unlock(withPassword: "user-pass"))
-            XCTAssertFalse(encrypted.allowsCopying)
-            // Accept a default rewrite only if the original password still works.
-            // This SDK also fails to preserve legacy keys on an unchanged PDF.
-            do {
-                print("[serializer-test-context] encryption.ordinary-save")
-                let unchanged = try reload(try PDFDocumentSerializer.data(from: encrypted, verificationPassword: "user-pass"))
-                XCTAssertTrue(unchanged.unlock(withPassword: "user-pass"))
-            } catch PDFDocumentSerializationError.validationFailed {
-                XCTAssertEqual(keyLength, 40, "Modern encrypted output must remain verifiable")
-            }
-            let root = PDFOutline()
-            root.insertChild(chapter(in: encrypted, title: "Restricted chapter"), at: 0)
-            encrypted.outlineRoot = root
+        try assertEncryptedOutlineRoundtrip(keyLength: 128)
+    }
 
-            if keyLength == 40 {
-                // This PDFKit runtime cannot preserve legacy keys when a full
-                // outline rewrite is needed. Refuse to replace the original.
-                let destination = temporaryURL()
-                try encryptedBytes.write(to: destination)
-                defer { try? FileManager.default.removeItem(at: destination) }
-                do {
-                    print("[serializer-test-context] encryption.legacy-outline-save")
-                    try PDFDocumentSerializer.write(encrypted, to: destination, verificationPassword: "user-pass")
-                    let saved = try reload(Data(contentsOf: destination))
-                    XCTAssertTrue(saved.unlock(withPassword: "user-pass"))
-                    XCTAssertEqual(saved.outlineRoot?.child(at: 0)?.label, "Restricted chapter")
-                } catch PDFDocumentSerializationError.validationFailed {
-                    XCTAssertEqual(try Data(contentsOf: destination), encryptedBytes)
-                }
+    func testLegacyEncryptionPreservesOwnerCredentialOrRejectsNativeOwnerPasswordLoss() throws {
+        let source = try loadedDocument(withOutline: false)
+        let options = encryptionOptions(keyLength: 40)
+        let candidates = try nativeCandidates(from: source, options: options)
+        XCTAssertEqual(candidates.count, 2)
+        let ownerUnlocks = try candidates.map { try reload($0).unlock(withPassword: "owner-pass") }
+        if ownerUnlocks.allSatisfy({ !$0 }) {
+            // The native writer produced encrypted data, but neither write mode
+            // honors the requested owner password. This is an exact refusal case.
+            for data in candidates {
+                let user = try reload(data)
+                XCTAssertTrue(user.isEncrypted)
+                XCTAssertTrue(user.isLocked)
+                XCTAssertFalse(user.unlock(withPassword: "wrong"))
+                XCTAssertTrue(user.unlock(withPassword: "user-pass"))
+                XCTAssertFalse(user.allowsCopying)
+                XCTAssertFalse(try reload(data).unlock(withPassword: "owner-pass"))
             }
-            // Explicit encryption is a separate operation with caller-chosen keys.
-            print("[serializer-test-context] encryption.explicit-outline-export")
-            let output = try syntheticVerifiedWrite(encrypted, options: options)
-            let reloaded = try reload(output)
-            XCTAssertTrue(reloaded.isEncrypted)
-            XCTAssertTrue(reloaded.isLocked)
-            XCTAssertFalse(reloaded.unlock(withPassword: "wrong"))
-            XCTAssertTrue(reloaded.unlock(withPassword: "user-pass"))
-            XCTAssertFalse(reloaded.allowsCopying)
-            XCTAssertTrue(reloaded.allowsPrinting)
-            XCTAssertEqual(reloaded.outlineRoot?.child(at: 0)?.label, "Restricted chapter")
-            let ownerCopy = try reload(output)
-            XCTAssertTrue(ownerCopy.unlock(withPassword: "owner-pass"))
-            XCTAssertTrue(ownerCopy.allowsCopying)
-            XCTAssertTrue(encrypted.outlineRoot === root)
+            try assertValidationRejectionLeavesDestinationUnchanged(source, options: options)
+        } else {
+            try assertEncryptedOutlineRoundtrip(keyLength: 40)
         }
+    }
+
+    private func assertEncryptedOutlineRoundtrip(keyLength: Int) throws {
+        let source = try loadedDocument(withOutline: false)
+        let options: [AnyHashable: Any] = [
+            PDFDocumentWriteOption.userPasswordOption: "user-pass",
+            PDFDocumentWriteOption.ownerPasswordOption: "owner-pass",
+            PDFDocumentWriteOption.accessPermissionsOption: NSNumber(value: 2),
+            kCGPDFContextEncryptionKeyLength as String: keyLength,
+        ]
+        let encryptedBytes = try syntheticVerifiedWrite(source, options: options)
+        let encryptionHeader = String(data: encryptedBytes, encoding: .isoLatin1) ?? ""
+        let encryptionObject = try XCTUnwrap(encryptionHeader.components(separatedBy: "endobj").first {
+            $0.range(of: #"/Filter\s*/Standard\b"#, options: .regularExpression) != nil
+        })
+        XCTAssertNotNil(encryptionObject.range(of: "/Length\\s+\(keyLength)\\b", options: .regularExpression))
+        let encrypted = try reload(encryptedBytes)
+        XCTAssertTrue(encrypted.isLocked)
+        XCTAssertFalse(encrypted.unlock(withPassword: "wrong"))
+        XCTAssertTrue(encrypted.unlock(withPassword: "user-pass"))
+        XCTAssertFalse(encrypted.allowsCopying)
+        // Accept a default rewrite only if the original password still works.
+        // This SDK also fails to preserve legacy keys on an unchanged PDF.
+        do {
+            let unchanged = try reload(try PDFDocumentSerializer.data(from: encrypted, verificationPassword: "user-pass"))
+            XCTAssertTrue(unchanged.unlock(withPassword: "user-pass"))
+        } catch PDFDocumentSerializationError.validationFailed {
+            XCTAssertEqual(keyLength, 40, "Modern encrypted output must remain verifiable")
+        }
+        let root = PDFOutline()
+        root.insertChild(chapter(in: encrypted, title: "Restricted chapter"), at: 0)
+        encrypted.outlineRoot = root
+
+        if keyLength == 40 {
+            // This PDFKit runtime cannot preserve legacy keys when a full
+            // outline rewrite is needed. Refuse to replace the original.
+            let destination = temporaryURL()
+            try encryptedBytes.write(to: destination)
+            defer { try? FileManager.default.removeItem(at: destination) }
+            do {
+                try PDFDocumentSerializer.write(encrypted, to: destination, verificationPassword: "user-pass")
+                let saved = try reload(Data(contentsOf: destination))
+                XCTAssertTrue(saved.unlock(withPassword: "user-pass"))
+                XCTAssertEqual(saved.outlineRoot?.child(at: 0)?.label, "Restricted chapter")
+            } catch PDFDocumentSerializationError.validationFailed {
+                XCTAssertEqual(try Data(contentsOf: destination), encryptedBytes)
+            }
+        }
+        // Explicit encryption is a separate operation with caller-chosen keys.
+        let output = try syntheticVerifiedWrite(encrypted, options: options)
+        let reloaded = try reload(output)
+        XCTAssertTrue(reloaded.isEncrypted)
+        XCTAssertTrue(reloaded.isLocked)
+        XCTAssertFalse(reloaded.unlock(withPassword: "wrong"))
+        XCTAssertTrue(reloaded.unlock(withPassword: "user-pass"))
+        XCTAssertFalse(reloaded.allowsCopying)
+        XCTAssertTrue(reloaded.allowsPrinting)
+        XCTAssertEqual(reloaded.outlineRoot?.child(at: 0)?.label, "Restricted chapter")
+        let ownerCopy = try reload(output)
+        XCTAssertTrue(ownerCopy.unlock(withPassword: "owner-pass"))
+        XCTAssertTrue(ownerCopy.allowsCopying)
+        XCTAssertTrue(encrypted.outlineRoot === root)
     }
 
     func testPreservesTextMetadataPageGeometryFormWidgetsNotesAndLinks() throws {
@@ -534,6 +568,124 @@ final class PDFDocumentSerializerTests: XCTestCase {
         XCTAssertNil(document.outlineRoot)
     }
 
+    private func encryptionOptions(keyLength: Int) -> [AnyHashable: Any] {
+        [PDFDocumentWriteOption.userPasswordOption: "user-pass",
+         PDFDocumentWriteOption.ownerPasswordOption: "owner-pass",
+         PDFDocumentWriteOption.accessPermissionsOption: NSNumber(value: 2),
+         kCGPDFContextEncryptionKeyLength as String: keyLength]
+    }
+
+    private func nativeCandidates(from document: PDFDocument, options: [AnyHashable: Any] = [:]) throws -> [Data] {
+        let root = document.outlineRoot
+        if root == nil { document.outlineRoot = PDFOutline() }
+        defer { if root == nil { document.outlineRoot = root } }
+        var linearized = options
+        linearized[kCGPDFContextCreateLinearizedPDF as String] = true
+        return try [options, linearized].map { try XCTUnwrap(document.dataRepresentation(options: $0)) }
+    }
+
+    private func nativeRemoteOutputOrAssertMissingFileRejection(_ document: PDFDocument, expectedCount: Int) throws -> Data? {
+        let baseline = try PDFDocumentSerializer.remoteBaseline(for: document)
+        let candidates = try nativeCandidates(from: document)
+        let missingFiles = try candidates.map { data -> Bool in
+            let candidate = try reload(data)
+            let actions = try rawTopLevelRemoteActions(in: candidate)
+            guard candidate.pageCount == document.pageCount, actions.count == expectedCount else { return false }
+            return actions.allSatisfy { action in
+                var file: CGPDFObjectRef?
+                return !CGPDFDictionaryGetObject(action, "F", &file)
+            }
+        }
+        if missingFiles.allSatisfy({ $0 }) {
+            // Inspect F independently. A short-circuited production parser does
+            // not establish whether any other operand was lost by PDFKit.
+            XCTAssertEqual(candidates.count, 2)
+            try assertValidationRejectionLeavesDestinationUnchanged(document, baseline: baseline)
+            return nil
+        }
+        return try syntheticVerifiedWrite(document, baseline: baseline)
+    }
+
+    private func rawTopLevelRemoteActions(in document: PDFDocument) throws -> [CGPDFDictionaryRef] {
+        let catalog = try XCTUnwrap(document.documentRef?.catalog)
+        var outlines: CGPDFDictionaryRef?
+        XCTAssertTrue(CGPDFDictionaryGetDictionary(catalog, "Outlines", &outlines))
+        var node: CGPDFDictionaryRef?
+        XCTAssertTrue(CGPDFDictionaryGetDictionary(try XCTUnwrap(outlines), "First", &node))
+        var actions: [CGPDFDictionaryRef] = []
+        var seen: Set<CGPDFDictionaryRef> = []
+        while let current = node {
+            XCTAssertTrue(seen.insert(current).inserted)
+            guard actions.count < 10 else { throw PDFDocumentSerializationError.invalidOutline }
+            var action: CGPDFDictionaryRef?
+            XCTAssertTrue(CGPDFDictionaryGetDictionary(current, "A", &action))
+            let actionDictionary = try XCTUnwrap(action)
+            var type: UnsafePointer<CChar>?
+            XCTAssertTrue(CGPDFDictionaryGetName(actionDictionary, "S", &type))
+            XCTAssertEqual(String(cString: try XCTUnwrap(type)), "GoToR")
+            actions.append(actionDictionary)
+            var next: CGPDFDictionaryRef?
+            _ = CGPDFDictionaryGetDictionary(current, "Next", &next)
+            node = next
+        }
+        return actions
+    }
+
+    private func assertValidationRejectionLeavesDestinationUnchanged(_ document: PDFDocument,
+                                                                    options: [AnyHashable: Any] = [:],
+                                                                    baseline: PDFDocumentSerializer.RemoteOutlineBaseline? = nil) throws {
+        let destination = temporaryURL()
+        let original = Data("Original destination must survive".utf8)
+        try original.write(to: destination)
+        defer { try? FileManager.default.removeItem(at: destination) }
+        let root = document.outlineRoot
+        XCTAssertThrowsError(try PDFDocumentSerializer.write(document, to: destination, options: options, remoteBaseline: baseline)) { error in
+            guard case PDFDocumentSerializationError.validationFailed = error else {
+                return XCTFail("Expected validationFailed for the independently proved defective native candidates, received \(error)")
+            }
+        }
+        XCTAssertEqual(try Data(contentsOf: destination), original)
+        XCTAssertTrue(document.outlineRoot === root)
+    }
+
+    private func assertSingleRemoteTarget(_ output: Data) throws {
+        let reloaded = try reload(output)
+        let action = try firstRawRemoteAction(in: reloaded)
+        var operands: CGPDFArrayRef?
+        XCTAssertTrue(CGPDFDictionaryGetArray(action, "D", &operands))
+        let destination = try XCTUnwrap(operands)
+        XCTAssertEqual(CGPDFArrayGetCount(destination), 5)
+        var zoom: CGPDFReal = 0
+        XCTAssertTrue(CGPDFArrayGetNumber(destination, 4, &zoom))
+        XCTAssertEqual(zoom, 1.25)
+        var fileSpec: CGPDFDictionaryRef?
+        XCTAssertTrue(CGPDFDictionaryGetDictionary(action, "F", &fileSpec))
+        var description: CGPDFStringRef?
+        XCTAssertTrue(CGPDFDictionaryGetString(try XCTUnwrap(fileSpec), "Desc", &description))
+        XCTAssertEqual(CGPDFStringCopyTextString(try XCTUnwrap(description)) as String?, "Remote document")
+    }
+
+    private func assertDuplicateRemoteTargets(_ output: Data) throws {
+        let reloaded = try reload(output)
+        XCTAssertEqual(reloaded.outlineRoot?.numberOfChildren, 2)
+        let first = try firstRawRemoteAction(in: reloaded)
+        var destination: CGPDFArrayRef?
+        XCTAssertTrue(CGPDFDictionaryGetArray(first, "D", &destination))
+        var page: CGPDFInteger = -1
+        XCTAssertTrue(CGPDFArrayGetInteger(try XCTUnwrap(destination), 0, &page))
+        XCTAssertEqual(page, 0)
+        let catalog = try XCTUnwrap(reloaded.documentRef?.catalog)
+        var outlines: CGPDFDictionaryRef?
+        var secondNode: CGPDFDictionaryRef?
+        var secondAction: CGPDFDictionaryRef?
+        XCTAssertTrue(CGPDFDictionaryGetDictionary(catalog, "Outlines", &outlines))
+        XCTAssertTrue(CGPDFDictionaryGetDictionary(try XCTUnwrap(outlines), "Last", &secondNode))
+        XCTAssertTrue(CGPDFDictionaryGetDictionary(try XCTUnwrap(secondNode), "A", &secondAction))
+        XCTAssertTrue(CGPDFDictionaryGetArray(try XCTUnwrap(secondAction), "D", &destination))
+        XCTAssertTrue(CGPDFArrayGetInteger(try XCTUnwrap(destination), 0, &page))
+        XCTAssertEqual(page, 7, "The SDK's public GoToR pageIndex may report zero for both targets")
+    }
+
     /// Preserve the success assertions while proving rejected native candidates
     /// cannot replace an existing destination or mutate the source root.
     private func syntheticVerifiedWrite(_ document: PDFDocument, options: [AnyHashable: Any] = [:],
@@ -550,24 +702,10 @@ final class PDFDocumentSerializerTests: XCTestCase {
         } catch {
             let destinationUnchanged = try Data(contentsOf: destination) == sentinel
             let sourceRootRestored = document.outlineRoot === root
-            print("[serializer-test-context] rejected-candidate.destination-unchanged=\(destinationUnchanged).source-root-restored=\(sourceRootRestored)")
             XCTAssertTrue(destinationUnchanged)
             XCTAssertTrue(sourceRootRestored)
             throw error
         }
-    }
-
-    // Temporary P19 diagnostics are restricted to these known synthetic fixtures.
-    private func enableSyntheticSerializerDiagnostics() {
-        #if DEBUG
-            setenv("PDFQUICKFIX_SYNTHETIC_SERIALIZER_DIAGNOSTICS", "1", 1)
-        #endif
-    }
-
-    private func disableSyntheticSerializerDiagnostics() {
-        #if DEBUG
-            unsetenv("PDFQUICKFIX_SYNTHETIC_SERIALIZER_DIAGNOSTICS")
-        #endif
     }
 
     private func loadedDocument(withOutline: Bool) throws -> PDFDocument {
@@ -610,6 +748,40 @@ final class PDFDocumentSerializerTests: XCTestCase {
         FileManager.default.temporaryDirectory.appendingPathComponent("SerializerTests-\(UUID().uuidString)")
     }
 
+    private func deepOutlineLabels(in document: PDFDocument) throws -> [String] {
+        var parent = try XCTUnwrap(document.outlineRoot)
+        var labels: [String] = []
+        while parent.numberOfChildren > 0 {
+            XCTAssertEqual(parent.numberOfChildren, 1)
+            parent = try XCTUnwrap(parent.child(at: 0))
+            labels.append(try XCTUnwrap(parent.label))
+        }
+        return labels
+    }
+
+    private func rawDeepOutlinePDF(depth: Int, remoteLeaf: Bool = false) -> Data {
+        var objects = [
+            "<< /Type /Catalog /Pages 2 0 R /Outlines 4 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Resources << >> >>",
+            "<< /Type /Outlines /First 5 0 R /Last 5 0 R /Count \(depth) >>",
+        ]
+        for index in 0 ..< depth {
+            let identity = index + 5
+            let parent = index == 0 ? 4 : identity - 1
+            let target: String
+            if index < depth - 1 {
+                target = "/First \(identity + 1) 0 R /Last \(identity + 1) 0 R /Count \(depth - index - 1)"
+            } else if remoteLeaf {
+                target = "/A << /S /GoToR /F (linked.pdf) /D [0 /XYZ 12 34 1.25] >>"
+            } else {
+                target = "/Dest [3 0 R /XYZ 12 34 1.25]"
+            }
+            objects.append("<< /Title (Level \(index)) /Parent \(parent) 0 R \(target) >>")
+        }
+        return rawPDFData(objects: objects)
+    }
+
     private func rawRemotePDF(zoom: String = "1.25", description: String = "Remote document",
                               missingFile: Bool = false, ambiguousDuplicate: Bool = false,
                               invalidCoordinates: Bool = false, outlineCycle: Bool = false,
@@ -632,6 +804,10 @@ final class PDFDocumentSerializerTests: XCTestCase {
         } else if withLocalAddition {
             objects.append("<< /Title (Local addition) /Parent 4 0 R /Prev 5 0 R /Dest [3 0 R /XYZ 20 40 0] >>")
         }
+        return rawPDFData(objects: objects)
+    }
+
+    private func rawPDFData(objects: [String]) -> Data {
         var data = Data("%PDF-1.4\n".utf8)
         var offsets = [0]
         for (index, object) in objects.enumerated() {

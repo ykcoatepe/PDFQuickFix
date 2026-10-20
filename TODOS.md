@@ -11,11 +11,13 @@
 
 - Add stronger outbound-copy workflows around sanitize presets and reviewable exports
 - Add vertical preset packs only where they strengthen the cleanup wedge
+- After QuickFix Save Result, display the saved destination in the receipt instead of the temporary processing path.
 
 ## Repo
 
 - Keep build artifacts out of tracked diffs
 - Continue adding regression coverage around PDF repair, sanitize, and page operations
+- Isolate controller tests from the user's recent-file store so synthetic test documents do not appear in Recent Desk.
 
 ## Completed
 

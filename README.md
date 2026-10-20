@@ -59,6 +59,8 @@ Saves validate the resulting PDF before atomically replacing the destination. Th
 
 Some PDFs with remote-file bookmarks can be saved unchanged but cannot safely persist bookmark edits through PDFKit; those edits are blocked with an explanation. Relative file links remain relative and are not rebased when saving to another folder. Ordinary saves opened with owner access are also blocked when the original user restrictions cannot be verified; use **Export → Encrypted PDF…** to choose protection explicitly. These checks do not certify every PDF feature or digital signature.
 
+PDFKit's write support varies across macOS versions. If it drops a remote bookmark's target or produces an encrypted copy that cannot be opened with a requested password, PDFQuickFix refuses the output and preserves the existing destination. Choosing explicit encryption settings still requires the resulting copy to pass verification.
+
 **Split tab**
 - Split PDFs by **max pages**, **number of parts**, **explicit page breaks**, **target size**, or **outline chapters**
 - Merge multiple PDFs with source reordering, deduplication, blank-page insertion, and safe fallback policies

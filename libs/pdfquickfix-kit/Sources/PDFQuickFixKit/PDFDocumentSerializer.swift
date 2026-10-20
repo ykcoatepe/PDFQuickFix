@@ -120,20 +120,16 @@ public enum PDFDocumentSerializer {
         }
         var failure: PDFDocumentSerializationError = .serializationFailed
         for writeOptions in attempts {
-            let diagnosticMode = writeOptions[linearizedKey] as? Bool == true ? "linearized" : "ordinary"
-            diagnostic("attempt.\(diagnosticMode).begin")
             guard let data = document.dataRepresentation(options: writeOptions),
                   let candidate = PDFDocument(data: data)
-            else { diagnostic("attempt.candidate-open.failed"); continue }
+            else { continue }
             guard candidate.isEncrypted == expectsEncryption,
                   candidate.isLocked == expectsLocked
             else {
-                diagnostic("protection.encryption-equal=\(candidate.isEncrypted == expectsEncryption).lock-equal=\(candidate.isLocked == expectsLocked)")
                 failure = .validationFailed
                 continue
             }
             if candidate.isLocked, !candidate.unlock(withPassword: password ?? "") {
-                diagnostic("candidate-unlock.failed.credential-present=\(password != nil)")
                 // Without a credential a different write mode cannot verify output.
                 guard password != nil else { throw PDFDocumentSerializationError.verificationPasswordRequired }
                 failure = .validationFailed
@@ -148,100 +144,19 @@ public enum PDFDocumentSerializer {
                (candidate.permissionsStatus != document.permissionsStatus
                 || candidate.accessPermissions != document.accessPermissions)
             {
-                diagnostic("implicit-permissions.status-equal=\(candidate.permissionsStatus == document.permissionsStatus).access-equal=\(candidate.accessPermissions == document.accessPermissions)")
                 failure = .validationFailed
                 continue
             }
-            let candidateOutline = try? outlineEntries(in: candidate)
-            let candidateRemotes = try? remoteTargets(in: candidate)
             guard candidate.pageCount == document.pageCount,
-                  candidateOutline == expectedOutline,
-                  candidateRemotes == expectedRemotes
+                  (try? outlineEntries(in: candidate)) == expectedOutline,
+                  (try? remoteTargets(in: candidate)) == expectedRemotes
             else {
-                diagnostic("content.pages-equal=\(candidate.pageCount == document.pageCount).outline-readable=\(candidateOutline != nil).outline-equal=\(candidateOutline == expectedOutline).remotes-readable=\(candidateRemotes != nil).remotes-equal=\(candidateRemotes == expectedRemotes)")
-                if let candidateOutline { diagnoseOutline(expectedOutline, candidateOutline) }
-                if let candidateRemotes {
-                    diagnostic("remote-count.equal=\(expectedRemotes.count == candidateRemotes.count)")
-                    for (expected, actual) in zip(expectedRemotes, candidateRemotes) where expected != actual {
-                        diagnostic("remote-difference.\(rawDifference(expected.action, actual.action))")
-                        break
-                    }
-                }
                 failure = .validationFailed
                 continue
             }
-            diagnostic("attempt.accepted")
             return data
         }
         throw failure
-    }
-
-    // TEMPORARY P19 CI diagnosis. Enabled only by the three synthetic tests in
-    // DEBUG builds; categories/booleans only, never document values or credentials.
-    private static func diagnostic(_ category: @autoclosure () -> String) {
-        #if DEBUG
-            if getenv("PDFQUICKFIX_SYNTHETIC_SERIALIZER_DIAGNOSTICS") != nil {
-                print("[serializer-diagnostic] \(category())")
-            }
-        #endif
-    }
-
-    private static func diagnosticInvalidOutline(_ category: String) -> PDFDocumentSerializationError {
-        diagnostic("guard.\(category)")
-        return .invalidOutline
-    }
-
-    private static func diagnoseRemoteShape(file: CGPDFObjectRef?, operands: CGPDFObjectRef?, array: CGPDFArrayRef?) {
-        #if DEBUG
-            guard getenv("PDFQUICKFIX_SYNTHETIC_SERIALIZER_DIAGNOSTICS") != nil else { return }
-            var page: CGPDFInteger = -1
-            let pageIsInteger = array.map { CGPDFArrayGetInteger($0, 0, &page) } ?? false
-            diagnostic("remote.target.file-present=\(file != nil).destination-present=\(operands != nil).array-present=\(array != nil).operand-minimum=\(array.map { CGPDFArrayGetCount($0) >= 2 } ?? false).page-integer=\(pageIsInteger).page-nonnegative=\(pageIsInteger && page >= 0).filename-readable=\(file.flatMap(remoteFileName) != nil)")
-        #endif
-    }
-
-    private static func diagnoseOutline(_ expected: [Entry], _ actual: [Entry]) {
-        diagnostic("outline-count.equal=\(expected.count == actual.count)")
-        for (lhs, rhs) in zip(expected, actual) where lhs != rhs {
-            diagnostic("outline.depth-equal=\(lhs.depth == rhs.depth).label-equal=\(lhs.label == rhs.label).action-equal=\(lhs.action == rhs.action)")
-            if case let .destination(left) = lhs.action, case let .destination(right) = rhs.action {
-                diagnostic("destination.page-equal=\(left.page == right.page).x-equal=\(left.point.x == right.point.x).y-equal=\(left.point.y == right.point.y).zoom-equal=\(left.zoom == right.zoom)")
-            } else {
-                diagnostic("outline.action-category-equal=\(actionCategory(lhs.action) == actionCategory(rhs.action))")
-            }
-            break
-        }
-    }
-
-    private static func actionCategory(_ action: Action) -> String {
-        switch action {
-        case .none: "none"
-        case .destination: "destination"
-        case .url: "url"
-        case .remote: "remote"
-        }
-    }
-
-    private static func rawDifference(_ lhs: RawValue, _ rhs: RawValue) -> String {
-        switch (lhs, rhs) {
-        case let (.dictionary(left), .dictionary(right)):
-            guard Set(left.keys) == Set(right.keys) else { return "dictionary.keys" }
-            for key in left.keys.sorted() where left[key] != right[key] {
-                return "dictionary.child." + rawDifference(left[key]!, right[key]!)
-            }
-        case let (.array(left), .array(right)):
-            guard left.count == right.count else { return "array.count" }
-            for (left, right) in zip(left, right) where left != right { return "array.child." + rawDifference(left, right) }
-        case (.integer, .real), (.real, .integer): return "integer-real-kind"
-        case (.integer, .integer): return "integer.value"
-        case (.real, .real): return "real.value"
-        case (.boolean, .boolean): return "boolean.value"
-        case (.name, .name): return "name.value"
-        case (.string, .string): return "string.bytes"
-        case (.null, .null): return "equal"
-        default: return "kind"
-        }
-        return "equal"
     }
 
     /// Verify each supplied credential independently. Owner unlocking must grant
@@ -249,10 +164,7 @@ public enum PDFDocumentSerializer {
     /// supersets before an owner credential can elevate that candidate's access.
     private static func validatesEncryption(_ data: Data, userPassword: String?, ownerPassword: String?,
                                             options: [AnyHashable: Any]) -> Bool {
-        guard let user = PDFDocument(data: data), user.unlock(withPassword: userPassword ?? "") else {
-            diagnostic("explicit-encryption.user-unlock.failed")
-            return false
-        }
+        guard let user = PDFDocument(data: data), user.unlock(withPassword: userPassword ?? "") else { return false }
         if let requested = options[PDFDocumentWriteOption.accessPermissionsOption] as? NSNumber {
             var permissions = requested.uintValue
             guard permissions & ~UInt(255) == 0 else { return false }
@@ -260,24 +172,11 @@ public enum PDFDocumentSerializer {
             if permissions & (1 << 2) != 0 { permissions |= (1 << 6) | (1 << 7) }
             if permissions & (1 << 4) != 0 { permissions |= 1 << 5 }
             if permissions & (1 << 6) != 0 { permissions |= 1 << 7 }
-            guard user.accessPermissions.rawValue == permissions else {
-                diagnostic("explicit-encryption.requested-permissions.match=false")
-                return false
-            }
+            guard user.accessPermissions.rawValue == permissions else { return false }
         }
         if let ownerPassword, !ownerPassword.isEmpty {
-            guard let owner = PDFDocument(data: data) else {
-                diagnostic("explicit-encryption.owner-open.failed")
-                return false
-            }
-            guard owner.unlock(withPassword: ownerPassword) else {
-                diagnostic("explicit-encryption.owner-unlock.failed")
-                return false
-            }
-            guard owner.permissionsStatus == .owner else {
-                diagnostic("explicit-encryption.owner-status.failed.is-user=\(owner.permissionsStatus == .user).is-none=\(owner.permissionsStatus == .none)")
-                return false
-            }
+            guard let owner = PDFDocument(data: data), owner.unlock(withPassword: ownerPassword),
+                  owner.permissionsStatus == .owner else { return false }
         }
         return true
     }
@@ -371,7 +270,7 @@ public enum PDFDocumentSerializer {
         var visited: Set<ObjectIdentifier> = []
         var nodes: [(PDFOutline, Int)] = []
         while let (outline, depth) = pending.popLast() {
-            guard depth < 512, visited.count < 100_000,
+            guard visited.count < 100_000,
                   visited.insert(ObjectIdentifier(outline)).inserted else {
                 throw PDFDocumentSerializationError.invalidOutline
             }
@@ -428,8 +327,8 @@ public enum PDFDocumentSerializer {
         var seen: Set<CGPDFDictionaryRef> = []
         var targets: [RemoteDestination] = []
         while let (node, depth) = pending.popLast() {
-            guard depth < 512, seen.count < 100_000, seen.insert(node).inserted else {
-                throw diagnosticInvalidOutline("remote.traversal")
+            guard seen.count < 100_000, seen.insert(node).inserted else {
+                throw PDFDocumentSerializationError.invalidOutline
             }
             var next: CGPDFDictionaryRef?
             if CGPDFDictionaryGetDictionary(node, "Next", &next), let next { pending.append((next, depth)) }
@@ -450,21 +349,15 @@ public enum PDFDocumentSerializer {
                   CGPDFObjectGetValue(operands, .array, &array), let array,
                   CGPDFArrayGetCount(array) >= 2, CGPDFArrayGetInteger(array, 0, &page), page >= 0,
                   remoteFileName(file) != nil
-            else {
-                diagnoseRemoteShape(file: file, operands: operands, array: array)
-                throw diagnosticInvalidOutline("remote.target-shape")
-            }
+            else { throw PDFDocumentSerializationError.invalidOutline }
             var active: Set<CGPDFObjectRef> = []
             var remaining = 10_000
             let rawAction = try rawValue(actionObject, active: &active, remaining: &remaining)
             guard case let .dictionary(values) = rawAction,
                   Set(values.keys).isSubset(of: ["Type", "S", "F", "D", "NewWindow"])
-            else {
-                diagnostic("remote.action-fields.unsupported")
-                throw PDFDocumentSerializationError.unsupportedOutlineAction("GoToR action fields")
-            }
+            else { throw PDFDocumentSerializationError.unsupportedOutlineAction("GoToR action fields") }
             if let window = values["NewWindow"], case .boolean = window {} else if values["NewWindow"] != nil {
-                throw diagnosticInvalidOutline("remote.new-window-type")
+                throw PDFDocumentSerializationError.invalidOutline
             }
             let signature = RemoteDestination(action: rawAction)
             _ = try remotePoint(array)
@@ -475,7 +368,7 @@ public enum PDFDocumentSerializer {
 
     private static func remotePoint(_ operands: CGPDFArrayRef) throws -> CGPoint? {
         var name: UnsafePointer<CChar>?
-        guard CGPDFArrayGetName(operands, 1, &name), let name else { throw diagnosticInvalidOutline("remote.view-name") }
+        guard CGPDFArrayGetName(operands, 1, &name), let name else { throw PDFDocumentSerializationError.invalidOutline }
         let view = String(cString: name)
         let requiredCount: Int
         switch view {
@@ -483,11 +376,9 @@ public enum PDFDocumentSerializer {
         case "Fit", "FitB": requiredCount = 2
         case "FitH", "FitV", "FitBH", "FitBV": requiredCount = 3
         case "FitR": requiredCount = 6
-        default:
-            diagnostic("remote.view-kind.unsupported")
-            throw PDFDocumentSerializationError.unsupportedOutlineAction("GoToR view")
+        default: throw PDFDocumentSerializationError.unsupportedOutlineAction("GoToR view")
         }
-        guard CGPDFArrayGetCount(operands) == requiredCount else { throw diagnosticInvalidOutline("remote.view-operand-count") }
+        guard CGPDFArrayGetCount(operands) == requiredCount else { throw PDFDocumentSerializationError.invalidOutline }
         var coordinates: [CGFloat] = []
         for index in 2 ..< requiredCount {
             var value: CGPDFReal = 0
@@ -496,7 +387,7 @@ public enum PDFDocumentSerializer {
             } else {
                 var object: CGPDFObjectRef?
                 guard view != "FitR", CGPDFArrayGetObject(operands, index, &object), let object,
-                      CGPDFObjectGetType(object) == .null else { throw diagnosticInvalidOutline("remote.view-coordinate-type") }
+                      CGPDFObjectGetType(object) == .null else { throw PDFDocumentSerializationError.invalidOutline }
                 coordinates.append(kPDFDestinationUnspecifiedValue)
             }
         }
@@ -531,7 +422,7 @@ public enum PDFDocumentSerializer {
     {
         let identity = object
         guard depth < 32, remaining > 0, active.insert(identity).inserted else {
-            throw diagnosticInvalidOutline("raw.recursion-budget-or-cycle")
+            throw PDFDocumentSerializationError.invalidOutline
         }
         remaining -= 1
         defer { active.remove(identity) }
@@ -539,42 +430,42 @@ public enum PDFDocumentSerializer {
         case .null: return .null
         case .boolean:
             var value: CGPDFBoolean = 0
-            guard CGPDFObjectGetValue(object, .boolean, &value) else { throw diagnosticInvalidOutline("raw.boolean-read") }
+            guard CGPDFObjectGetValue(object, .boolean, &value) else { throw PDFDocumentSerializationError.invalidOutline }
             return .boolean(value != 0)
         case .integer:
             var value: CGPDFInteger = 0
-            guard CGPDFObjectGetValue(object, .integer, &value) else { throw diagnosticInvalidOutline("raw.integer-read") }
+            guard CGPDFObjectGetValue(object, .integer, &value) else { throw PDFDocumentSerializationError.invalidOutline }
             return .integer(value)
         case .real:
             var value: CGPDFReal = 0
-            guard CGPDFObjectGetValue(object, .real, &value), value.isFinite else { throw diagnosticInvalidOutline("raw.real-read-or-nonfinite") }
+            guard CGPDFObjectGetValue(object, .real, &value), value.isFinite else { throw PDFDocumentSerializationError.invalidOutline }
             return .real(value)
         case .name:
             var value: UnsafePointer<CChar>?
             guard CGPDFObjectGetValue(object, .name, &value), let value,
-                  let name = asciiName(value) else { throw diagnosticInvalidOutline("raw.name-read-or-nonascii") }
+                  let name = asciiName(value) else { throw PDFDocumentSerializationError.invalidOutline }
             return .name(name)
         case .string:
             var value: CGPDFStringRef?
-            guard CGPDFObjectGetValue(object, .string, &value), let value else { throw diagnosticInvalidOutline("raw.string-read") }
+            guard CGPDFObjectGetValue(object, .string, &value), let value else { throw PDFDocumentSerializationError.invalidOutline }
             let length = CGPDFStringGetLength(value)
             guard length > 0 else { return .string(Data()) }
-            guard let bytes = CGPDFStringGetBytePtr(value) else { throw diagnosticInvalidOutline("raw.string-bytes") }
+            guard let bytes = CGPDFStringGetBytePtr(value) else { throw PDFDocumentSerializationError.invalidOutline }
             return .string(Data(bytes: bytes, count: length))
         case .array:
             var value: CGPDFArrayRef?
-            guard CGPDFObjectGetValue(object, .array, &value), let value else { throw diagnosticInvalidOutline("raw.array-read") }
+            guard CGPDFObjectGetValue(object, .array, &value), let value else { throw PDFDocumentSerializationError.invalidOutline }
             var values: [RawValue] = []
             for index in 0 ..< CGPDFArrayGetCount(value) {
                 var element: CGPDFObjectRef?
-                guard CGPDFArrayGetObject(value, index, &element), let element else { throw diagnosticInvalidOutline("raw.array-element-read") }
+                guard CGPDFArrayGetObject(value, index, &element), let element else { throw PDFDocumentSerializationError.invalidOutline }
                 values.append(try rawValue(element, active: &active, remaining: &remaining, depth: depth + 1))
             }
             return .array(values)
         case .dictionary:
             var value: CGPDFDictionaryRef?
-            guard CGPDFObjectGetValue(object, .dictionary, &value), let value else { throw diagnosticInvalidOutline("raw.dictionary-read") }
-            guard CGPDFDictionaryGetCount(value) <= remaining else { throw diagnosticInvalidOutline("raw.dictionary-budget") }
+            guard CGPDFObjectGetValue(object, .dictionary, &value), let value else { throw PDFDocumentSerializationError.invalidOutline }
+            guard CGPDFDictionaryGetCount(value) <= remaining else { throw PDFDocumentSerializationError.invalidOutline }
             var pairs: [(String?, CGPDFObjectRef)] = []
             withUnsafeMutablePointer(to: &pairs) { pointer in
                 CGPDFDictionaryApplyFunction(value, { key, value, context in
@@ -583,12 +474,12 @@ public enum PDFDocumentSerializer {
             }
             var values: [String: RawValue] = [:]
             for (key, element) in pairs {
-                guard let key, values[key] == nil else { throw diagnosticInvalidOutline("raw.dictionary-key-nonascii-or-collision") }
+                guard let key, values[key] == nil else { throw PDFDocumentSerializationError.invalidOutline }
                 values[key] = try rawValue(element, active: &active, remaining: &remaining, depth: depth + 1)
             }
             return .dictionary(values)
         default:
-            throw diagnosticInvalidOutline("raw.unsupported-object-type")
+            throw PDFDocumentSerializationError.invalidOutline
         }
     }
 }
