@@ -126,6 +126,92 @@ final class LargeDocumentHandlingTests: XCTestCase {
         XCTAssertFalse(result.isTruncated)
     }
 
+    func testOutlineLoaderTraversesDeepChainWithoutUsingCallStack() {
+        // Weak synthetic links avoid PDFKit's own tree-construction and teardown
+        // recursion. The fixture isolates the loader's traversal of a deep PDF.
+        let depth = 50_000
+        let nodes = (0 ... depth).map { _ in DeepOutlineNode() }
+        for index in 0 ..< depth { nodes[index].next = nodes[index + 1] }
+
+        let result = PDFOutlineLoader.rows(from: nodes[0])
+
+        XCTAssertEqual(result.rows.count, depth)
+        XCTAssertFalse(result.isTruncated)
+        for (index, row) in result.rows.enumerated() {
+            XCTAssertEqual(row.depth, index)
+            XCTAssertTrue(row.outline === nodes[index + 1])
+        }
+        withExtendedLifetime(nodes) {}
+    }
+
+    func testOutlineLoaderDeepChainPreservesExplicitLimitSemantics() {
+        let nodes = (0 ... 1_000).map { _ in DeepOutlineNode() }
+        for index in 0 ..< nodes.count - 1 { nodes[index].next = nodes[index + 1] }
+
+        let limited = PDFOutlineLoader.rows(from: nodes[0], limit: 500)
+        XCTAssertEqual(limited.rows.count, 500)
+        XCTAssertEqual(limited.rows.last?.depth, 499)
+        XCTAssertTrue(limited.rows.last?.outline === nodes[500])
+        XCTAssertTrue(limited.isTruncated)
+
+        let exact = PDFOutlineLoader.rows(from: nodes[0], limit: 1_000)
+        XCTAssertEqual(exact.rows.count, 1_000)
+        XCTAssertFalse(exact.isTruncated)
+        XCTAssertTrue(PDFOutlineLoader.rows(from: nodes[0], limit: 0).isTruncated)
+        XCTAssertTrue(PDFOutlineLoader.rows(from: nodes[0], limit: -1).isTruncated)
+        XCTAssertFalse(PDFOutlineLoader.rows(from: nodes.last, limit: 0).isTruncated)
+        withExtendedLifetime(nodes) {}
+    }
+
+    func testOutlineLoaderSkipsRootSelfCycleAndPreservesValidSibling() {
+        let root = GraphOutlineNode()
+        let sibling = GraphOutlineNode()
+        root.children = [WeakOutlineLink(root), WeakOutlineLink(sibling)]
+
+        let result = PDFOutlineLoader.rows(from: root)
+
+        XCTAssertEqual(result.rows.count, 1)
+        XCTAssertTrue(result.rows.first?.outline === sibling)
+        XCTAssertEqual(result.rows.first?.depth, 0)
+        XCTAssertTrue(result.isTruncated, "A repeated edge makes the outline incomplete")
+        withExtendedLifetime((root, sibling)) {}
+    }
+
+    func testOutlineLoaderSkipsTwoNodeCycleAndPreservesNestedAndRootSiblings() {
+        let root = GraphOutlineNode()
+        let first = GraphOutlineNode()
+        let second = GraphOutlineNode()
+        let nestedSibling = GraphOutlineNode()
+        let rootSibling = GraphOutlineNode()
+        root.children = [WeakOutlineLink(first), WeakOutlineLink(rootSibling)]
+        first.children = [WeakOutlineLink(second)]
+        second.children = [WeakOutlineLink(first), WeakOutlineLink(nestedSibling)]
+
+        let result = PDFOutlineLoader.rows(from: root)
+
+        XCTAssertEqual(result.rows.map(\.id), [first, second, nestedSibling, rootSibling].map { ObjectIdentifier($0) })
+        XCTAssertEqual(result.rows.map(\.depth), [0, 1, 2, 0])
+        XCTAssertTrue(result.isTruncated)
+        let limited = PDFOutlineLoader.rows(from: root, limit: 3)
+        XCTAssertEqual(limited.rows.map(\.id), [first, second, nestedSibling].map { ObjectIdentifier($0) })
+        XCTAssertTrue(limited.isTruncated)
+        withExtendedLifetime((root, first, second, nestedSibling, rootSibling)) {}
+    }
+
+    func testOutlineLoaderSkipsRepeatedSharedNodeAndPreservesValidSibling() {
+        let root = GraphOutlineNode()
+        let repeated = GraphOutlineNode()
+        let sibling = GraphOutlineNode()
+        root.children = [WeakOutlineLink(repeated), WeakOutlineLink(repeated), WeakOutlineLink(sibling)]
+
+        let result = PDFOutlineLoader.rows(from: root)
+
+        XCTAssertEqual(result.rows.map(\.id), [repeated, sibling].map { ObjectIdentifier($0) })
+        XCTAssertEqual(result.rows.map(\.depth), [0, 0])
+        XCTAssertTrue(result.isTruncated)
+        withExtendedLifetime((root, repeated, sibling)) {}
+    }
+
     func testReaderLoadsCompleteMassiveOutlineOnDemand() throws {
         let controller = ReaderControllerPro()
         let document = try makeDocumentWithOutline(pageCount: DocumentValidationRunner.massiveDocumentPageThreshold,
@@ -227,4 +313,28 @@ final class LargeDocumentHandlingTests: XCTestCase {
         document.outlineRoot = root
         return document
     }
+}
+
+private final class DeepOutlineNode: PDFOutline {
+    weak var next: PDFOutline?
+
+    override var numberOfChildren: Int { next == nil ? 0 : 1 }
+
+    override func child(at index: Int) -> PDFOutline? { index == 0 ? next : nil }
+}
+
+private final class GraphOutlineNode: PDFOutline {
+    var children: [WeakOutlineLink] = []
+
+    override var numberOfChildren: Int { children.count }
+
+    override func child(at index: Int) -> PDFOutline? {
+        children.indices.contains(index) ? children[index].outline : nil
+    }
+}
+
+private final class WeakOutlineLink {
+    weak var outline: PDFOutline?
+
+    init(_ outline: PDFOutline) { self.outline = outline }
 }

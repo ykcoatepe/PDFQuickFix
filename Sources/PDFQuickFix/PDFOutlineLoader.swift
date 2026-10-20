@@ -19,28 +19,34 @@ enum PDFOutlineLoader {
 
         var rows: [OutlineRow] = []
         rows.reserveCapacity(min(maxRows, max(root.numberOfChildren, 0)))
-        var didHitLimit = false
-
-        func append(_ item: PDFOutline, depth: Int) {
+        var visited: Set<ObjectIdentifier> = [ObjectIdentifier(root)]
+        var isTruncated = false
+        // Retain one cursor per ancestor instead of recursing on PDF-controlled
+        // depth. Visiting children in ascending order preserves depth-first rows.
+        var ancestors: [(parent: PDFOutline, nextChild: Int, childDepth: Int)] = [(root, 0, 0)]
+        while !ancestors.isEmpty {
+            let index = ancestors.count - 1
+            let cursor = ancestors[index]
+            guard cursor.nextChild < cursor.parent.numberOfChildren else {
+                ancestors.removeLast()
+                continue
+            }
+            ancestors[index].nextChild += 1
+            guard let child = cursor.parent.child(at: cursor.nextChild) else { continue }
+            guard visited.insert(ObjectIdentifier(child)).inserted else {
+                // Malformed cyclic/shared edges cannot yield a complete tree,
+                // but must not prevent valid later siblings from being loaded.
+                isTruncated = true
+                continue
+            }
+            // Only a real additional row makes an exact explicit limit truncated.
             guard rows.count < maxRows else {
-                didHitLimit = true
-                return
+                return OutlineLoadResult(rows: rows, isTruncated: true)
             }
-
-            rows.append(OutlineRow(outline: item, depth: depth))
-            for childIndex in 0 ..< item.numberOfChildren {
-                guard let child = item.child(at: childIndex) else { continue }
-                append(child, depth: depth + 1)
-                if didHitLimit { return }
-            }
+            rows.append(OutlineRow(outline: child, depth: cursor.childDepth))
+            ancestors.append((child, 0, cursor.childDepth + 1))
         }
 
-        for childIndex in 0 ..< root.numberOfChildren {
-            guard let child = root.child(at: childIndex) else { continue }
-            append(child, depth: 0)
-            if didHitLimit { break }
-        }
-
-        return OutlineLoadResult(rows: rows, isTruncated: didHitLimit)
+        return OutlineLoadResult(rows: rows, isTruncated: isTruncated)
     }
 }
