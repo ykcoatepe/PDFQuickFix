@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reader and Studio track native form and application edits, protect document/window close and quit with Save / Don't Save / Cancel, and retain edits if a replacement cannot open.
 - Pending native text edits are committed before asynchronous document replacement or workbench changes. Cancelled or failed saves cannot authorize closing a dirty document.
 - Save and export paths validate supported outline destinations, page counts, encryption and permission preservation before replacing a destination. Unsupported remote-bookmark edits and unverifiable owner-access saves now fail without overwriting the destination.
+- Remote bookmark validation accepts supported named destinations as well as explicit page destinations, while preserving their original type and exact value.
 - Editable sanitization reliably removes outlines; removed bookmark entries no longer reappear during PDFKit serialization.
 - QuickFix now aligns Vision redaction and replacement rectangles with the visible page. Local/cloud OCR overlays are converted from their top-left coordinates, and manual rectangles account for nonzero page origins.
 - Search callbacks from cleared queries or previous documents are ignored, and Reader's page counter follows native navigation and resets on close.

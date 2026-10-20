@@ -6,6 +6,102 @@ import PDFQuickFixKit
 import XCTest
 
 final class PDFDocumentSerializerTests: XCTestCase {
+    func testNamedRemoteDestinationPreservesRawTypeAndExactBytes() throws {
+        let stringBytes = Data([0x00, 0x41, 0x70, 0x70, 0x65, 0x6E, 0x64, 0x69, 0x78, 0xFF, 0x00])
+        let cases: [(String, String?, Data?)] = [
+            ("/Appendix#20A", "Appendix A", nil),
+            ("<00417070656e646978ff00>", nil, stringBytes),
+        ]
+        for (operand, name, bytes) in cases {
+            let original = rawRemotePDF(destination: operand)
+            let source = try XCTUnwrap(SerializationStubDocument(data: original))
+            let root = source.outlineRoot
+            let baseline = try PDFDocumentSerializer.remoteBaseline(for: source)
+            XCTAssertTrue(baseline.hasRemoteTargets)
+            source.result = original
+
+            let output = try syntheticVerifiedWrite(source, baseline: baseline)
+
+            XCTAssertEqual(output, original)
+            XCTAssertTrue(source.outlineRoot === root)
+            let reloaded = try reload(output)
+            let action = try firstRawRemoteAction(in: reloaded)
+            var destination: CGPDFObjectRef?
+            XCTAssertTrue(CGPDFDictionaryGetObject(action, "D", &destination))
+            let rawDestination = try XCTUnwrap(destination)
+            if let name {
+                XCTAssertEqual(CGPDFObjectGetType(rawDestination), .name)
+                var value: UnsafePointer<CChar>?
+                XCTAssertTrue(CGPDFObjectGetValue(rawDestination, .name, &value))
+                XCTAssertEqual(String(cString: try XCTUnwrap(value)), name)
+            } else {
+                XCTAssertEqual(CGPDFObjectGetType(rawDestination), .string)
+                var value: CGPDFStringRef?
+                XCTAssertTrue(CGPDFObjectGetValue(rawDestination, .string, &value))
+                let string = try XCTUnwrap(value)
+                let pointer = try XCTUnwrap(CGPDFStringGetBytePtr(string))
+                XCTAssertEqual(Data(bytes: pointer, count: CGPDFStringGetLength(string)), bytes)
+            }
+        }
+    }
+
+    func testNamedRemoteTargetCorruptionAndTypeChangesCannotReplaceDestination() throws {
+        let cases = [
+            ("/Appendix#20A", "/Appendix#20B"),
+            ("<00417070656e646978ff00>", "<00417070656e646978fe00>"),
+            ("/Appendix", "(Appendix)"),
+            ("(Appendix)", "/Appendix"),
+            ("/Appendix", "[0 /XYZ 12 34 1.25]"),
+            ("/Appendix", "null"),
+            ("/Appendix", "0"),
+            ("/Appendix", "<< /Unexpected true >>"),
+        ]
+        for (originalTarget, changedTarget) in cases {
+            let source = try XCTUnwrap(SerializationStubDocument(data: rawRemotePDF(destination: originalTarget)))
+            let baseline = try PDFDocumentSerializer.remoteBaseline(for: source)
+            source.result = rawRemotePDF(destination: changedTarget)
+
+            try assertValidationRejectionLeavesDestinationUnchanged(source, baseline: baseline)
+        }
+    }
+
+    func testNamedRemoteDestinationsRetainBaselineIdentityAndNameGuards() throws {
+        for target in ["/Appendix", "<00ff0041>"] {
+            let original = rawRemotePDF(destination: target)
+            let source = try XCTUnwrap(SerializationStubDocument(data: original))
+            let baseline = try PDFDocumentSerializer.remoteBaseline(for: source)
+            let other = try XCTUnwrap(SerializationStubDocument(data: original))
+            other.result = original
+            let destination = temporaryURL()
+            let sentinel = Data("Keep named-target destination".utf8)
+            try sentinel.write(to: destination)
+            defer { try? FileManager.default.removeItem(at: destination) }
+            XCTAssertThrowsError(try PDFDocumentSerializer.write(other, to: destination, remoteBaseline: baseline)) { error in
+                guard case PDFDocumentSerializationError.remoteOutlineVerificationRequired = error else {
+                    return XCTFail("Expected exact-document baseline rejection, received \(error)")
+                }
+            }
+            XCTAssertEqual(try Data(contentsOf: destination), sentinel)
+            let node = try XCTUnwrap(source.outlineRoot?.child(at: 0))
+            let action = try XCTUnwrap(node.action as? PDFActionRemoteGoTo)
+            let replacement = try XCTUnwrap(action.copy() as? PDFActionRemoteGoTo)
+            XCTAssertFalse(replacement === action)
+            node.action = replacement
+            source.result = original
+            XCTAssertThrowsError(try PDFDocumentSerializer.write(source, to: destination, remoteBaseline: baseline)) { error in
+                guard case PDFDocumentSerializationError.remoteOutlineVerificationRequired = error else {
+                    return XCTFail("Expected action-identity baseline rejection, received \(error)")
+                }
+            }
+            XCTAssertEqual(try Data(contentsOf: destination), sentinel)
+            XCTAssertTrue(node.action === replacement)
+        }
+        for target in ["/Caf#C3#A9", "/Cafe#CC#81", "/X#FF", "true", "null", "0", "<< >>"] {
+            let source = try reload(rawRemotePDF(destination: target))
+            XCTAssertThrowsError(try PDFDocumentSerializer.remoteBaseline(for: source))
+        }
+    }
+
     func testLoadedDeepOutlineSavesAndPreservesDeepestEdit() throws {
         for depth in [600, 1_000] {
             let source = try reload(rawDeepOutlinePDF(depth: depth))
@@ -786,17 +882,18 @@ final class PDFDocumentSerializerTests: XCTestCase {
                               missingFile: Bool = false, ambiguousDuplicate: Bool = false,
                               invalidCoordinates: Bool = false, outlineCycle: Bool = false,
                               withLocalAddition: Bool = false, fileExtension: String = "",
-                              actionExtension: String = "") -> Data
+                              actionExtension: String = "", destination: String? = nil) -> Data
     {
         let file = missingFile ? "" : "/F << /Type /Filespec /F (../other/linked.pdf) /UF (../other/linked.pdf) /Desc (\(description)) \(fileExtension) >>"
         let coordinates = invalidCoordinates ? "/Invalid" : "12"
+        let destinationOperand = destination ?? "[0 /XYZ \(coordinates) 34 \(zoom)]"
         var objects = [
             "<< /Type /Catalog /Pages 2 0 R /Outlines 4 0 R >>",
             "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
             "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Resources << >> >>",
             "<< /Type /Outlines /First 5 0 R /Last \(ambiguousDuplicate || withLocalAddition ? 7 : 5) 0 R /Count \(ambiguousDuplicate || withLocalAddition ? 2 : 1) >>",
             "<< /Title (Remote) /Parent 4 0 R /A 6 0 R \(ambiguousDuplicate || withLocalAddition ? "/Next 7 0 R" : outlineCycle ? "/Next 5 0 R" : "") >>",
-            "<< /S /GoToR \(file) /D [0 /XYZ \(coordinates) 34 \(zoom)] \(actionExtension) >>",
+            "<< /S /GoToR \(file) /D \(destinationOperand) \(actionExtension) >>",
         ]
         if ambiguousDuplicate {
             objects.append("<< /Title (Remote) /Parent 4 0 R /Prev 5 0 R /A 8 0 R >>")

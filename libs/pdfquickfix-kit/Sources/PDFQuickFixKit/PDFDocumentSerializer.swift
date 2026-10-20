@@ -342,14 +342,26 @@ public enum PDFDocumentSerializer {
             guard CGPDFDictionaryGetName(action, "S", &type), let type, String(cString: type) == "GoToR" else { continue }
             var file: CGPDFObjectRef?
             var operands: CGPDFObjectRef?
-            var array: CGPDFArrayRef?
-            var page: CGPDFInteger = 0
             guard CGPDFDictionaryGetObject(action, "F", &file), let file,
                   CGPDFDictionaryGetObject(action, "D", &operands), let operands,
-                  CGPDFObjectGetValue(operands, .array, &array), let array,
-                  CGPDFArrayGetCount(array) >= 2, CGPDFArrayGetInteger(array, 0, &page), page >= 0,
                   remoteFileName(file) != nil
             else { throw PDFDocumentSerializationError.invalidOutline }
+            switch CGPDFObjectGetType(operands) {
+            case .array:
+                var array: CGPDFArrayRef?
+                var page: CGPDFInteger = 0
+                guard CGPDFObjectGetValue(operands, .array, &array), let array,
+                      CGPDFArrayGetCount(array) >= 2, CGPDFArrayGetInteger(array, 0, &page), page >= 0
+                else { throw PDFDocumentSerializationError.invalidOutline }
+                _ = try remotePoint(array)
+            case .name, .string:
+                // A remote named destination is resolved by the target PDF. Keep
+                // its name/type or string bytes in the full raw action signature;
+                // the existing decoder enforces ASCII names and resource budgets.
+                break
+            default:
+                throw PDFDocumentSerializationError.invalidOutline
+            }
             var active: Set<CGPDFObjectRef> = []
             var remaining = 10_000
             let rawAction = try rawValue(actionObject, active: &active, remaining: &remaining)
@@ -360,7 +372,6 @@ public enum PDFDocumentSerializer {
                 throw PDFDocumentSerializationError.invalidOutline
             }
             let signature = RemoteDestination(action: rawAction)
-            _ = try remotePoint(array)
             targets.append(signature)
         }
         return targets
