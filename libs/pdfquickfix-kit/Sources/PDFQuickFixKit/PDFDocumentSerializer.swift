@@ -120,16 +120,20 @@ public enum PDFDocumentSerializer {
         }
         var failure: PDFDocumentSerializationError = .serializationFailed
         for writeOptions in attempts {
+            let diagnosticMode = writeOptions[linearizedKey] as? Bool == true ? "linearized" : "ordinary"
+            diagnostic("attempt.\(diagnosticMode).begin")
             guard let data = document.dataRepresentation(options: writeOptions),
                   let candidate = PDFDocument(data: data)
-            else { continue }
+            else { diagnostic("attempt.candidate-open.failed"); continue }
             guard candidate.isEncrypted == expectsEncryption,
                   candidate.isLocked == expectsLocked
             else {
+                diagnostic("protection.encryption-equal=\(candidate.isEncrypted == expectsEncryption).lock-equal=\(candidate.isLocked == expectsLocked)")
                 failure = .validationFailed
                 continue
             }
             if candidate.isLocked, !candidate.unlock(withPassword: password ?? "") {
+                diagnostic("candidate-unlock.failed.credential-present=\(password != nil)")
                 // Without a credential a different write mode cannot verify output.
                 guard password != nil else { throw PDFDocumentSerializationError.verificationPasswordRequired }
                 failure = .validationFailed
@@ -144,19 +148,86 @@ public enum PDFDocumentSerializer {
                (candidate.permissionsStatus != document.permissionsStatus
                 || candidate.accessPermissions != document.accessPermissions)
             {
+                diagnostic("implicit-permissions.status-equal=\(candidate.permissionsStatus == document.permissionsStatus).access-equal=\(candidate.accessPermissions == document.accessPermissions)")
                 failure = .validationFailed
                 continue
             }
+            let candidateOutline = try? outlineEntries(in: candidate)
+            let candidateRemotes = try? remoteTargets(in: candidate)
             guard candidate.pageCount == document.pageCount,
-                  (try? outlineEntries(in: candidate)) == expectedOutline,
-                  (try? remoteTargets(in: candidate)) == expectedRemotes
+                  candidateOutline == expectedOutline,
+                  candidateRemotes == expectedRemotes
             else {
+                diagnostic("content.pages-equal=\(candidate.pageCount == document.pageCount).outline-readable=\(candidateOutline != nil).outline-equal=\(candidateOutline == expectedOutline).remotes-readable=\(candidateRemotes != nil).remotes-equal=\(candidateRemotes == expectedRemotes)")
+                if let candidateOutline { diagnoseOutline(expectedOutline, candidateOutline) }
+                if let candidateRemotes {
+                    diagnostic("remote-count.equal=\(expectedRemotes.count == candidateRemotes.count)")
+                    for (expected, actual) in zip(expectedRemotes, candidateRemotes) where expected != actual {
+                        diagnostic("remote-difference.\(rawDifference(expected.action, actual.action))")
+                        break
+                    }
+                }
                 failure = .validationFailed
                 continue
             }
+            diagnostic("attempt.accepted")
             return data
         }
         throw failure
+    }
+
+    // TEMPORARY P19 CI diagnosis. Enabled only by the three synthetic tests in
+    // DEBUG builds; categories/booleans only, never document values or credentials.
+    private static func diagnostic(_ category: @autoclosure () -> String) {
+        #if DEBUG
+            if getenv("PDFQUICKFIX_SYNTHETIC_SERIALIZER_DIAGNOSTICS") != nil {
+                print("[serializer-diagnostic] \(category())")
+            }
+        #endif
+    }
+
+    private static func diagnoseOutline(_ expected: [Entry], _ actual: [Entry]) {
+        diagnostic("outline-count.equal=\(expected.count == actual.count)")
+        for (lhs, rhs) in zip(expected, actual) where lhs != rhs {
+            diagnostic("outline.depth-equal=\(lhs.depth == rhs.depth).label-equal=\(lhs.label == rhs.label).action-equal=\(lhs.action == rhs.action)")
+            if case let .destination(left) = lhs.action, case let .destination(right) = rhs.action {
+                diagnostic("destination.page-equal=\(left.page == right.page).x-equal=\(left.point.x == right.point.x).y-equal=\(left.point.y == right.point.y).zoom-equal=\(left.zoom == right.zoom)")
+            } else {
+                diagnostic("outline.action-category-equal=\(actionCategory(lhs.action) == actionCategory(rhs.action))")
+            }
+            break
+        }
+    }
+
+    private static func actionCategory(_ action: Action) -> String {
+        switch action {
+        case .none: "none"
+        case .destination: "destination"
+        case .url: "url"
+        case .remote: "remote"
+        }
+    }
+
+    private static func rawDifference(_ lhs: RawValue, _ rhs: RawValue) -> String {
+        switch (lhs, rhs) {
+        case let (.dictionary(left), .dictionary(right)):
+            guard Set(left.keys) == Set(right.keys) else { return "dictionary.keys" }
+            for key in left.keys.sorted() where left[key] != right[key] {
+                return "dictionary.child." + rawDifference(left[key]!, right[key]!)
+            }
+        case let (.array(left), .array(right)):
+            guard left.count == right.count else { return "array.count" }
+            for (left, right) in zip(left, right) where left != right { return "array.child." + rawDifference(left, right) }
+        case (.integer, .real), (.real, .integer): return "integer-real-kind"
+        case (.integer, .integer): return "integer.value"
+        case (.real, .real): return "real.value"
+        case (.boolean, .boolean): return "boolean.value"
+        case (.name, .name): return "name.value"
+        case (.string, .string): return "string.bytes"
+        case (.null, .null): return "equal"
+        default: return "kind"
+        }
+        return "equal"
     }
 
     /// Verify each supplied credential independently. Owner unlocking must grant
@@ -164,7 +235,10 @@ public enum PDFDocumentSerializer {
     /// supersets before an owner credential can elevate that candidate's access.
     private static func validatesEncryption(_ data: Data, userPassword: String?, ownerPassword: String?,
                                             options: [AnyHashable: Any]) -> Bool {
-        guard let user = PDFDocument(data: data), user.unlock(withPassword: userPassword ?? "") else { return false }
+        guard let user = PDFDocument(data: data), user.unlock(withPassword: userPassword ?? "") else {
+            diagnostic("explicit-encryption.user-unlock.failed")
+            return false
+        }
         if let requested = options[PDFDocumentWriteOption.accessPermissionsOption] as? NSNumber {
             var permissions = requested.uintValue
             guard permissions & ~UInt(255) == 0 else { return false }
@@ -172,11 +246,17 @@ public enum PDFDocumentSerializer {
             if permissions & (1 << 2) != 0 { permissions |= (1 << 6) | (1 << 7) }
             if permissions & (1 << 4) != 0 { permissions |= 1 << 5 }
             if permissions & (1 << 6) != 0 { permissions |= 1 << 7 }
-            guard user.accessPermissions.rawValue == permissions else { return false }
+            guard user.accessPermissions.rawValue == permissions else {
+                diagnostic("explicit-encryption.requested-permissions.match=false")
+                return false
+            }
         }
         if let ownerPassword, !ownerPassword.isEmpty {
             guard let owner = PDFDocument(data: data), owner.unlock(withPassword: ownerPassword),
-                  owner.permissionsStatus == .owner else { return false }
+                  owner.permissionsStatus == .owner else {
+                diagnostic("explicit-encryption.owner-verification.failed")
+                return false
+            }
         }
         return true
     }

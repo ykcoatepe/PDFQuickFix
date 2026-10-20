@@ -102,6 +102,8 @@ final class PDFDocumentSerializerTests: XCTestCase {
     }
 
     func testValidRawRemoteBookmarkPreservesFileSpecificationAndAllXYZOperands() throws {
+        enableSyntheticSerializerDiagnostics()
+        defer { disableSyntheticSerializerDiagnostics() }
         let sourceURL = temporaryURL()
         try rawRemotePDF().write(to: sourceURL)
         defer { try? FileManager.default.removeItem(at: sourceURL) }
@@ -148,6 +150,8 @@ final class PDFDocumentSerializerTests: XCTestCase {
     }
 
     func testDuplicateRemoteLabelsWithDifferentRawPagesRetainFullOrderedTargets() throws {
+        enableSyntheticSerializerDiagnostics()
+        defer { disableSyntheticSerializerDiagnostics() }
         let source = try reload(rawRemotePDF(ambiguousDuplicate: true))
         XCTAssertThrowsError(try PDFDocumentSerializer.data(from: source), "A bare caller must capture context before edits")
         let baseline = try PDFDocumentSerializer.remoteBaseline(for: source)
@@ -329,7 +333,10 @@ final class PDFDocumentSerializerTests: XCTestCase {
     }
 
     func testDefaultEncryptionAndRestrictedPasswordsSurviveLoadedOutlineEdit() throws {
+        enableSyntheticSerializerDiagnostics()
+        defer { disableSyntheticSerializerDiagnostics() }
         for keyLength in [40, 128] {
+            print("[serializer-test-context] encryption.\(keyLength == 40 ? "legacy" : "modern").initial-export")
             let source = try loadedDocument(withOutline: false)
             let options: [AnyHashable: Any] = [
                 PDFDocumentWriteOption.userPasswordOption: "user-pass",
@@ -351,6 +358,7 @@ final class PDFDocumentSerializerTests: XCTestCase {
             // Accept a default rewrite only if the original password still works.
             // This SDK also fails to preserve legacy keys on an unchanged PDF.
             do {
+                print("[serializer-test-context] encryption.ordinary-save")
                 let unchanged = try reload(try PDFDocumentSerializer.data(from: encrypted, verificationPassword: "user-pass"))
                 XCTAssertTrue(unchanged.unlock(withPassword: "user-pass"))
             } catch PDFDocumentSerializationError.validationFailed {
@@ -367,6 +375,7 @@ final class PDFDocumentSerializerTests: XCTestCase {
                 try encryptedBytes.write(to: destination)
                 defer { try? FileManager.default.removeItem(at: destination) }
                 do {
+                    print("[serializer-test-context] encryption.legacy-outline-save")
                     try PDFDocumentSerializer.write(encrypted, to: destination, verificationPassword: "user-pass")
                     let saved = try reload(Data(contentsOf: destination))
                     XCTAssertTrue(saved.unlock(withPassword: "user-pass"))
@@ -376,6 +385,7 @@ final class PDFDocumentSerializerTests: XCTestCase {
                 }
             }
             // Explicit encryption is a separate operation with caller-chosen keys.
+            print("[serializer-test-context] encryption.explicit-outline-export")
             let output = try PDFDocumentSerializer.data(from: encrypted, options: options)
             let reloaded = try reload(output)
             XCTAssertTrue(reloaded.isEncrypted)
@@ -522,6 +532,19 @@ final class PDFDocumentSerializerTests: XCTestCase {
             PDFDocumentWriteOption.ownerPasswordOption: "owner-pass",
         ]))
         XCTAssertNil(document.outlineRoot)
+    }
+
+    // Temporary P19 diagnostics are restricted to these known synthetic fixtures.
+    private func enableSyntheticSerializerDiagnostics() {
+        #if DEBUG
+            setenv("PDFQUICKFIX_SYNTHETIC_SERIALIZER_DIAGNOSTICS", "1", 1)
+        #endif
+    }
+
+    private func disableSyntheticSerializerDiagnostics() {
+        #if DEBUG
+            unsetenv("PDFQUICKFIX_SYNTHETIC_SERIALIZER_DIAGNOSTICS")
+        #endif
     }
 
     private func loadedDocument(withOutline: Bool) throws -> PDFDocument {
