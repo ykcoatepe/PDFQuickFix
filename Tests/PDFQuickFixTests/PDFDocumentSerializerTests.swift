@@ -109,7 +109,7 @@ final class PDFDocumentSerializerTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: sourceURL) }
         let source = try XCTUnwrap(PDFDocument(url: sourceURL))
         let baseline = try PDFDocumentSerializer.remoteBaseline(for: source)
-        let output = try PDFDocumentSerializer.data(from: source, remoteBaseline: baseline)
+        let output = try syntheticVerifiedWrite(source, baseline: baseline)
         let reloaded = try reload(output)
         let action = try firstRawRemoteAction(in: reloaded)
         var operands: CGPDFArrayRef?
@@ -155,7 +155,7 @@ final class PDFDocumentSerializerTests: XCTestCase {
         let source = try reload(rawRemotePDF(ambiguousDuplicate: true))
         XCTAssertThrowsError(try PDFDocumentSerializer.data(from: source), "A bare caller must capture context before edits")
         let baseline = try PDFDocumentSerializer.remoteBaseline(for: source)
-        let output = try PDFDocumentSerializer.data(from: source, remoteBaseline: baseline)
+        let output = try syntheticVerifiedWrite(source, baseline: baseline)
         let reloaded = try reload(output)
         XCTAssertEqual(reloaded.outlineRoot?.numberOfChildren, 2)
         let first = try firstRawRemoteAction(in: reloaded)
@@ -344,7 +344,7 @@ final class PDFDocumentSerializerTests: XCTestCase {
                 PDFDocumentWriteOption.accessPermissionsOption: NSNumber(value: 2),
                 kCGPDFContextEncryptionKeyLength as String: keyLength,
             ]
-            let encryptedBytes = try PDFDocumentSerializer.data(from: source, options: options)
+            let encryptedBytes = try syntheticVerifiedWrite(source, options: options)
             let encryptionHeader = String(data: encryptedBytes, encoding: .isoLatin1) ?? ""
             let encryptionObject = try XCTUnwrap(encryptionHeader.components(separatedBy: "endobj").first {
                 $0.range(of: #"/Filter\s*/Standard\b"#, options: .regularExpression) != nil
@@ -386,7 +386,7 @@ final class PDFDocumentSerializerTests: XCTestCase {
             }
             // Explicit encryption is a separate operation with caller-chosen keys.
             print("[serializer-test-context] encryption.explicit-outline-export")
-            let output = try PDFDocumentSerializer.data(from: encrypted, options: options)
+            let output = try syntheticVerifiedWrite(encrypted, options: options)
             let reloaded = try reload(output)
             XCTAssertTrue(reloaded.isEncrypted)
             XCTAssertTrue(reloaded.isLocked)
@@ -532,6 +532,29 @@ final class PDFDocumentSerializerTests: XCTestCase {
             PDFDocumentWriteOption.ownerPasswordOption: "owner-pass",
         ]))
         XCTAssertNil(document.outlineRoot)
+    }
+
+    /// Preserve the success assertions while proving rejected native candidates
+    /// cannot replace an existing destination or mutate the source root.
+    private func syntheticVerifiedWrite(_ document: PDFDocument, options: [AnyHashable: Any] = [:],
+                                        baseline: PDFDocumentSerializer.RemoteOutlineBaseline? = nil) throws -> Data {
+        let destination = temporaryURL()
+        let sentinel = Data("Synthetic original destination".utf8)
+        let root = document.outlineRoot
+        try sentinel.write(to: destination)
+        defer { try? FileManager.default.removeItem(at: destination) }
+        do {
+            try PDFDocumentSerializer.write(document, to: destination, options: options, remoteBaseline: baseline)
+            XCTAssertTrue(document.outlineRoot === root)
+            return try Data(contentsOf: destination)
+        } catch {
+            let destinationUnchanged = try Data(contentsOf: destination) == sentinel
+            let sourceRootRestored = document.outlineRoot === root
+            print("[serializer-test-context] rejected-candidate.destination-unchanged=\(destinationUnchanged).source-root-restored=\(sourceRootRestored)")
+            XCTAssertTrue(destinationUnchanged)
+            XCTAssertTrue(sourceRootRestored)
+            throw error
+        }
     }
 
     // Temporary P19 diagnostics are restricted to these known synthetic fixtures.
