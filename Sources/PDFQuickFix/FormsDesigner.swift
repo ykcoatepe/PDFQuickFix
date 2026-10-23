@@ -52,6 +52,9 @@ struct FormsDesigner: View {
                 Text("\(controller.formFieldRows.count)")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("studio-form-field-count")
+                    .accessibilityLabel("Existing form fields")
+                    .accessibilityValue("\(controller.formFieldRows.count)")
             }
 
             if controller.formFieldRows.isEmpty {
