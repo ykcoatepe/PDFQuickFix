@@ -16,6 +16,8 @@ final class LocalAISettings: ObservableObject {
     @Published private(set) var isRefreshing: Bool = false
     @Published var selectedProvider: LocalAIProvider {
         didSet {
+            refreshGeneration = UUID()
+            isRefreshing = false
             defaults.set(selectedProvider.rawValue, forKey: Self.selectedProviderKey)
             defaultModel = Self.savedDefaultModel(for: selectedProvider, defaults: defaults)
             taskOverrides = Self.loadOverrides(for: selectedProvider, defaults: defaults)
@@ -50,13 +52,14 @@ final class LocalAISettings: ObservableObject {
 
     @Published private(set) var taskOverrides: [LocalAITask: String] = [:]
 
-    private let ollamaClient: OllamaClient
-    private let lmStudioClient: LMStudioClient
+    private let ollamaClient: any LocalAIModelListing
+    private let lmStudioClient: any LocalAIModelListing
     private let defaults: UserDefaults
     private var hasLoadedModels = false
+    private var refreshGeneration = UUID()
 
-    init(client: OllamaClient = OllamaClient(),
-         lmStudioClient: LMStudioClient = LMStudioClient(),
+    init(client: any LocalAIModelListing = OllamaClient(),
+         lmStudioClient: any LocalAIModelListing = LMStudioClient(),
          defaults: UserDefaults = .standard)
     {
         ollamaClient = client
@@ -84,21 +87,29 @@ final class LocalAISettings: ObservableObject {
 
     func refreshModels() async {
         guard !isRefreshing else { return }
+        let provider = selectedProvider
+        let generation = UUID()
+        refreshGeneration = generation
+        let client = modelListingClient()
         isRefreshing = true
         lastRefreshError = nil
         defer {
-            isRefreshing = false
-            hasLoadedModels = true
+            if refreshGeneration == generation {
+                isRefreshing = false
+                hasLoadedModels = true
+            }
         }
 
         do {
-            var models = try await modelListingClient().listModels()
+            var models = try await client.listModels()
+            guard refreshGeneration == generation, selectedProvider == provider else { return }
             models = models.filter { !Self.isCloudModel($0.name) }
             models.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
             availableModels = models
             normalizeModels()
         } catch {
-            lastRefreshError = "\(selectedProvider.displayName) not reachable on \(selectedProvider.hostLabel)."
+            guard refreshGeneration == generation, selectedProvider == provider else { return }
+            lastRefreshError = "\(provider.displayName) not reachable on \(selectedProvider.hostLabel)."
         }
     }
 

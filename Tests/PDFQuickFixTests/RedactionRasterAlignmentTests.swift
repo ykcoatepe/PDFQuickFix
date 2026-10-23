@@ -139,6 +139,73 @@ final class RedactionRasterAlignmentTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: input), original)
     }
 
+    func testRedactionWinsOverlappingReplacementsAndIndependentEditsStillRenderAtSupportedDPI() throws {
+        let input = try makePDF(mediaBox: CGRect(x: 0, y: 0, width: 320, height: 300)) { context in
+            let line = CTLineCreateWithAttributedString(NSAttributedString(string: "SECRET PUBLIC", attributes: [
+                kCTFontAttributeName as NSAttributedString.Key: CTFontCreateWithName("Helvetica" as CFString, 24, nil),
+            ]))
+            context.textPosition = CGPoint(x: 35, y: 210)
+            CTLineDraw(line, context)
+        }
+        defer { try? FileManager.default.removeItem(at: input) }
+        for dpi: CGFloat in [150, 200, 300, 600] {
+            let cases: [(regexes: [String], find: String, replacement: String, expected: String?, forbidden: String)] = [
+                (["SECRET"], "SECRET PUBLIC", "SECRET OPEN", nil, "SECRET"),
+                (["PUBLIC"], "SECRET PUBLIC", "PUBLIC OPEN", nil, "PUBLIC"),
+                (["SECRET", "SECRET PUBLIC"], "SECRET PUBLIC", "SECRET OPEN", nil, "SECRET"),
+                (["PUBLIC"], "SECRET", "VISIBLE", "VISIBLE", "PUBLIC"),
+                ([], "SECRET PUBLIC", "SECRET OPEN", "SECRET OPEN", "PUBLIC"),
+                ([], "SECRET PUBLIC", "", nil, "SECRET"),
+            ]
+            for item in cases {
+                let output = temporaryURL()
+                defer { try? FileManager.default.removeItem(at: output) }
+                let engine = PDFQuickFixEngine(options: QuickFixOptions(doOCR: true, dpi: dpi, redactionPadding: 2,
+                                                                        ocrProvider: .visionOnly), languages: ["en-US"],
+                                              repairSourceURL: { $0 })
+                let result = try engine.processResult(inputURL: input, outputURL: output, redactionPatterns: [],
+                                                      customRegexes: item.regexes.map { try NSRegularExpression(pattern: $0) },
+                                                      findReplace: [FindReplaceRule(find: item.find, replace: item.replacement)])
+                let document = try XCTUnwrap(PDFDocument(url: output))
+                let image = try render(try XCTUnwrap(document.page(at: 0)))
+                let visibleText = try VisionOCRProvider(languages: ["en-US"]).recognizeText(cgImage: image)
+                    .compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+                XCTAssertFalse(visibleText.contains(item.forbidden), "Raster leaked \(item.forbidden) at DPI \(dpi)")
+                XCTAssertFalse((document.string ?? "").contains(item.forbidden), "Searchable text leaked")
+                if let expected = item.expected {
+                    XCTAssertTrue(visibleText.contains(expected), "Missing visible replacement \(expected) at DPI \(dpi): \(visibleText)")
+                    XCTAssertTrue((document.string ?? "").contains(expected))
+                }
+                if !item.regexes.isEmpty {
+                    XCTAssertGreaterThan(result.redactionReport.totalRedactionRectCount, 0)
+                }
+            }
+        }
+    }
+
+    func testManualRedactionSuppressesOverlappingVisibleAndSearchableReplacement() throws {
+        let input = try makePDF(mediaBox: CGRect(x: 0, y: 0, width: 320, height: 300)) { context in
+            let line = CTLineCreateWithAttributedString(NSAttributedString(string: "SECRET PUBLIC", attributes: [
+                kCTFontAttributeName as NSAttributedString.Key: CTFontCreateWithName("Helvetica" as CFString, 24, nil),
+            ]))
+            context.textPosition = CGPoint(x: 35, y: 210)
+            CTLineDraw(line, context)
+        }
+        defer { try? FileManager.default.removeItem(at: input) }
+        let output = temporaryURL()
+        defer { try? FileManager.default.removeItem(at: output) }
+        let engine = PDFQuickFixEngine(options: QuickFixOptions(doOCR: true, dpi: 300, redactionPadding: 2,
+                                                                ocrProvider: .visionOnly), languages: ["en-US"],
+                                      repairSourceURL: { $0 })
+        _ = try engine.processResult(inputURL: input, outputURL: output, redactionPatterns: [],
+                                      findReplace: [FindReplaceRule(find: "SECRET PUBLIC", replace: "SECRET OPEN")],
+                                      manualRedactions: [0: [CGRect(x: 30, y: 200, width: 210, height: 40)]])
+        let document = try XCTUnwrap(PDFDocument(url: output))
+        let image = try render(try XCTUnwrap(document.page(at: 0)))
+        XCTAssertGreaterThan(try blackFraction(image, in: CGRect(x: 40, y: 205, width: 180, height: 25)), 0.98)
+        XCTAssertTrue((document.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
+
     private func bitmap(size: CGSize) throws -> CGContext {
         try XCTUnwrap(CGContext(data: nil, width: Int(size.width), height: Int(size.height), bitsPerComponent: 8,
                                bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),

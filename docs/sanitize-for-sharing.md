@@ -27,12 +27,14 @@ For a first run from build to verified output, start with [Get Started with PDFQ
 1. Work from a copy or use the app export flows that write a separate output file.
 2. Apply redactions, replacements, metadata cleanup, or OCR repair before the final sanitize export.
 3. Choose the strictest profile that still preserves the recipient's required workflow.
-4. Save sanitized outputs outside the source folder when running recursive batch jobs.
+4. Choose a separate output folder for batch jobs; for recursive jobs, place it outside the source folder tree.
 5. Open the output and verify page count, readability, searchability expectations, and redaction coverage before sharing.
 
 Reader, Studio, and the Finder receipt open a cleanup review after a successful single-file sanitized export. Use **Evidence** to inspect the selected profile, source/output hashes, file facts, removed metadata labels, and overall verdict. Use **Before / After** to move through changed pages and inspect the source snapshot beside the exported copy. **Export Evidence…** writes a privacy-safe JSON receipt; it stores counts, hashes, labels, and status only, never extracted document text or metadata values.
 
 The app batch receipt shows aggregate and per-file Passed, Review, or Failed verdicts. **View Evidence** opens the detailed receipt for a processed file, while **Export Evidence…** writes one privacy-safe JSON manifest for the run. The manifest uses hashed file identifiers and basenames; it does not include absolute paths, extracted document text, metadata values, or raw processing errors.
+
+Locked PDFs are rejected without publishing a blank output. Open and unlock an encrypted document in the app before sanitizing it. Single-file and batch commands reject output paths that point back to the original, including symlink and hard-link aliases. Batch overwrite applies only to separate destination files; when it is off, files created during the run are preserved and reported as skipped.
 
 ## CLI Examples
 

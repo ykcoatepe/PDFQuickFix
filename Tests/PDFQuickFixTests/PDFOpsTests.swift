@@ -314,8 +314,9 @@ final class PDFOpsTests: XCTestCase {
         let flattenedPage = try XCTUnwrap(flattenedDocument.page(at: 0))
 
         XCTAssertEqual(flattenedPage.rotation, 0)
-        XCTAssertEqual(flattenedPage.bounds(for: .cropBox).width, page.bounds(for: .cropBox).width, accuracy: 0.5)
-        XCTAssertEqual(flattenedPage.bounds(for: .cropBox).height, page.bounds(for: .cropBox).height, accuracy: 0.5)
+        // Rotation is baked once into the upright landscape appearance.
+        XCTAssertEqual(flattenedPage.bounds(for: .cropBox).width, 100, accuracy: 0.5)
+        XCTAssertEqual(flattenedPage.bounds(for: .cropBox).height, 200, accuracy: 0.5)
     }
 
     func testFlattenedDataPreservesVisibleCropAreaOnly() throws {

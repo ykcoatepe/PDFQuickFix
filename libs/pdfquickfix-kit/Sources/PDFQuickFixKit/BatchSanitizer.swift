@@ -63,6 +63,7 @@ public enum BatchSanitizer {
             let fileStart = CFAbsoluteTimeGetCurrent()
 
             do {
+                try PDFFilePublication.requireDistinct(input: item.inputURL, output: item.outputURL)
                 // Read input
                 let inputData = try Data(contentsOf: item.inputURL)
                 let inputBytes = inputData.count
@@ -75,8 +76,10 @@ public enum BatchSanitizer {
                 let sanitized = try PDFDocumentSanitizer.sanitize(
                     document: document,
                     sourceURL: item.inputURL,
-                    options: options
+                    options: options,
+                    shouldCancel: { shouldCancel?() ?? false }
                 )
+                if shouldCancel?() == true { throw BatchSanitizerError.cancelled }
 
                 // Determine searchable text status
                 let searchableText = determineSearchableText(
@@ -100,7 +103,9 @@ public enum BatchSanitizer {
                         .appendingPathExtension("pdf")
                     defer { try? fm.removeItem(at: temporaryURL) }
 
-                    guard writer(sanitized, temporaryURL),
+                    let didWrite = writer(sanitized, temporaryURL)
+                    if shouldCancel?() == true { throw BatchSanitizerError.cancelled }
+                    guard didWrite,
                           let validationProvider = CGDataProvider(url: temporaryURL as CFURL),
                           let validatedDocument = CGPDFDocument(validationProvider),
                           validatedDocument.numberOfPages == sanitized.pageCount
@@ -108,11 +113,9 @@ public enum BatchSanitizer {
                         throw BatchSanitizerError.writeFailed(item.outputURL)
                     }
 
-                    if fm.fileExists(atPath: item.outputURL.path) {
-                        _ = try fm.replaceItemAt(item.outputURL, withItemAt: temporaryURL)
-                    } else {
-                        try fm.moveItem(at: temporaryURL, to: item.outputURL)
-                    }
+                    try PDFFilePublication.requireDistinct(input: item.inputURL, output: item.outputURL)
+                    if shouldCancel?() == true { throw BatchSanitizerError.cancelled }
+                    try PDFFilePublication.publish(staged: temporaryURL, to: item.outputURL, overwrite: plan.overwrite)
 
                     // Get output size
                     let outputData = try Data(contentsOf: item.outputURL)
@@ -132,8 +135,19 @@ public enum BatchSanitizer {
                     elapsedMs: elapsedMs
                 ))
 
+            } catch PDFFilePublication.PublicationError.destinationExists {
+                skippedCount += 1
+                fileResults.append(BatchSanitizeReport.FileResult(
+                    input: item.relativePath,
+                    output: item.relativePath,
+                    status: .skipped
+                ))
             } catch {
                 let elapsedMs = Int((CFAbsoluteTimeGetCurrent() - fileStart) * 1000)
+                let wasCancelled: Bool = switch error {
+                case PDFDocumentSanitizerError.cancelled, BatchSanitizerError.cancelled: true
+                default: false
+                }
 
                 failedCount += 1
                 fileResults.append(BatchSanitizeReport.FileResult(
@@ -141,8 +155,9 @@ public enum BatchSanitizer {
                     output: item.relativePath,
                     status: .failed,
                     elapsedMs: elapsedMs,
-                    error: error.localizedDescription
+                    error: wasCancelled ? BatchSanitizerError.cancelled.localizedDescription : error.localizedDescription
                 ))
+                if wasCancelled { break }
             }
         }
 

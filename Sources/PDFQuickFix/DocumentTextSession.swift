@@ -1,6 +1,11 @@
 import Foundation
 import PDFKit
 
+struct DocumentPageText {
+    let pageIndex: Int
+    let text: String
+}
+
 struct DocumentTextSession {
     enum Scope: Equatable {
         case wholeDocument
@@ -86,18 +91,19 @@ struct DocumentTextSession {
         return sorted
     }
 
-    private func extractDocumentText(pageSelection: String?) throws -> String {
-        let pageCount = document.pageCount
-        guard pageCount > 0 else { return "" }
-        let pages = try Self.parsePageSelection(pageSelection, pageCount: pageCount)
-        var combined = ""
-        for index in pages {
-            guard let page = document.page(at: index), let text = page.string else { continue }
-            combined.append("--- Page \(index + 1) ---\n")
-            combined.append(text)
-            combined.append("\n\n")
+    /// Page identity is PDF metadata, never parsed from potentially adversarial page text.
+    func extractPages(pageSelection: String? = nil) throws -> [DocumentPageText] {
+        guard document.pageCount > 0 else { return [] }
+        return try Self.parsePageSelection(pageSelection, pageCount: document.pageCount).compactMap { index in
+            guard let text = document.page(at: index)?.string else { return nil }
+            return DocumentPageText(pageIndex: index, text: text)
         }
-        return combined
+    }
+
+    private func extractDocumentText(pageSelection: String?) throws -> String {
+        try extractPages(pageSelection: pageSelection).map { page in
+            "--- Page \(page.pageIndex + 1) ---\n\(page.text)\n\n"
+        }.joined()
     }
 
     private static func validatePage(_ page: Int, pageCount: Int) throws {

@@ -118,6 +118,7 @@ public struct PDFRepairService {
             let parser = PDFCoreParser(data: data)
             let document: PDFCoreDocument
             do {
+                try Self.rejectEncryptedInput(data)
                 document = try parser.parseDocument()
             } catch {
                 outcome = .parseFailed(error)
@@ -136,7 +137,7 @@ public struct PDFRepairService {
             try normalizedData.write(to: tempURL, options: .atomic)
 
             // Validate output
-            guard let _ = CGPDFDocument(tempURL as CFURL) else {
+            guard (try? Self.validateRepairedData(normalizedData, originalData: data)) != nil else {
                 outcome = .validationFailed
                 logger.error("PDFRepairService: Normalized document validation failed. Reverting to original.")
                 try? FileManager.default.removeItem(at: tempURL)
@@ -174,6 +175,7 @@ public struct PDFRepairService {
             let parser = PDFCoreParser(data: data)
             let document: PDFCoreDocument
             do {
+                try Self.rejectEncryptedInput(data)
                 document = try parser.parseDocument()
             } catch {
                 outcome = .parseFailed(error)
@@ -192,7 +194,7 @@ public struct PDFRepairService {
             try normalizedData.write(to: tempURL, options: .atomic)
 
             // Validate output
-            guard let _ = CGPDFDocument(tempURL as CFURL) else {
+            guard (try? Self.validateRepairedData(normalizedData, originalData: data)) != nil else {
                 outcome = .validationFailed
                 logger.error("PDFRepairService: Normalized document validation failed.")
                 try? FileManager.default.removeItem(at: tempURL)
@@ -209,6 +211,31 @@ public struct PDFRepairService {
             }
             throw error
         }
+    }
+
+    private static func rejectEncryptedInput(_ data: Data) throws {
+        if let provider = CGDataProvider(data: data as CFData),
+           let document = CGPDFDocument(provider), document.isEncrypted
+        {
+            throw PDFCoreError.unsupportedFeature("Encrypted PDF rewriting requires password-aware serialization")
+        }
+    }
+
+    private static func validateRepairedData(_ data: Data, originalData: Data) throws -> CGPDFDocument {
+        guard let provider = CGDataProvider(data: data as CFData),
+              let document = CGPDFDocument(provider),
+              !document.isEncrypted,
+              document.numberOfPages > 0
+        else { throw PDFRepairOutcome.validationFailed }
+        if let originalProvider = CGDataProvider(data: originalData as CFData),
+           let original = CGPDFDocument(originalProvider),
+           original.numberOfPages > 0,
+           original.numberOfPages != document.numberOfPages
+        {
+            throw PDFRepairOutcome.validationFailed
+        }
+        try PDFDocumentSanitizer.validate(cgDocument: document)
+        return document
     }
 
     private func logOutcome(_ outcome: PDFRepairOutcome, fileSize: Int64, duration: TimeInterval, url: URL, isManual: Bool) {
@@ -289,6 +316,9 @@ public extension PDFRepairService {
         let maxSizeBytes = 50 * 1024 * 1024
 
         do {
+            if let outputURL {
+                try PDFFilePublication.requireDistinct(input: inputURL, output: outputURL)
+            }
             if !ignoreSizeLimit, fileSize > maxSizeBytes {
                 outcome = .skippedTooLarge
                 reason = "File size \(fileSize) exceeds 50MB limit"
@@ -305,6 +335,7 @@ public extension PDFRepairService {
             let parser = PDFCoreParser(data: data)
             let document: PDFCoreDocument
             do {
+                try Self.rejectEncryptedInput(data)
                 document = try parser.parseDocument()
                 // Assuming PDFCoreDocument doesn't expose pageCount directly yet, or does it?
                 // Previous check of PDFCoreDocument might be needed.
@@ -324,6 +355,10 @@ public extension PDFRepairService {
             let normalizedData: Data
             do {
                 normalizedData = try PDFCoreWriter.write(document: document)
+            } catch PDFCoreError.unsupportedFeature(let feature) {
+                outcome = .unsupportedFeature
+                reason = feature
+                return makeResult()
             } catch {
                 outcome = .parseFailed // Map writer errors to parseFailed or generic failure? Use parseFailed as catch-all or validationFailed?
                 // The prompt lists: parseFailed, validationFailed. Writer failure is close to parseFailed or internal logic error.
@@ -349,7 +384,7 @@ public extension PDFRepairService {
             try normalizedData.write(to: tempValidationURL)
             defer { try? FileManager.default.removeItem(at: tempValidationURL) }
 
-            guard let cgDoc = CGPDFDocument(tempValidationURL as CFURL) else {
+            guard let cgDoc = try? Self.validateRepairedData(normalizedData, originalData: data) else {
                 outcome = .validationFailed
                 reason = "CGPDFDocument rejected the output"
                 return makeResult()
@@ -359,6 +394,7 @@ public extension PDFRepairService {
             repairedSize = normalizedData.count
 
             if let outputURL {
+                try PDFFilePublication.requireDistinct(input: inputURL, output: outputURL)
                 try normalizedData.write(to: outputURL, options: .atomic)
                 outcome = .repaired
             } else {

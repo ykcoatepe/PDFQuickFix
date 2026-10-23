@@ -122,21 +122,21 @@ final class DocumentCopilotService {
                                      using session: DocumentTextSession) throws -> ScopeContent
     {
         let extractedText: String
-        let pages: [PageText]
+        let pages: [DocumentPageText]
         let citationsAllowed: Bool
 
         switch scope {
         case .document:
-            extractedText = try session.extractText(scope: .wholeDocument)
-            pages = parsePageTexts(from: extractedText)
+            pages = try session.extractPages()
+            extractedText = pages.map(\.text).joined(separator: "\n\n")
             citationsAllowed = true
         case let .pageRange(selection):
-            extractedText = try session.extractText(scope: .pageSelection(selection))
-            pages = parsePageTexts(from: extractedText)
+            pages = try session.extractPages(pageSelection: selection)
+            extractedText = pages.map(\.text).joined(separator: "\n\n")
             citationsAllowed = true
         case let .currentPage(index):
-            extractedText = try session.extractText(scope: .currentPage(index: index))
-            pages = parsePageTexts(from: extractedText)
+            pages = try session.extractPages(pageSelection: String(index + 1))
+            extractedText = pages.map(\.text).joined(separator: "\n\n")
             citationsAllowed = true
         case let .selection(text):
             extractedText = session.extractText(selectionText: text)
@@ -305,36 +305,7 @@ final class DocumentCopilotService {
         }
     }
 
-    private func parsePageTexts(from extractedText: String) -> [PageText] {
-        var pages: [PageText] = []
-        var currentPageIndex: Int?
-        var currentLines: [String] = []
-
-        func flushCurrentPage() {
-            guard let currentPageIndex else { return }
-            let text = currentLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !text.isEmpty else {
-                currentLines = []
-                return
-            }
-            pages.append(PageText(pageIndex: currentPageIndex, text: text))
-            currentLines = []
-        }
-
-        for line in extractedText.components(separatedBy: .newlines) {
-            if let pageIndex = parsePageMarker(line) {
-                flushCurrentPage()
-                currentPageIndex = pageIndex
-            } else if currentPageIndex != nil {
-                currentLines.append(line)
-            }
-        }
-
-        flushCurrentPage()
-        return pages
-    }
-
-    private func makeWindows(for page: PageText) -> [DocumentChunk] {
+    private func makeWindows(for page: DocumentPageText) -> [DocumentChunk] {
         let text = page.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return [] }
         guard text.count > maxChunkCharacters else {
@@ -384,16 +355,6 @@ final class DocumentCopilotService {
         }
 
         return result
-    }
-
-    private func parsePageMarker(_ line: String) -> Int? {
-        guard line.hasPrefix("--- Page "), line.hasSuffix(" ---") else { return nil }
-        let pageNumberText = line
-            .replacingOccurrences(of: "--- Page ", with: "")
-            .replacingOccurrences(of: " ---", with: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let pageNumber = Int(pageNumberText), pageNumber > 0 else { return nil }
-        return pageNumber - 1
     }
 
     private func makeQueryTerms(from rawText: String) -> [String] {
@@ -465,11 +426,6 @@ private struct ChunkSelection {
     let chunks: [DocumentChunk]
     let contextText: String
     let wasTrimmed: Bool
-}
-
-private struct PageText {
-    let pageIndex: Int
-    let text: String
 }
 
 private struct DocumentChunk: Equatable {

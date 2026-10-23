@@ -3,6 +3,44 @@ import PDFKit
 import XCTest
 
 final class PDFQuickFixEngineTests: XCTestCase {
+    func testCancellationAfterLastPagePreservesExistingDestination() throws {
+        let input = try TestPDFBuilder.makeSimplePDF(text: "New content")
+        let output = try TestPDFBuilder.makeSimplePDF(text: "Keep existing content")
+        defer {
+            try? FileManager.default.removeItem(at: input)
+            try? FileManager.default.removeItem(at: output)
+        }
+        let before = try Data(contentsOf: output)
+        let engine = PDFQuickFixEngine(options: QuickFixOptions(doOCR: false, dpi: 150), repairSourceURL: { $0 })
+        var cancelled = false
+        XCTAssertThrowsError(try engine.processResult(inputURL: input, outputURL: output, redactionPatterns: [],
+                                                       shouldCancel: { cancelled },
+                                                       progress: { _, _ in cancelled = true }))
+        XCTAssertEqual(try Data(contentsOf: output), before)
+    }
+
+    func testCancellationDuringStagedValidationLeavesNoPublishedOrPartialOutput() throws {
+        let input = try TestPDFBuilder.makeSimplePDF(text: "New content")
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: input)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let output = directory.appendingPathComponent("result.pdf")
+        let engine = PDFQuickFixEngine(options: QuickFixOptions(doOCR: false, dpi: 150), repairSourceURL: { $0 })
+        var observedStage = false
+        XCTAssertThrowsError(try engine.processResult(inputURL: input, outputURL: output, redactionPatterns: [],
+                                                       shouldCancel: {
+            observedStage = ((try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? [])
+                .contains { $0.hasPrefix(".quickfix-") }
+            return observedStage
+        }))
+        XCTAssertTrue(observedStage, "Cancellation must happen after raster serialization, during validation")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: output.path))
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: directory.path).isEmpty)
+    }
+
     func testMatchedRedactionCandidatesReturnsOnlyMatchedText() throws {
         let regexes = try [
             NSRegularExpression(pattern: #"\b\d{3}-\d{2}-\d{4}\b"#),

@@ -45,7 +45,7 @@ final class SaveDocumentTests: XCTestCase {
         let replacement = try XCTUnwrap(PDFDocument(url: replacementURL))
         var controller: ReaderControllerPro!
         var shouldReplace = false
-        controller = ReaderControllerPro(passwordProvider: { _ in
+        controller = ReaderControllerPro(recentFiles: RecentFilesManager(defaults: nil), passwordProvider: { _ in
             if shouldReplace {
                 controller.document = replacement
                 controller.open(url: replacementURL)
@@ -184,7 +184,7 @@ final class SaveDocumentTests: XCTestCase {
         let sourceURL = try makeEncryptedTextBackedPDFURL(text: "Reader protected source")
         defer { try? FileManager.default.removeItem(at: sourceURL) }
         var requests = 0
-        let controller = ReaderControllerPro(passwordProvider: { _ in requests += 1; return "user-pass" })
+        let controller = ReaderControllerPro(recentFiles: RecentFilesManager(defaults: nil), passwordProvider: { _ in requests += 1; return "user-pass" })
         let loaded = expectation(description: "Reader opened protected source")
         controller.$document.compactMap(\.self).first().sink { _ in loaded.fulfill() }.store(in: &cancellables)
         controller.open(url: sourceURL)
@@ -220,7 +220,7 @@ final class SaveDocumentTests: XCTestCase {
     }
 
     func testReaderSaveDocumentWritesBackToSourceURL() throws {
-        let controller = ReaderControllerPro()
+        let controller = ReaderControllerPro(recentFiles: RecentFilesManager(defaults: nil))
         let pdfURL = try TestPDFBuilder.makeSimplePDF(text: "Reader save")
         let loaded = expectation(description: "Reader opened source PDF")
 
@@ -250,7 +250,7 @@ final class SaveDocumentTests: XCTestCase {
     }
 
     func testReaderSaveDocumentFlattensReplaceTextSoOriginalTextIsNotExtractable() throws {
-        let controller = ReaderControllerPro()
+        let controller = ReaderControllerPro(recentFiles: RecentFilesManager(defaults: nil))
         controller.pdfView = PDFView()
         let pdfURL = try makeTextBackedPDFURL(text: "Secret reader text")
         let loaded = expectation(description: "Reader opened source PDF")
@@ -286,7 +286,7 @@ final class SaveDocumentTests: XCTestCase {
     }
 
     func testReaderSaveDocumentDoesNotDropEncryptionWhenReplacementTextExists() throws {
-        let controller = ReaderControllerPro(passwordProvider: { _ in "user-pass" })
+        let controller = ReaderControllerPro(recentFiles: RecentFilesManager(defaults: nil), passwordProvider: { _ in "user-pass" })
         controller.pdfView = PDFView()
         let encryptedURL = try makeEncryptedTextBackedPDFURL(text: "Encrypted reader text", allowsCommenting: true)
         let originalBytes = try Data(contentsOf: encryptedURL)

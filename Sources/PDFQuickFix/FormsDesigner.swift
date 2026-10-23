@@ -22,13 +22,15 @@ struct FormsDesigner: View {
             .pickerStyle(.menu)
 
             TextField("Field name", text: $fieldName)
+                .accessibilityIdentifier("studio-form-field-name")
+                .accessibilityLabel("Field name")
 
             if selectedKind.usesOptions {
                 TextField("Options, comma separated", text: $choiceOptions)
                     .textFieldStyle(.roundedBorder)
             }
 
-            HStack {
+            VStack(alignment: .leading, spacing: 8) {
                 Stepper("Width \(Int(width)) pt", value: $width, in: 80 ... 320, step: 10)
                 Stepper("Height \(Int(height)) pt", value: $height, in: 20 ... 120, step: 4)
             }
@@ -39,6 +41,7 @@ struct FormsDesigner: View {
                 Label("Insert Field", systemImage: "plus")
             }
             .disabled(controller.document == nil)
+            .accessibilityIdentifier("studio-insert-form-field")
 
             Divider()
 
@@ -49,6 +52,9 @@ struct FormsDesigner: View {
                 Text("\(controller.formFieldRows.count)")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("studio-form-field-count")
+                    .accessibilityLabel("Existing form fields")
+                    .accessibilityValue("\(controller.formFieldRows.count)")
             }
 
             if controller.formFieldRows.isEmpty {
@@ -65,9 +71,11 @@ struct FormsDesigner: View {
                     }
                 }
                 .frame(minHeight: 160)
+                .accessibilityIdentifier("studio-form-fields-list")
             }
         }
-        .padding()
+        .padding(16)
+        .foregroundStyle(AppTheme.Colors.primaryText)
         .onAppear {
             controller.loadAnnotationsIfNeeded()
         }
@@ -102,7 +110,7 @@ private struct FormFieldRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(row.annotation.fieldName?.isEmpty == false ? row.annotation.fieldName ?? "Field" : "Unnamed field")
+                Text(fieldName)
                     .font(.subheadline.weight(.semibold))
                 Spacer()
                 Text("Page \(row.pageIndex + 1)")
@@ -133,6 +141,13 @@ private struct FormFieldRow: View {
             }
         }
         .padding(.vertical, 4)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("studio-form-field-row-\(fieldName)")
+        .accessibilityLabel(fieldName)
+    }
+
+    private var fieldName: String {
+        row.annotation.fieldName?.isEmpty == false ? row.annotation.fieldName ?? "Field" : "Unnamed field"
     }
 
     private var fieldKind: String {
@@ -193,6 +208,7 @@ struct SignatureDesigner: View {
 
             Spacer()
         }
-        .padding()
+        .padding(16)
+        .foregroundStyle(AppTheme.Colors.primaryText)
     }
 }

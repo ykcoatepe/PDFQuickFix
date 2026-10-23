@@ -292,6 +292,76 @@ final class StudioLifecycleTests: XCTestCase {
         XCTAssertTrue(fixture.controller.hasUnsavedChanges)
     }
 
+    func testRemountRestoresInsertedPageViewportAndSubsequentFieldLocation() throws {
+        let source = try TestPDFBuilder.makeSimplePDF(text: "PAGE 1 ALPHA")
+        let output = temporaryURL()
+        defer {
+            try? FileManager.default.removeItem(at: source)
+            try? FileManager.default.removeItem(at: output)
+        }
+        let document = try XCTUnwrap(PDFDocument(url: source))
+        let firstPage = try XCTUnwrap(document.page(at: 0))
+        for index in 1 ... 2 {
+            document.insert(try XCTUnwrap(firstPage.copy() as? PDFPage), at: index)
+        }
+        let controller = StudioController(errorPresenter: { _ in })
+        let originalView = PDFView(frame: CGRect(x: 0, y: 0, width: 640, height: 480))
+        controller.attach(pdfView: originalView)
+        controller.setDocument(document)
+        controller.goTo(page: 0)
+        controller.selectedPageIDs = [0]
+        controller.addFormField(kind: .text, name: "Original page field", rect: CGRect(x: 30, y: 50, width: 100, height: 20))
+        XCTAssertTrue(controller.insertBlankPage(after: 0))
+        let insertedPage = try XCTUnwrap(document.page(at: 1))
+        originalView.autoScales = false
+        originalView.scaleFactor = 1.3
+        originalView.go(to: PDFDestination(page: insertedPage, at: CGPoint(x: 50, y: 400)))
+        XCTAssertTrue(originalView.currentPage === insertedPage)
+        let originalDestination = try XCTUnwrap(originalView.currentDestination)
+        let originalScale = originalView.scaleFactor
+        XCTAssertTrue(controller.saveDocument(to: output))
+        XCTAssertTrue(controller.detach(pdfView: originalView))
+
+        // SwiftUI constructs a fresh native view after switching away from Studio and back.
+        let remountedView = PDFView(frame: originalView.frame)
+        controller.attach(pdfView: remountedView)
+
+        XCTAssertTrue(remountedView.currentPage === insertedPage, "The saved page 2 must remain visible after a workbench round trip")
+        XCTAssertEqual(controller.currentPageIndex, 1)
+        XCTAssertEqual(controller.selectedPageIDs, [1])
+        XCTAssertFalse(remountedView.autoScales)
+        XCTAssertEqual(remountedView.scaleFactor, originalScale, accuracy: 0.001)
+        let remountedDestination = try XCTUnwrap(remountedView.currentDestination)
+        XCTAssertEqual(remountedDestination.point.x, originalDestination.point.x, accuracy: 1)
+        XCTAssertEqual(remountedDestination.point.y, originalDestination.point.y, accuracy: 1)
+        controller.addFormField(kind: .text, name: "After remount", rect: CGRect(x: 30, y: 80, width: 100, height: 20))
+        XCTAssertTrue(insertedPage.annotations.contains { $0.fieldName == "After remount" })
+        XCTAssertFalse(firstPage.annotations.contains { $0.fieldName == "After remount" }, "A stale preview must never send the next edit to page 1")
+    }
+
+    func testReplacingDocumentWhileDetachedDoesNotRestoreOldPage() throws {
+        let source = try TestPDFBuilder.makeSimplePDF(text: "Old document")
+        defer { try? FileManager.default.removeItem(at: source) }
+        let original = try XCTUnwrap(PDFDocument(url: source))
+        original.insert(try XCTUnwrap(original.page(at: 0)?.copy() as? PDFPage), at: 1)
+        let replacement = try XCTUnwrap(PDFDocument(url: source))
+        let controller = StudioController(errorPresenter: { _ in })
+        let originalView = PDFView(frame: CGRect(x: 0, y: 0, width: 640, height: 480))
+        controller.attach(pdfView: originalView)
+        controller.setDocument(original)
+        controller.goTo(page: 1)
+        XCTAssertTrue(originalView.currentPage === original.page(at: 1))
+        XCTAssertTrue(controller.detach(pdfView: originalView))
+        controller.setDocument(replacement)
+
+        let remountedView = PDFView(frame: originalView.frame)
+        controller.attach(pdfView: remountedView)
+
+        XCTAssertTrue(remountedView.document === replacement)
+        XCTAssertTrue(remountedView.currentPage === replacement.page(at: 0))
+        XCTAssertEqual(controller.currentPageIndex, 0)
+    }
+
     func testMutationFamiliesDirtyAndUndoDoesNotClaimClean() {
         let mutations: [(String, (StudioController) -> Void)] = [
             ("rotation", { $0.rotateCurrentPageRight() }),

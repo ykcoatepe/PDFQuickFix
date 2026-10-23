@@ -43,8 +43,8 @@ targets:
         CFBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
         CFBundleName: PDFQuickFix
         CFBundleDisplayName: PDFQuickFix
-        CFBundleVersion: "3"
-        CFBundleShortVersionString: "1.1.1"
+        CFBundleVersion: "4"
+        CFBundleShortVersionString: "1.1.2"
         LSApplicationCategoryType: public.app-category.productivity
         NSServices:
           - NSMenuItem:

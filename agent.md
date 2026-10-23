@@ -1,6 +1,6 @@
 Agent Guide — PDFQuickFix
 
-Version: 2026-10-20 • Owner: CodeForge AI
+Version: 2026-10-23 • Owner: CodeForge AI
 
 0. Quickstart
    • `make bootstrap` (if available) or `brew install xcodegen`

@@ -7,6 +7,8 @@ public enum PDFCoreObject: Equatable {
     case real(Double)
     case name(String)
     case string(String)
+    /// Parsed PDF string bytes whose encoding must be preserved verbatim.
+    case byteString(Data)
     case array([PDFCoreObject])
     case dict([String: PDFCoreObject])
     case indirectRef(object: Int, generation: Int)

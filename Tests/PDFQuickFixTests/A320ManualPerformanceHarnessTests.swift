@@ -28,7 +28,7 @@ final class A320ManualPerformanceHarnessTests: XCTestCase {
         let studioMax = environment.optionalDoubleValue(for: "PDFQF_STUDIO_OPEN_MAX_SECONDS")
         let outlineMax = environment.optionalDoubleValue(for: "PDFQF_OUTLINE_LOAD_MAX_SECONDS")
 
-        let reader = ReaderControllerPro()
+        let reader = ReaderControllerPro(recentFiles: RecentFilesManager(defaults: nil))
         reader.pdfView = PDFView()
         let readerOpenSeconds = openReader(reader, url: url, timeout: timeout)
 

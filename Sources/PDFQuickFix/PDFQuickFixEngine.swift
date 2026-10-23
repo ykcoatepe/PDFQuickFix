@@ -135,7 +135,11 @@ final class PDFQuickFixEngine {
             progress?(i + 1, pageCount)
         }
 
-        try writePDF(pages: processedPages, to: outURL)
+        try checkCancellation(shouldCancel)
+        let stagedURL = outURL.deletingLastPathComponent()
+            .appendingPathComponent(".quickfix-" + UUID().uuidString + ".pdf")
+        defer { try? FileManager.default.removeItem(at: stagedURL) }
+        try writePDF(pages: processedPages, to: stagedURL)
 
         let report = RedactionReport(pagesWithRedactions: pagesWithRedactions,
                                      totalRedactionRectCount: totalRedactionRectCount,
@@ -150,7 +154,7 @@ final class PDFQuickFixEngine {
             emptyOCRPageIndices: emptyOCRPageIndices,
             localOCRFallbackCount: localOCRFallbackCount
         )
-        guard let outputDocument = PDFDocument(url: outURL) else {
+        guard let outputDocument = PDFDocument(url: stagedURL) else {
             throw CleanupEvidenceError.unreadablePDF(fileName: outURL.lastPathComponent)
         }
         let comparison = try CleanupComparisonEngine().compare(
@@ -194,7 +198,7 @@ final class PDFQuickFixEngine {
         }
         var evidence = try CleanupEvidenceGenerator.generate(
             sourceURL: repairedURL,
-            outputURL: outURL,
+            outputURL: stagedURL,
             quickFixTelemetry: CleanupQuickFixTelemetry(
                 redactionRectangleCount: totalRedactionRectCount,
                 suppressedOCRRunCount: suppressedOCRRunCount,
@@ -215,6 +219,10 @@ final class PDFQuickFixEngine {
             let repairedDisplayName = inputURL.deletingPathExtension().lastPathComponent + "-repaired.pdf"
             evidence = evidence.replacingSourceFileName(with: repairedDisplayName)
         }
+        evidence = evidence.replacingOutputFileName(with: outURL.lastPathComponent)
+        // The destination changes only after reopening, comparison and evidence succeed.
+        try checkCancellation(shouldCancel)
+        try Data(contentsOf: stagedURL).write(to: outURL, options: .atomic)
         return QuickFixResult(
             outputURL: outURL,
             isTemporaryOutput: isTemporaryOutput ?? (outputURL == nil),
@@ -259,12 +267,13 @@ final class PDFQuickFixEngine {
                              cloudOCRProvider: CloudOCRProviding?,
                              visionProvider: VisionOCRProvider) throws -> PageProcessResult
     {
-        guard let cgPage = page.pageRef else {
+        guard page.pageRef != nil else {
             throw NSError(domain: "PDFQuickFix", code: -2, userInfo: [NSLocalizedDescriptionKey: "Missing CGPDFPage"])
         }
-        let mediaBox = cgPage.getBoxRect(.mediaBox)
-        let widthPx = Int(pointsToPixels(mediaBox.width, dpi: options.dpi))
-        let heightPx = Int(pointsToPixels(mediaBox.height, dpi: options.dpi))
+        let geometry = PDFPageGeometry(page: page)
+        let pageSize = geometry.size
+        let widthPx = max(1, Int(pointsToPixels(pageSize.width, dpi: options.dpi).rounded(.up)))
+        let heightPx = max(1, Int(pointsToPixels(pageSize.height, dpi: options.dpi).rounded(.up)))
 
         // Render original page into bitmap
         let colorSpace = CGColorSpaceCreateDeviceRGB()
@@ -278,12 +287,7 @@ final class PDFQuickFixEngine {
         ctx.interpolationQuality = .high
         ctx.setFillColor(NSColor.white.cgColor)
         ctx.fill(CGRect(x: 0, y: 0, width: widthPx, height: heightPx))
-        // Scale to pixel space
-        ctx.saveGState()
-        ctx.scaleBy(x: CGFloat(widthPx) / mediaBox.width, y: CGFloat(heightPx) / mediaBox.height)
-        ctx.translateBy(x: -mediaBox.minX, y: -mediaBox.minY)
-        ctx.drawPDFPage(cgPage)
-        ctx.restoreGState()
+        try geometry.draw(page, in: ctx, target: CGRect(x: 0, y: 0, width: widthPx, height: heightPx))
 
         guard let baseImage = ctx.makeImage() else {
             throw NSError(domain: "PDFQuickFix", code: -4, userInfo: [NSLocalizedDescriptionKey: "Failed to rasterize page"])
@@ -307,8 +311,8 @@ final class PDFQuickFixEngine {
         // Build redaction rectangles and replacement runs
         let allRegexes = redactionPatterns.map(\.regex) + customRegexes
 
-        let scaleX = CGFloat(widthPx) / mediaBox.width
-        let scaleY = CGFloat(heightPx) / mediaBox.height
+        let scaleX = CGFloat(widthPx) / pageSize.width
+        let scaleY = CGFloat(heightPx) / pageSize.height
         var redactionRectsPx: [CGRect] = []
         var replacementRunsPx: [(rect: CGRect, replacement: String)] = []
         var visionTextRuns: [RecognizedRun] = []
@@ -317,13 +321,9 @@ final class PDFQuickFixEngine {
         var redactedTextCandidates: [String] = []
 
         for rect in manualRedactions {
-            let converted = CGRect(
-                x: (rect.origin.x - mediaBox.minX) * scaleX,
-                y: (rect.origin.y - mediaBox.minY) * scaleY,
-                width: rect.size.width * scaleX,
-                height: rect.size.height * scaleY
-            )
-            redactionRectsPx.append(converted)
+            let visible = geometry.displayRect(for: rect)
+            redactionRectsPx.append(CGRect(x: visible.minX * scaleX, y: visible.minY * scaleY,
+                                          width: visible.width * scaleX, height: visible.height * scaleY))
         }
 
         let applyVisionObservations: ([VNRecognizedTextObservation]) -> Void = { [self] observations in
@@ -359,40 +359,37 @@ final class PDFQuickFixEngine {
                     }
                 }
 
-                // Build disjoint segments
-                var cursor = 0
-                var special: [(start: Int, end: Int, kind: RecognizedRun.Kind)] = []
-                special += redactionRanges.map { ($0.location, $0.location + $0.length, .skip) }
-                special += replacements.map {
-                    ($0.range.location,
-                     $0.range.location + $0.range.length,
-                     .replace(self.ruleReplacement(text: self.substring(forRange: $0.range, in: text), repl: $0.replacement)))
+                // Redaction wins every overlap, regardless of rule order or match length.
+                let ranges = redactionRanges.filter { $0.length > 0 }.sorted { $0.location < $1.location }
+                var merged: [NSRange] = []
+                for range in ranges {
+                    if let last = merged.last, NSMaxRange(last) >= range.location {
+                        merged[merged.count - 1] = NSUnionRange(last, range)
+                    } else { merged.append(range) }
+                }
+                var special: [(start: Int, end: Int, kind: RecognizedRun.Kind)] = merged.map {
+                    ($0.location, NSMaxRange($0), .skip)
+                }
+                var acceptedReplacements: [NSRange] = []
+                for replacement in replacements where replacement.range.length > 0 {
+                    let range = replacement.range
+                    guard !merged.contains(where: { NSIntersectionRange($0, range).length > 0 }),
+                          !acceptedReplacements.contains(where: { NSIntersectionRange($0, range).length > 0 }) else { continue }
+                    acceptedReplacements.append(range)
+                    special.append((range.location, NSMaxRange(range), .replace(replacement.replacement)))
                 }
                 special.sort { $0.start < $1.start }
-
+                var cursor = 0
                 var segments: [(start: Int, end: Int, kind: RecognizedRun.Kind)] = []
-                var idx = 0
-                while cursor < textLength {
-                    if idx < special.count {
-                        let s = special[idx].start
-                        let e = special[idx].end
-                        let kind = special[idx].kind
-                        if s > cursor {
-                            let substrRange = NSRange(location: cursor, length: s - cursor)
-                            let substr = substring(forRange: substrRange, in: text)
-                            segments.append((cursor, s, .keep(substr)))
-                            cursor = s
-                        } else {
-                            segments.append((s, e, kind))
-                            cursor = e
-                            idx += 1
-                        }
-                    } else {
-                        let substrRange = NSRange(location: cursor, length: textLength - cursor)
-                        let substr = substring(forRange: substrRange, in: text)
-                        segments.append((cursor, textLength, .keep(substr)))
-                        cursor = textLength
+                for edit in special {
+                    if cursor < edit.start {
+                        segments.append((cursor, edit.start, .keep(substring(forRange: NSRange(location: cursor, length: edit.start - cursor), in: text))))
                     }
+                    segments.append(edit)
+                    cursor = edit.end
+                }
+                if cursor < textLength {
+                    segments.append((cursor, textLength, .keep(substring(forRange: NSRange(location: cursor, length: textLength - cursor), in: text))))
                 }
 
                 // Convert segments to runs with rectangles
@@ -435,33 +432,17 @@ final class PDFQuickFixEngine {
         // original
         editCtx.draw(baseImage, in: CGRect(x: 0, y: 0, width: widthPx, height: heightPx))
 
-        // redact
-        editCtx.setFillColor(NSColor.black.cgColor)
-        for r in redactionRectsPx {
-            editCtx.fill(r)
-        }
-
-        // replace (white out then draw text)
-        for run in replacementRunsPx {
+        // A geometric overlap (including manual redactions) also suppresses a replacement.
+        for run in replacementRunsPx where !redactionRectsPx.contains(where: { $0.intersects(run.rect) }) {
             editCtx.setFillColor(NSColor.white.cgColor)
             editCtx.fill(run.rect)
-            // draw replacement visible
-            let fontSizePx = max(10, run.rect.height * 0.85)
-            let font = NSFont.systemFont(ofSize: fontSizePx)
-            let attrs: [NSAttributedString.Key: Any] = [
-                .font: font,
-                .foregroundColor: NSColor.black,
-            ]
-            let attributed = NSAttributedString(string: run.replacement, attributes: attrs)
-            // Core Text shares the bottom-left coordinates of the bitmap.
-            editCtx.saveGState()
-            editCtx.translateBy(x: run.rect.minX, y: run.rect.minY)
-            let framesetter = CTFramesetterCreateWithAttributedString(attributed as CFAttributedString)
-            let path = CGPath(rect: CGRect(x: 0, y: 0, width: run.rect.width, height: run.rect.height), transform: nil)
-            let frame = CTFramesetterCreateFrame(framesetter, CFRange(location: 0, length: attributed.length), path, nil)
-            CTFrameDraw(frame, editCtx)
-            editCtx.restoreGState()
+            PDFTextAppearance.draw(run.replacement, in: run.rect,
+                                   font: .systemFont(ofSize: max(1, run.rect.height * 0.85)),
+                                   color: .black, context: editCtx)
         }
+        // Draw last as a second defense against any overlapping visible edit.
+        editCtx.setFillColor(NSColor.black.cgColor)
+        for rect in redactionRectsPx { editCtx.fill(rect) }
 
         guard let finalImage = editCtx.makeImage() else {
             throw NSError(domain: "PDFQuickFix", code: -6, userInfo: [NSLocalizedDescriptionKey: "Failed to finalize page image"])
@@ -520,7 +501,7 @@ final class PDFQuickFixEngine {
             suppressedOCRRunsByRedactionMatches += suppressedByOverlap
         }
 
-        return PageProcessResult(pageSizePoints: mediaBox.size,
+        return PageProcessResult(pageSizePoints: pageSize,
                                  cgImage: finalImage,
                                  textRunsInPoints: runsInPoints,
                                  redactionRectCount: redactionRectsPx.count,

@@ -13,7 +13,7 @@ final class LargeDocumentHandlingTests: XCTestCase {
     }
 
     func testReaderProConfiguresForLargeDocument() throws {
-        let controller = ReaderControllerPro()
+        let controller = ReaderControllerPro(recentFiles: RecentFilesManager(defaults: nil))
         let pdfView = PDFView()
         controller.pdfView = pdfView
 
@@ -90,7 +90,7 @@ final class LargeDocumentHandlingTests: XCTestCase {
             parent.insertChild(child, at: 0)
         }
 
-        let reader = ReaderControllerPro()
+        let reader = ReaderControllerPro(recentFiles: RecentFilesManager(defaults: nil))
         reader.document = document
         reader.isMassiveDocument = true
         reader.loadOutlineIfNeeded()
@@ -213,7 +213,7 @@ final class LargeDocumentHandlingTests: XCTestCase {
     }
 
     func testReaderLoadsCompleteMassiveOutlineOnDemand() throws {
-        let controller = ReaderControllerPro()
+        let controller = ReaderControllerPro(recentFiles: RecentFilesManager(defaults: nil))
         let document = try makeDocumentWithOutline(pageCount: DocumentValidationRunner.massiveDocumentPageThreshold,
                                                    outlineCount: 500 + 10)
         controller.document = document
@@ -231,7 +231,7 @@ final class LargeDocumentHandlingTests: XCTestCase {
     }
 
     func testReaderInvalidatesCachedOutlineWhenDocumentIsReplaced() throws {
-        let controller = ReaderControllerPro()
+        let controller = ReaderControllerPro(recentFiles: RecentFilesManager(defaults: nil))
         let first = try makeDocumentWithOutline(pageCount: 1, outlineCount: 1, labelPrefix: "Old")
         let replacement = try makeDocumentWithOutline(pageCount: 1, outlineCount: 1, labelPrefix: "New")
         controller.document = first

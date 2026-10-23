@@ -5,6 +5,7 @@ public enum PDFCoreToken: Equatable {
     case real(String)
     case name(String)
     case string(String)
+    case byteString(Data)
     case keyword(String)
     case arrayStart
     case arrayEnd
@@ -109,22 +110,51 @@ public class PDFCoreLexer {
     }
 
     private func readString() -> PDFCoreToken {
-        // Simplified string reading (parentheses)
+        // Literal strings store decoded content; the writer re-escapes it.
         if data[cursor] == 0x28 {
             cursor += 1
-            let start = cursor
+            var bytes = Data()
             var depth = 1
             while cursor < data.count, depth > 0 {
                 let byte = data[cursor]
+                cursor += 1
+                if byte == 0x5C {
+                    guard cursor < data.count else { break }
+                    let escaped = data[cursor]
+                    cursor += 1
+                    switch escaped {
+                    case 0x6E: bytes.append(0x0A) // n
+                    case 0x72: bytes.append(0x0D) // r
+                    case 0x74: bytes.append(0x09) // t
+                    case 0x62: bytes.append(0x08) // b
+                    case 0x66: bytes.append(0x0C) // f
+                    case 0x0D:
+                        if cursor < data.count, data[cursor] == 0x0A { cursor += 1 }
+                    case 0x0A: break // Escaped end-of-line is a continuation.
+                    case 0x30 ... 0x37:
+                        var value = Int(escaped - 0x30)
+                        for _ in 0 ..< 2 {
+                            guard cursor < data.count, (0x30 ... 0x37).contains(data[cursor]) else { break }
+                            value = value * 8 + Int(data[cursor] - 0x30)
+                            cursor += 1
+                        }
+                        bytes.append(UInt8(truncatingIfNeeded: value))
+                    default: bytes.append(escaped)
+                    }
+                    continue
+                }
                 if byte == 0x28 { depth += 1 }
                 else if byte == 0x29 { depth -= 1 }
-                // Handle escapes if needed, simplified for now
-                if depth > 0 { cursor += 1 }
+                if depth > 0 {
+                    if byte == 0x0D {
+                        if cursor < data.count, data[cursor] == 0x0A { cursor += 1 }
+                        bytes.append(0x0A)
+                    } else {
+                        bytes.append(byte)
+                    }
+                }
             }
-            let range = start ..< cursor
-            cursor += 1 // Skip closing )
-            let str = String(data: data.subdata(in: range), encoding: .utf8) ?? ""
-            return .string(str)
+            return stringToken(bytes)
         }
         // Hex string <...>
         if data[cursor] == 0x3C {
@@ -154,12 +184,14 @@ public class PDFCoreLexer {
             if let high = highNibble {
                 bytes.append(high << 4)
             }
-            let str = String(data: bytes, encoding: .utf8)
-                ?? String(data: bytes, encoding: .isoLatin1)
-                ?? ""
-            return .string(str)
+            return stringToken(bytes)
         }
         return .string("")
+    }
+
+    private func stringToken(_ bytes: Data) -> PDFCoreToken {
+        if bytes.contains(where: { $0 >= 0x80 }) { return .byteString(bytes) }
+        return .string(String(decoding: bytes, as: UTF8.self))
     }
 
     private func readNumber() -> PDFCoreToken {

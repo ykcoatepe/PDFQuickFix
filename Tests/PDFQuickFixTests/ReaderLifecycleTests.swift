@@ -54,7 +54,7 @@ final class ReaderLifecycleTests: XCTestCase {
 
     func testCancelCloseKeepsEditsAndUndoButDiscardCloses() throws {
         var decision: DocumentDiscardDecision = .cancel
-        let controller = ReaderControllerPro(discardDecision: { _ in decision })
+        let controller = ReaderControllerPro(recentFiles: RecentFilesManager(defaults: nil), discardDecision: { _ in decision })
         let doc = document()
         let view = attach(doc, to: controller)
         controller.rotateCurrentPageRight()
@@ -73,7 +73,7 @@ final class ReaderLifecycleTests: XCTestCase {
     }
 
     func testSaveAsCancellationCannotApproveClose() {
-        let controller = ReaderControllerPro(discardDecision: { _ in .save }, saveDestination: { _ in nil })
+        let controller = ReaderControllerPro(recentFiles: RecentFilesManager(defaults: nil), discardDecision: { _ in .save }, saveDestination: { _ in nil })
         let doc = document()
         let view = attach(doc, to: controller)
         controller.rotateCurrentPageRight()
@@ -87,7 +87,7 @@ final class ReaderLifecycleTests: XCTestCase {
     func testFailedSaveCannotApproveClose() {
         let destination = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString).appendingPathComponent("missing.pdf")
-        let controller = ReaderControllerPro(discardDecision: { _ in .save },
+        let controller = ReaderControllerPro(recentFiles: RecentFilesManager(defaults: nil), discardDecision: { _ in .save },
                                              saveDestination: { _ in destination },
                                              errorPresenter: { _ in })
         let doc = document()
@@ -103,7 +103,7 @@ final class ReaderLifecycleTests: XCTestCase {
     func testSuccessfulSaveCheckpointsNativeFieldValue() throws {
         let output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".pdf")
         defer { try? FileManager.default.removeItem(at: output) }
-        let controller = ReaderControllerPro(saveDestination: { _ in output })
+        let controller = ReaderControllerPro(recentFiles: RecentFilesManager(defaults: nil), saveDestination: { _ in output })
         let doc = document()
         let field = PDFFormBuilder.makeTextField(name: "Text", rect: CGRect(x: 20, y: 20, width: 100, height: 30))
         field.widgetStringValue = "Before"
@@ -120,7 +120,7 @@ final class ReaderLifecycleTests: XCTestCase {
 
     func testNativeFieldFlushTriggersClosePromptBeforeKVO() {
         var prompts = 0
-        let controller = ReaderControllerPro(discardDecision: { _ in prompts += 1; return .cancel })
+        let controller = ReaderControllerPro(recentFiles: RecentFilesManager(defaults: nil), discardDecision: { _ in prompts += 1; return .cancel })
         let doc = document()
         let field = PDFFormBuilder.makeTextField(name: "Text", rect: .zero)
         doc.page(at: 0)?.addAnnotation(field)
@@ -136,7 +136,7 @@ final class ReaderLifecycleTests: XCTestCase {
     func testSavePanelReentrantEditCancelsBeforeDestinationWrite() {
         let output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".pdf")
         var controller: ReaderControllerPro!
-        controller = ReaderControllerPro(saveDestination: { _ in
+        controller = ReaderControllerPro(recentFiles: RecentFilesManager(defaults: nil), saveDestination: { _ in
             controller.rotateCurrentPageRight()
             return output
         })
@@ -152,7 +152,7 @@ final class ReaderLifecycleTests: XCTestCase {
         let source = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".pdf")
         defer { try? FileManager.default.removeItem(at: source) }
         XCTAssertTrue(document().write(to: source))
-        let controller = ReaderControllerPro(repairSourceURL: { $0 }, discardDecision: { _ in .discard }, errorPresenter: { _ in })
+        let controller = ReaderControllerPro(recentFiles: RecentFilesManager(defaults: nil), repairSourceURL: { $0 }, discardDecision: { _ in .discard }, errorPresenter: { _ in })
         let view = View(frame: CGRect(x: 0, y: 0, width: 300, height: 400))
         controller.pdfView = view
         controller.open(url: source)
@@ -173,7 +173,7 @@ final class ReaderLifecycleTests: XCTestCase {
         let source = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".pdf")
         defer { try? FileManager.default.removeItem(at: source) }
         XCTAssertTrue(document().write(to: source, withOptions: [.userPasswordOption: "user", .ownerPasswordOption: "owner"]))
-        let controller = ReaderControllerPro(passwordProvider: { _ in nil }, discardDecision: { _ in .discard })
+        let controller = ReaderControllerPro(recentFiles: RecentFilesManager(defaults: nil), passwordProvider: { _ in nil }, discardDecision: { _ in .discard })
         let original = document()
         let view = attach(original, to: controller)
         controller.rotateCurrentPageRight()
@@ -189,7 +189,7 @@ final class ReaderLifecycleTests: XCTestCase {
         let source = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".pdf")
         defer { try? FileManager.default.removeItem(at: source) }
         XCTAssertTrue(document().write(to: source))
-        let controller = ReaderControllerPro(repairSourceURL: { $0 }, discardDecision: { _ in .discard })
+        let controller = ReaderControllerPro(recentFiles: RecentFilesManager(defaults: nil), repairSourceURL: { $0 }, discardDecision: { _ in .discard })
         let original = document()
         let view = attach(original, to: controller)
         controller.open(url: source)
@@ -213,7 +213,7 @@ final class ReaderLifecycleTests: XCTestCase {
         let source = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".pdf")
         defer { try? FileManager.default.removeItem(at: source) }
         XCTAssertTrue(document().write(to: source))
-        let controller = ReaderControllerPro(repairSourceURL: { $0 }, discardDecision: { _ in .discard })
+        let controller = ReaderControllerPro(recentFiles: RecentFilesManager(defaults: nil), repairSourceURL: { $0 }, discardDecision: { _ in .discard })
         let original = document()
         let field = PDFFormBuilder.makeTextField(name: "Pending", rect: CGRect(x: 10, y: 10, width: 100, height: 30))
         field.widgetStringValue = "Before"
@@ -243,7 +243,7 @@ final class ReaderLifecycleTests: XCTestCase {
     }
 
     func testPageNotificationsTrackCurrentViewAndIgnoreOldView() {
-        let controller = ReaderControllerPro()
+        let controller = ReaderControllerPro(recentFiles: RecentFilesManager(defaults: nil))
         let doc = document()
         let oldView = attach(doc, to: controller)
         oldView.displayedPage = doc.page(at: 1)
@@ -259,7 +259,7 @@ final class ReaderLifecycleTests: XCTestCase {
     }
 
     func testViewTeardownRetainsLinksWhenNativeEditorRefusesCommit() {
-        let controller = ReaderControllerPro()
+        let controller = ReaderControllerPro(recentFiles: RecentFilesManager(defaults: nil))
         let view = RepresentedView()
         let window = EditingWindow(contentRect: .zero, styleMask: [], backing: .buffered, defer: true)
         view.editingWindow = window
@@ -280,7 +280,7 @@ final class ReaderLifecycleTests: XCTestCase {
     }
 
     func testQueuedSearchMatchCannotReappearAfterClearOrReplacement() async {
-        let controller = ReaderControllerPro()
+        let controller = ReaderControllerPro(recentFiles: RecentFilesManager(defaults: nil))
         let doc = document()
         controller.document = doc
         let selection = PDFSelection(document: doc)

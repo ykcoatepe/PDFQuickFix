@@ -93,12 +93,23 @@ struct StudioView: View, Equatable {
                         centerColumn
                             .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
 
-                        if layout.showsRightColumn {
-                            Divider().overlay(AppTheme.Colors.cardBorder.opacity(0.6))
-                            rightColumn
-                                .frame(width: layout.rightColumnWidth)
-                                .background(AppTheme.Colors.sidebarBackground)
+                        Divider().overlay(AppTheme.Colors.cardBorder.opacity(0.6))
+                        VStack(spacing: 0) {
+                            Picker("Studio tool", selection: $selectedTool) {
+                                ForEach(StudioTool.allCases) { tool in
+                                    Label(tool.rawValue, systemImage: tool.systemImage).tag(tool)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .padding(12)
+                            .accessibilityIdentifier("studio-tool-picker")
+                            .accessibilityLabel("Studio tool")
+                            Divider()
+                            inspectorPanel
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
                         }
+                        .frame(width: layout.rightColumnWidth)
+                        .background(AppTheme.Colors.sidebarBackground)
                     }
                     .background(AppTheme.Colors.background)
                 }
@@ -458,46 +469,6 @@ struct StudioView: View, Equatable {
         .background(AppTheme.Colors.background)
     }
 
-    private var rightColumn: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("Annotations")
-                    .font(.headline)
-                Spacer()
-            }
-
-            if controller.isLargeDocument {
-                Text("Annotation listing is deferred for large documents. Use page review first, then inspect notes when needed.")
-                    .font(.caption)
-                    .foregroundColor(AppTheme.Colors.secondaryText)
-            } else {
-                if controller.annotationRows.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("No annotation evidence yet")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundColor(AppTheme.Colors.primaryText)
-                        Text("Comments, highlights, and note annotations from the current PDF will appear here while you prepare the outbound copy.")
-                            .font(.caption)
-                            .foregroundColor(AppTheme.Colors.secondaryText)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 4)
-                } else {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 8) {
-                            ForEach(controller.annotationRows) { row in
-                                annotationRow(row)
-                            }
-                        }
-                        .padding(.vertical, 4)
-                    }
-                }
-            }
-        }
-        .padding(12)
-        .foregroundColor(AppTheme.Colors.primaryText)
-    }
-
     // MARK: - Pieces
 
     private func pageRow(for snapshot: PageSnapshot) -> some View {
@@ -714,19 +685,7 @@ struct StudioView: View, Equatable {
 
     private var pageTitle: String {
         guard let doc = controller.document else { return "No document" }
-        let current: Int? = {
-            if let selected = controller.selectedPageIDs.sorted().first { return selected }
-            if let view = controller.pdfView, let page = view.currentPage {
-                let idx = doc.index(for: page)
-                return idx >= 0 ? idx : nil
-            }
-            return nil
-        }()
-        if let idx = current {
-            return "Page \(idx + 1) of \(doc.pageCount)"
-        } else {
-            return "Page 1 of \(doc.pageCount)"
-        }
+        return "Page \(min(controller.currentPageIndex + 1, max(doc.pageCount, 1))) of \(doc.pageCount)"
     }
 
     private var emptyPlaceholder: some View {
@@ -774,9 +733,10 @@ struct StudioView: View, Equatable {
         case .comments:
             CommentsPanel()
         case .forms:
-            FormsDesigner()
+            ScrollView { FormsDesigner() }
+                .accessibilityIdentifier("studio-forms-scroll")
         case .sign:
-            SignatureDesigner()
+            ScrollView { SignatureDesigner() }
         case .measure:
             MeasureInspectorPanel(reading: $measurementReading, unit: $measurementUnit)
         }
@@ -1211,11 +1171,7 @@ private struct StudioLayout {
     let width: CGFloat
 
     var showsLeftColumn: Bool {
-        true
-    }
-
-    var showsRightColumn: Bool {
-        width > 1200
+        width >= 1200
     }
 
     var leftColumnWidth: CGFloat {
@@ -1223,7 +1179,7 @@ private struct StudioLayout {
     }
 
     var rightColumnWidth: CGFloat {
-        width > 1200 ? 260 : 0
+        340
     }
 }
 

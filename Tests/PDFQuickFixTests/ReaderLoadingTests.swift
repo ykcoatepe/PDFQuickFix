@@ -13,9 +13,16 @@ final class ReaderLoadingTests: XCTestCase {
     }
 
     func testReaderControllerOpenCompletes() throws {
-        let controller = ReaderControllerPro()
+        let recentFiles = RecentFilesManager(defaults: nil)
+        let controller = ReaderControllerPro(recentFiles: recentFiles)
         let pdfURL = try TestPDFBuilder.makeSimplePDF(text: "Reader")
         let expectation = expectation(description: "Reader controller finished loading PDF")
+        let recentAdded = self.expectation(description: "Opened document recorded in the injected history")
+
+        recentFiles.$recentFiles
+            .first { $0.contains { $0.displayName == pdfURL.lastPathComponent } }
+            .sink { _ in recentAdded.fulfill() }
+            .store(in: &cancellables)
 
         controller.$document
             .compactMap(\.self)
@@ -27,9 +34,10 @@ final class ReaderLoadingTests: XCTestCase {
             controller.open(url: pdfURL)
         }
 
-        wait(for: [expectation], timeout: 5.0)
+        wait(for: [expectation, recentAdded], timeout: 5.0)
         XCTAssertNotNil(controller.document)
         XCTAssertFalse(controller.isLoadingDocument)
+        XCTAssertEqual(recentFiles.recentFiles.first?.pageCount, 1)
     }
 
     func testReaderControllerNewestOpenWinsWhenEarlierRepairCompletesLast() throws {
@@ -37,7 +45,7 @@ final class ReaderLoadingTests: XCTestCase {
         let secondURL = try TestPDFBuilder.makeMultipagePDF(pageCount: 2, textPrefix: "Second reader document")
         let firstRepairStarted = expectation(description: "First reader repair started")
         let releaseFirstRepair = DispatchSemaphore(value: 0)
-        let controller = ReaderControllerPro(repairSourceURL: { url in
+        let controller = ReaderControllerPro(recentFiles: RecentFilesManager(defaults: nil), repairSourceURL: { url in
             if url == firstURL {
                 firstRepairStarted.fulfill()
                 releaseFirstRepair.wait()
@@ -70,7 +78,7 @@ final class ReaderLoadingTests: XCTestCase {
     }
 
     func testReaderControllerOpensEncryptedPDFWithPasswordProvider() throws {
-        let controller = ReaderControllerPro(passwordProvider: { _ in "user-pass" })
+        let controller = ReaderControllerPro(recentFiles: RecentFilesManager(defaults: nil), passwordProvider: { _ in "user-pass" })
         let pdfURL = try makeEncryptedPDF()
         let expectation = expectation(description: "Reader controller unlocked encrypted PDF")
 
@@ -98,7 +106,7 @@ final class ReaderLoadingTests: XCTestCase {
     }
 
     func testReaderImageExportSnapshotKeepsEncryptedPagesRenderable() throws {
-        let controller = ReaderControllerPro(passwordProvider: { _ in "user-pass" })
+        let controller = ReaderControllerPro(recentFiles: RecentFilesManager(defaults: nil), passwordProvider: { _ in "user-pass" })
         let pdfURL = try makeEncryptedPDF()
         let expectation = expectation(description: "Reader controller unlocked encrypted PDF for image export")
 
@@ -123,7 +131,7 @@ final class ReaderLoadingTests: XCTestCase {
     }
 
     func testReaderControllerPreservesExistingDocumentWhenEncryptedUnlockFails() throws {
-        let controller = ReaderControllerPro(passwordProvider: { _ in "wrong-pass" })
+        let controller = ReaderControllerPro(recentFiles: RecentFilesManager(defaults: nil), passwordProvider: { _ in "wrong-pass" })
         let view = PDFView()
         controller.pdfView = view
         let initialURL = try TestPDFBuilder.makeSimplePDF(text: "Initial")

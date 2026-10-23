@@ -72,10 +72,14 @@ final class LMStudioClient: LocalAITextGenerating, LocalAIModelListing {
 
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = requestTimeout
-        let session = URLSession(configuration: config)
+        let session = URLSession(configuration: config, delegate: LocalAIRedirectBlocker(), delegateQueue: nil)
         defer { session.invalidateAndCancel() }
 
-        let (data, _) = try await session.data(for: request)
+        let (data, response) = try await session.data(for: request)
+        guard let response = response as? HTTPURLResponse,
+              (200 ..< 300).contains(response.statusCode),
+              response.url?.absoluteURL == url.absoluteURL
+        else { throw LMStudioClientError.requestFailed }
         return data
     }
 

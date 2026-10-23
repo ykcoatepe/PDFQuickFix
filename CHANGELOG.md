@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-10-23
+
+### Fixed
+- QuickFix and Studio exports preserve visible crop bounds and rotation. The PDFKit drawing guard retains annotations and rejects incomplete export appearances after a caught drawing exception.
+- Privacy Clean copies preserve upright content, visible crop bounds and custom page dimensions, and reject incomplete page appearances.
+- Redaction takes precedence over overlapping text replacement; fitted replacement text remains visible at the default 300 DPI. Late QuickFix cancellation preserves existing destinations.
+- Studio's Forms, Sign, Organize, Bookmarks, Comments and Measure inspectors follow the selected tool at normal window widths. Image exports create separate output folders and report incomplete writes.
+- Switching workbenches preserves Studio's displayed page, position and zoom, keeping subsequent edits on the displayed page.
+- Flattening excludes temporary selection handles while retaining visible annotations. Watermarks preserve complete text, angle and opacity after saving.
+- Locked sanitization and unsupported encrypted structural repair fail without publishing blank or corrupted PDFs. Invalid empty object graphs return an error instead of terminating the process.
+- Source-file aliases, split-output collisions and destinations created during batch processing receive explicit protection against accidental overwrite.
+- Structural repair preserves escaped PDF strings and non-ASCII byte payloads, including UTF-16 metadata. Batch cancellation and split rollback preserve concurrent replacements and report retained recovery files.
+- QuickFix processing and AI callbacks retain document identity. Model refreshes cannot overwrite a newly selected provider; local AI redirects are rejected before sending document content onward, and citations use actual PDF page indices.
+- Automated tests use isolated recent-file and AI-history stores. QuickFix saved receipts rebuild from the actual saved destination.
+
+## [1.1.1] - 2026-10-20
+
 ### Fixed
 - Reader and Studio now load the complete PDF outline, including headings beyond the former 500-item limit in very large manuals. Outline loading remains on demand for massive documents.
 - Outline traversal preserves deeply nested headings without recursive stack growth, skips repeated nodes in malformed trees, and no longer rejects valid saves solely because an outline exceeds 512 levels.

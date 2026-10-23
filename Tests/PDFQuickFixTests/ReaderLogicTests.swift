@@ -9,7 +9,7 @@ final class ReaderLogicTests: XCTestCase {
 
     override func setUp() {
         super.setUp()
-        controller = ReaderControllerPro()
+        controller = ReaderControllerPro(recentFiles: RecentFilesManager(defaults: nil))
     }
 
     func testInitialState() {

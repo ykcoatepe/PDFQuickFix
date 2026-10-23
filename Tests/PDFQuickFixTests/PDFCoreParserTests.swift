@@ -2,6 +2,13 @@ import PDFCore
 import XCTest
 
 final class PDFCoreParserTests: XCTestCase {
+    func testUnterminatedTrailerDictionaryFailsClosed() {
+        let data = Data("%PDF-1.4\nxref\n0 1\n0000000000 65535 f \ntrailer\n<< /Size 1\nstartxref\n9\n%%EOF\n".utf8)
+        XCTAssertThrowsError(try PDFCoreParser(data: data).parseDocument()) {
+            guard case PDFCoreError.syntax = $0 else { return XCTFail("Unexpected error: \($0)") }
+        }
+    }
+
     func testParseSimplePDF() throws {
         let simplePDF = """
         %PDF-1.4
@@ -276,7 +283,7 @@ final class PDFCoreParserTests: XCTestCase {
         // Obj 12: << /Type /Page /Parent 11 0 R >>
 
         let obj11Content = "<< /Type /Pages /Kids [12 0 R] /Count 1 >>"
-        let obj12Content = "<< /Type /Page /Parent 11 0 R >>"
+        let obj12Content = #"<< /Type /Page /Parent 11 0 R /Binary (\200\377) /HexBinary <80FF> >>"#
 
         // Index:
         // 11 0
@@ -373,6 +380,15 @@ final class PDFCoreParserTests: XCTestCase {
         if case let .name(t) = d12["Type"] {
             XCTAssertEqual(t, "Page")
         } else { XCTFail() }
+        XCTAssertEqual(d12["Binary"], .byteString(Data([0x80, 0xFF])))
+        XCTAssertEqual(d12["HexBinary"], .byteString(Data([0x80, 0xFF])))
+        let rewritten = try PDFCoreWriter.write(document: doc)
+        let reparsed = try PDFCoreParser(data: rewritten).parseDocument()
+        guard case let .dict(rewrittenPage) = reparsed.objects[PDFCoreObjectRef(objectNumber: 12, generation: 0)] else {
+            return XCTFail("Rewritten object-stream page missing")
+        }
+        XCTAssertEqual(rewrittenPage["Binary"], .byteString(Data([0x80, 0xFF])))
+        XCTAssertEqual(rewrittenPage["HexBinary"], .byteString(Data([0x80, 0xFF])))
     }
 
     func testIncrementalUpdateClassic() throws {

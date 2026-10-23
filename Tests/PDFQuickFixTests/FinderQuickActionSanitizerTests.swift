@@ -5,6 +5,30 @@ import PDFKit
 import XCTest
 
 final class FinderQuickActionSanitizerTests: XCTestCase {
+    func testLockedInputRefusesEveryProfileAndPreservesExistingOutput() throws {
+        let sourceURL = try TestPDFBuilder.makeSimplePDF(text: "Locked Finder content")
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+            try? FileManager.default.removeItem(at: sourceURL)
+        }
+        let encryptedURL = directory.appendingPathComponent("encrypted.pdf")
+        let document = try XCTUnwrap(PDFDocument(url: sourceURL))
+        XCTAssertTrue(document.write(to: encryptedURL, withOptions: [.userPasswordOption: "secret", .ownerPasswordOption: "owner"]))
+        let encryptedBytes = try Data(contentsOf: encryptedURL)
+        let outputURL = directory.appendingPathComponent("output.pdf")
+        let sentinel = Data("EXISTING OUTPUT".utf8)
+        for profile in SanitizeProfile.allCases {
+            try sentinel.write(to: outputURL)
+            XCTAssertThrowsError(try FinderQuickActionSanitizer.sanitizeFile(sourceURL: encryptedURL, outputURL: outputURL, profile: profile)) {
+                guard case PDFDocumentSanitizerError.lockedDocument = $0 else { return XCTFail("Unexpected error: \($0)") }
+            }
+            XCTAssertEqual(try Data(contentsOf: encryptedURL), encryptedBytes)
+            XCTAssertEqual(try Data(contentsOf: outputURL), sentinel)
+        }
+    }
+
     func testPasteboardExtractsOnlyUniquePDFFileURLs() throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

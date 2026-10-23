@@ -40,6 +40,7 @@ public class PDFCoreParser {
         var primaryTrailer: PDFCoreObject?
         var currentOffset = startXrefOffset
         var visitedOffsets = Set<Int>()
+        var isEncrypted = false
 
         while true {
             // Prevent cycles
@@ -48,6 +49,14 @@ public class PDFCoreParser {
 
             // Parse this section
             let result = try parseXRef(at: currentOffset)
+            if case let .dict(trailer) = result.trailer,
+               let encryption = trailer["Encrypt"]
+            {
+                switch encryption {
+                case .null: break
+                default: isEncrypted = true
+                }
+            }
 
             // Record frees first so older revisions don't revive them
             for freed in result.freedObjects {
@@ -127,7 +136,7 @@ public class PDFCoreParser {
         // 6. Process Object Streams
         try processObjectStreams(into: &objects)
 
-        return PDFCoreDocument(objects: objects, rootRef: rootRef, infoRef: infoRef)
+        return PDFCoreDocument(objects: objects, rootRef: rootRef, infoRef: infoRef, isEncrypted: isEncrypted)
     }
 
     private struct XRefResult {
@@ -276,6 +285,8 @@ public class PDFCoreParser {
             return .name(s)
         case let .string(s):
             return .string(s)
+        case let .byteString(bytes):
+            return .byteString(bytes)
         case .keyword("true"):
             return .bool(true)
         case .keyword("false"):
@@ -339,7 +350,9 @@ public class PDFCoreParser {
     private func parseDictContent() throws -> PDFCoreObject {
         var dict: [String: PDFCoreObject] = [:]
         while true {
-            guard let keyToken = lexer.nextToken() else { break }
+            guard let keyToken = lexer.nextToken(), keyToken != .eof else {
+                throw PDFCoreError.syntax("Unterminated dictionary")
+            }
             if case .dictEnd = keyToken { break }
 
             guard case let .name(key) = keyToken else {
@@ -639,6 +652,8 @@ public class PDFCoreParser {
             return .name(s)
         case let .string(s):
             return .string(s)
+        case let .byteString(bytes):
+            return .byteString(bytes)
         case .keyword("true"):
             return .bool(true)
         case .keyword("false"):
@@ -675,7 +690,9 @@ public class PDFCoreParser {
     private func parseDictContent(with customLexer: PDFCoreLexer) throws -> PDFCoreObject {
         var dict: [String: PDFCoreObject] = [:]
         while true {
-            guard let keyToken = customLexer.nextToken() else { break }
+            guard let keyToken = customLexer.nextToken(), keyToken != .eof else {
+                throw PDFCoreError.syntax("Unterminated dictionary in ObjStm")
+            }
             if case .dictEnd = keyToken { break }
             guard case let .name(key) = keyToken else { continue }
             let value = try parseObject(with: customLexer)

@@ -4,6 +4,7 @@ import PDFKit
 
 public enum PDFDocumentSanitizerError: LocalizedError {
     case unableToOpen(URL)
+    case lockedDocument
     case pageRenderFailed(page: Int, reason: String)
     case cancelled
 
@@ -11,6 +12,8 @@ public enum PDFDocumentSanitizerError: LocalizedError {
         switch self {
         case let .unableToOpen(url):
             "Belge açılamadı: \(url.lastPathComponent)."
+        case .lockedDocument:
+            "PDF parola ile kilitli. Temizlemeden önce belgenin kilidini açın."
         case let .pageRenderFailed(page, reason):
             "PDF içeriği sayfa \(page) sırasında işlenemedi: \(reason)."
         case .cancelled:
@@ -96,6 +99,9 @@ public enum PDFDocumentSanitizer {
 
     private static let dateFormatter = ISO8601DateFormatter()
     private static let dateFormatterLock = NSLock()
+    // Optional host-guard contract shared with PDFPageGuard.m. A changed
+    // thread-local count means native drawing fell back to preview-only content.
+    private static let pageDrawingFailuresKey = "PDFQuickFixPageDrawingFailureCount"
 
     @discardableResult
     public static func sanitize(document original: PDFDocument,
@@ -105,6 +111,9 @@ public enum PDFDocumentSanitizer {
                                 remoteBaseline: PDFDocumentSerializer.RemoteOutlineBaseline? = nil,
                                 shouldCancel: () -> Bool = { false }) throws -> PDFDocument
     {
+        guard !original.isLocked else {
+            throw PDFDocumentSanitizerError.lockedDocument
+        }
         enforceStructureTreeOff(original)
 
         var attributesChanged = false
@@ -492,9 +501,12 @@ public enum PDFDocumentSanitizer {
     private static func rebuildDocumentByRasterizing(_ document: PDFDocument,
                                                      shouldCancel: () -> Bool) throws -> PDFDocument?
     {
+        guard let firstPage = document.page(at: 0),
+              var initialBounds = rasterizedBounds(for: firstPage)
+        else { return nil }
         let data = NSMutableData()
         guard let consumer = CGDataConsumer(data: data as CFMutableData),
-              let ctx = CGContext(consumer: consumer, mediaBox: nil, nil)
+              let ctx = CGContext(consumer: consumer, mediaBox: &initialBounds, nil)
         else {
             return nil
         }
@@ -504,12 +516,13 @@ public enum PDFDocumentSanitizer {
             guard let page = document.page(at: index) else { return nil }
             var shouldAbort = false
             autoreleasepool {
-                let bounds = page.bounds(for: .mediaBox)
-                guard let image = rasterize(page: page, bounds: bounds) else {
+                guard var bounds = rasterizedBounds(for: page),
+                      let image = rasterize(page: page, bounds: bounds) else {
                     shouldAbort = true
                     return
                 }
-                let pageInfo = [kCGPDFContextMediaBox as String: bounds] as CFDictionary
+                let boxData = Data(bytes: &bounds, count: MemoryLayout<CGRect>.size)
+                let pageInfo = [kCGPDFContextMediaBox as String: boxData as CFData] as CFDictionary
                 ctx.beginPDFPage(pageInfo)
                 ctx.draw(image, in: bounds)
                 ctx.endPDFPage()
@@ -521,9 +534,20 @@ public enum PDFDocumentSanitizer {
         return PDFDocument(data: data as Data)
     }
 
+    private static func rasterizedBounds(for page: PDFPage) -> CGRect? {
+        let size = page.bounds(for: .cropBox).applying(page.transform(for: .cropBox)).standardized.size
+        guard size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0 else { return nil }
+        return CGRect(origin: .zero, size: size)
+    }
+
     private static func rasterize(page: PDFPage, bounds: CGRect, scale: CGFloat = 2.0) -> CGImage? {
-        let width = max(Int(bounds.width * scale), 1)
-        let height = max(Int(bounds.height * scale), 1)
+        let scaledWidth = ceil(bounds.width * scale)
+        let scaledHeight = ceil(bounds.height * scale)
+        guard scaledWidth.isFinite, scaledHeight.isFinite,
+              scaledWidth > 0, scaledHeight > 0,
+              scaledWidth < CGFloat(Int.max), scaledHeight < CGFloat(Int.max) else { return nil }
+        let width = Int(scaledWidth)
+        let height = Int(scaledHeight)
         guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) else { return nil }
         guard let ctx = CGContext(data: nil,
                                   width: width,
@@ -537,12 +561,16 @@ public enum PDFDocumentSanitizer {
         ctx.setFillColor(gray: 1, alpha: 1)
         ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
 
+        let failuresBefore = (Thread.current.threadDictionary[pageDrawingFailuresKey] as? NSNumber)?.uintValue ?? 0
         ctx.saveGState()
-        ctx.scaleBy(x: scale, y: scale)
-        ctx.translateBy(x: 0, y: bounds.height)
-        ctx.scaleBy(x: 1, y: -1)
-        page.draw(with: .mediaBox, to: ctx)
+        ctx.scaleBy(x: CGFloat(width) / bounds.width, y: CGFloat(height) / bounds.height)
+        ctx.clip(to: bounds)
+        // Native PDFKit drawing already applies CropBox offset and rotation in
+        // Quartz coordinates. An extra page transform or Y flip corrupts it.
+        page.draw(with: .cropBox, to: ctx)
         ctx.restoreGState()
+        let failuresAfter = (Thread.current.threadDictionary[pageDrawingFailuresKey] as? NSNumber)?.uintValue ?? 0
+        guard failuresAfter == failuresBefore else { return nil }
 
         return ctx.makeImage()
     }
