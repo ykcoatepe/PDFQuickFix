@@ -106,7 +106,7 @@ private struct FormFieldRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(row.annotation.fieldName?.isEmpty == false ? row.annotation.fieldName ?? "Field" : "Unnamed field")
+                Text(fieldName)
                     .font(.subheadline.weight(.semibold))
                 Spacer()
                 Text("Page \(row.pageIndex + 1)")
@@ -137,6 +137,13 @@ private struct FormFieldRow: View {
             }
         }
         .padding(.vertical, 4)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("studio-form-field-row-\(fieldName)")
+        .accessibilityLabel(fieldName)
+    }
+
+    private var fieldName: String {
+        row.annotation.fieldName?.isEmpty == false ? row.annotation.fieldName ?? "Field" : "Unnamed field"
     }
 
     private var fieldKind: String {

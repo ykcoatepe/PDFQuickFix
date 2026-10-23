@@ -7,34 +7,45 @@ final class StudioInspectorUITests: XCTestCase {
         let name = app.textFields["studio-form-field-name"]
         XCTAssertTrue(name.waitForExistence(timeout: 5))
         name.click()
-        name.typeText("Inspector regression field")
+        let fieldName = "Inspector regression field"
+        name.typeText(fieldName)
         let insert = app.buttons["studio-insert-form-field"]
         XCTAssertTrue(insert.isEnabled)
         insert.click()
-        XCTAssertTrue(app.staticTexts["Inspector regression field"].waitForExistence(timeout: 5))
+        let fieldRow = app.descendants(matching: .any)["studio-form-field-row-\(fieldName)"]
+        XCTAssertTrue(fieldRow.waitForExistence(timeout: 5))
+        XCTAssertEqual(fieldRow.label, fieldName)
 
         selectTool("Organize", in: app)
         XCTAssertTrue(app.buttons["Duplicate"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["studio-insert-form-field"].exists)
         selectTool("Forms", in: app)
-        XCTAssertTrue(app.staticTexts["Inspector regression field"].waitForExistence(timeout: 5), "Changing inspectors must preserve edits in the current document")
+        XCTAssertTrue(fieldRow.waitForExistence(timeout: 5), "Changing inspectors must preserve edits in the current document")
+        XCTAssertEqual(fieldRow.label, fieldName)
     }
 
     func testOrganizeAddsBlankPageAndSignInspectorIsReachable() {
         let app = launchStudio()
         selectTool("Organize", in: app)
-        let add = app.menuButtons["Add"]
+        let pageCount = app.descendants(matching: .any)["studio-organizer-page-count"]
+        assertValue("1", of: pageCount)
+        let add = app.descendants(matching: .any)["studio-organizer-add"]
         XCTAssertTrue(add.waitForExistence(timeout: 5))
         add.click()
         let blankPage = app.menuItems["Blank Page"]
         XCTAssertTrue(blankPage.waitForExistence(timeout: 5))
         blankPage.click()
-        XCTAssertTrue(app.staticTexts["Page 2"].waitForExistence(timeout: 5), "The organizer must act on the currently open single-page fixture")
+        assertValue("2", of: pageCount, message: "Adding a blank page must increment the current document from 1 page to 2")
         XCTAssertTrue(app.buttons["Duplicate"].isEnabled)
 
         selectTool("Sign", in: app)
         XCTAssertTrue(app.staticTexts["Create your signature"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.descendants(matching: .any)["studio-tool-picker"].exists)
+    }
+
+    private func assertValue(_ value: String, of element: XCUIElement, message: String = "", file: StaticString = #filePath, line: UInt = #line) {
+        let matches = expectation(for: NSPredicate(format: "exists == true AND value == %@", value), evaluatedWith: element)
+        XCTAssertEqual(XCTWaiter.wait(for: [matches], timeout: 5), .completed, message, file: file, line: line)
     }
 
     private func launchStudio() -> XCUIApplication {

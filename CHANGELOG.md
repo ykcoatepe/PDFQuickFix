@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - QuickFix and Studio exports preserve visible crop bounds and rotation. The PDFKit drawing guard retains annotations and rejects incomplete export appearances after a caught drawing exception.
+- Privacy Clean copies preserve upright content, visible crop bounds and custom page dimensions, and reject incomplete page appearances.
 - Redaction takes precedence over overlapping text replacement; fitted replacement text remains visible at the default 300 DPI. Late QuickFix cancellation preserves existing destinations.
 - Studio's Forms, Sign, Organize, Bookmarks, Comments and Measure inspectors follow the selected tool at normal window widths. Image exports create separate output folders and report incomplete writes.
 - Switching workbenches preserves Studio's displayed page, position and zoom, keeping subsequent edits on the displayed page.

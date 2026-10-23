@@ -10,6 +10,8 @@ struct PageOrganizerView: View {
             HStack {
                 Text("Pages")
                     .font(.headline)
+                    .accessibilityIdentifier("studio-organizer-page-count")
+                    .accessibilityValue("\(controller.document?.pageCount ?? 0)")
                 Spacer()
                 Menu("Add") {
                     Button("Blank Page") {
@@ -23,6 +25,7 @@ struct PageOrganizerView: View {
                     .disabled(controller.document == nil)
                 }
                 .disabled(controller.document == nil)
+                .accessibilityIdentifier("studio-organizer-add")
             }
 
             HStack(spacing: 8) {
