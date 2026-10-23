@@ -734,6 +734,7 @@ struct StudioView: View, Equatable {
             CommentsPanel()
         case .forms:
             ScrollView { FormsDesigner() }
+                .accessibilityIdentifier("studio-forms-scroll")
         case .sign:
             ScrollView { SignatureDesigner() }
         case .measure:

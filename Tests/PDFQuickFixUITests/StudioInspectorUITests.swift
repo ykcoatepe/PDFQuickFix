@@ -18,17 +18,15 @@ final class StudioInspectorUITests: XCTestCase {
         name.typeText(fieldName)
         guard assertValue(fieldName, of: name, in: app, stage: "entered-name",
                           message: "The complete requested name must reach the input before insertion") else { return }
+        let formsScroll = app.scrollViews["studio-forms-scroll"]
         let insert = app.buttons["studio-insert-form-field"]
+        guard scrollIntoView(insert, in: formsScroll, app: app, stage: "insert-visible") else { return }
         guard require(insert.isEnabled, in: app, stage: "insert-enabled",
                       message: "Insert Field must be available for the opened fixture") else { return }
         insert.click()
         guard assertValue("1", of: fieldCount, in: app, stage: "inserted-field-count",
                           message: "Insert Field must publish a real form annotation in the current document") else { return }
-        let fieldRow = app.descendants(matching: .any)["studio-form-field-row-\(fieldName)"]
-        guard require(fieldRow.waitForExistence(timeout: 5), in: app, stage: "inserted-field-row",
-                      message: "The newly inserted annotation must expose its named row") else { return }
-        guard require(fieldRow.label == fieldName, in: app, stage: "inserted-field-name",
-                      message: "The annotation row must retain the exact requested field name") else { return }
+        guard verifyNamedField(fieldName, in: app, scrollView: formsScroll, stage: "inserted-field") else { return }
 
         selectTool("Organize", in: app)
         XCTAssertTrue(app.buttons["Duplicate"].waitForExistence(timeout: 5))
@@ -36,10 +34,7 @@ final class StudioInspectorUITests: XCTestCase {
         selectTool("Forms", in: app)
         guard assertValue("1", of: fieldCount, in: app, stage: "remounted-field-count",
                           message: "Changing inspectors must preserve the inserted annotation") else { return }
-        guard require(fieldRow.waitForExistence(timeout: 5), in: app, stage: "remounted-field-row",
-                      message: "Changing inspectors must preserve the named annotation row") else { return }
-        _ = require(fieldRow.label == fieldName, in: app, stage: "remounted-field-name",
-                    message: "The remounted row must retain the exact requested field name")
+        _ = verifyNamedField(fieldName, in: app, scrollView: formsScroll, stage: "remounted-field")
     }
 
     func testOrganizeAddsBlankPageAndSignInspectorIsReachable() {
@@ -59,6 +54,44 @@ final class StudioInspectorUITests: XCTestCase {
         selectTool("Sign", in: app)
         XCTAssertTrue(app.staticTexts["Create your signature"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.descendants(matching: .any)["studio-tool-picker"].exists)
+    }
+
+    private func verifyNamedField(_ name: String, in app: XCUIApplication, scrollView: XCUIElement, stage: String) -> Bool {
+        let fieldsList = app.descendants(matching: .any)["studio-form-fields-list"]
+        guard require(fieldsList.waitForExistence(timeout: 5), in: app, stage: "\(stage)-list",
+                      message: "Existing annotations must expose their actual fields list") else { return false }
+        // Native List rows aggregate the name, page and kind. Match an exact first line, never a substring
+        // or the name-entry TextField outside this list. Row roles and custom child IDs differ by macOS.
+        let predicate = NSPredicate(
+            format: "elementType != %d AND (value == %@ OR value BEGINSWITH %@ OR label == %@ OR label BEGINSWITH %@)",
+            XCUIElement.ElementType.textField.rawValue, name, name + "\n", name, name + "\n"
+        )
+        let field = fieldsList.descendants(matching: .any).matching(predicate).firstMatch
+        guard scrollIntoView(field, in: scrollView, app: app, stage: "\(stage)-visible") else { return false }
+        let valueName = (field.value as? String)?.components(separatedBy: .newlines).first
+        let labelName = field.label.components(separatedBy: .newlines).first
+        return require(valueName == name || labelName == name, in: app, stage: "\(stage)-exact-name",
+                       message: "The actual annotation list must retain the exact requested field-name line")
+    }
+
+    private func scrollIntoView(_ element: XCUIElement, in scrollView: XCUIElement,
+                                app: XCUIApplication, stage: String) -> Bool
+    {
+        guard require(scrollView.waitForExistence(timeout: 5), in: app, stage: "\(stage)-scroll-view",
+                      message: "Forms must expose its own scrolling viewport") else { return false }
+        for attempt in 0 ... 8 {
+            let viewport = scrollView.frame
+            if element.exists {
+                let target = element.frame
+                if !target.isEmpty, viewport.contains(target), element.isHittable { return true }
+            }
+            guard attempt < 8 else { break }
+            // Scroll only this inspector. Positive wheel delta moves toward earlier controls on macOS.
+            let above = element.exists && element.frame.minY < viewport.minY
+            scrollView.scroll(byDeltaX: 0, deltaY: above ? 80 : -80)
+        }
+        return require(false, in: app, stage: stage,
+                       message: "The Forms target must be hittable and fully inside its viewport before interaction or inspection")
     }
 
     @discardableResult

@@ -71,6 +71,7 @@ struct FormsDesigner: View {
                     }
                 }
                 .frame(minHeight: 160)
+                .accessibilityIdentifier("studio-form-fields-list")
             }
         }
         .padding(16)
