@@ -32,6 +32,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
     private let discardDecision: (String) -> DocumentDiscardDecision
     private let saveDestination: ((String) -> URL?)?
     private let errorPresenter: ((Error) -> Void)?
+    private let recentFiles: RecentFilesManager
     private var pendingOpenAuthorization: DocumentRevision?
     @Published var currentPageIndex: Int = 0
     @Published var zoomScale: CGFloat = 1.0
@@ -120,13 +121,15 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
     private var activeOpenLease: DocumentOpenResourceLease?
     private var activeOpenSignpost: (generation: UUID, id: OSSignpostID)?
 
-    init(copilotService: (any DocumentCopilotServicing)? = nil,
+    init(recentFiles: RecentFilesManager = .shared,
+         copilotService: (any DocumentCopilotServicing)? = nil,
          passwordProvider: @escaping PDFPasswordProvider = PDFPasswordPrompt.requestPassword,
          repairSourceURL: @escaping (URL) throws -> URL = { try PDFRepairService().repairIfNeeded(inputURL: $0) },
          discardDecision: @escaping (String) -> DocumentDiscardDecision = DocumentDiscardPrompt.decide,
          saveDestination: ((String) -> URL?)? = nil,
          errorPresenter: ((Error) -> Void)? = nil)
     {
+        self.recentFiles = recentFiles
         self.copilotService = copilotService ?? DocumentCopilotService(interactionStore: AIInteractionStore())
         usesCustomCopilotService = copilotService != nil
         self.passwordProvider = passwordProvider
@@ -492,7 +495,7 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
         // Add to Recent Files
         DispatchQueue.main.async {
             guard self.isCurrentOpen(generation) else { return }
-            RecentFilesManager.shared.add(url: sourceURL, pageCount: newDocument.pageCount)
+            self.recentFiles.add(url: sourceURL, pageCount: newDocument.pageCount)
             NotificationCenter.default.post(name: .readerDidOpenDocument, object: sourceURL)
         }
     }

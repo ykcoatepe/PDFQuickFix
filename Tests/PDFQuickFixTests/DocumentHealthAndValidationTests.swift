@@ -155,7 +155,7 @@ final class DocumentHealthAndValidationTests: XCTestCase {
     }
 
     func testReaderControllerMassiveOpenRetainsProvidedSecurityScope() throws {
-        let controller = ReaderControllerPro()
+        let controller = ReaderControllerPro(recentFiles: RecentFilesManager(defaults: nil))
         let pdfURL = try TestPDFBuilder.makeMultipagePDF(pageCount: 2001, textPrefix: "Massive", size: CGSize(width: 10, height: 10))
         let access = SecurityScopedAccess(url: pdfURL)
         let expectation = expectation(description: "Massive reader open completes")

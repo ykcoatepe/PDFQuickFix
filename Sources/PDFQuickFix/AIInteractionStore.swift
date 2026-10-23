@@ -118,9 +118,10 @@ final class AIInteractionStore: ObservableObject {
     private var persistToDisk: Bool
     private let fileURL: URL
 
-    init(persistToDisk: Bool = UserDefaults.standard.bool(forKey: "LocalAI.persistLogs")) {
+    init(persistToDisk: Bool = UserDefaults.standard.bool(forKey: "LocalAI.persistLogs"),
+         fileURL: URL? = nil) {
         self.persistToDisk = persistToDisk
-        fileURL = AIInteractionStore.makeFileURL()
+        self.fileURL = fileURL ?? AIInteractionStore.makeFileURL()
         if persistToDisk {
             load()
         }
@@ -163,6 +164,7 @@ final class AIInteractionStore: ObservableObject {
     private func save() {
         do {
             let data = try JSONEncoder().encode(entries)
+            try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             try data.write(to: fileURL, options: [.atomic])
         } catch {
             // Best-effort persistence; ignore failures in UI flow.

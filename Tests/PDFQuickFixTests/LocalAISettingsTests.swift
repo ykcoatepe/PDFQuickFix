@@ -3,6 +3,50 @@ import XCTest
 
 final class LocalAISettingsTests: XCTestCase {
     @MainActor
+    func testStaleRefreshCannotReplaceNewProviderSelectionsOrLoadingState() async throws {
+        let suite = "LocalAISettingsTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let oldProvider = DeferredModelListing()
+        let newProvider = DeferredModelListing()
+        let settings = LocalAISettings(client: oldProvider, lmStudioClient: newProvider, defaults: defaults)
+        let oldRefresh = Task { await settings.refreshModels() }
+        while oldProvider.continuation == nil { await Task.yield() }
+        settings.selectedProvider = .lmStudio
+        settings.defaultModel = "lm-model"
+        settings.setOverride(task: .summarize, model: "lm-model")
+        let newRefresh = Task { await settings.refreshModels() }
+        while newProvider.continuation == nil { await Task.yield() }
+        oldProvider.continuation?.resume(returning: [OllamaModelInfo(id: "ollama-model", name: "ollama-model")])
+        await oldRefresh.value
+        XCTAssertTrue(settings.isRefreshing, "Old completion must not finish the new refresh")
+        XCTAssertTrue(settings.availableModels.isEmpty)
+        XCTAssertEqual(settings.defaultModel, "lm-model")
+        XCTAssertEqual(settings.override(for: .summarize), "lm-model")
+        XCTAssertEqual(defaults.string(forKey: "LocalAI.defaultModel.lmStudio"), "lm-model")
+        newProvider.continuation?.resume(returning: [OllamaModelInfo(id: "lm-model", name: "lm-model")])
+        await newRefresh.value
+        XCTAssertEqual(settings.availableModels.map(\.name), ["lm-model"])
+        XCTAssertFalse(settings.isRefreshing)
+    }
+
+    @MainActor
+    func testStaleRefreshErrorIsNotAttributedToReplacementProvider() async throws {
+        let suite = "LocalAISettingsTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let oldProvider = DeferredModelListing()
+        let settings = LocalAISettings(client: oldProvider, defaults: defaults)
+        let refresh = Task { await settings.refreshModels() }
+        while oldProvider.continuation == nil { await Task.yield() }
+        settings.selectedProvider = .lmStudio
+        oldProvider.continuation?.resume(throwing: URLError(.timedOut))
+        await refresh.value
+        XCTAssertNil(settings.lastRefreshError)
+        XCTAssertFalse(settings.isRefreshing)
+    }
+
+    @MainActor
     func testRefreshFailurePreservesSelections() async throws {
         let suiteName = "LocalAISettingsTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
@@ -81,5 +125,12 @@ final class LocalAISettingsTests: XCTestCase {
         XCTAssertEqual(settings.lastRefreshError, "LM Studio not reachable on 127.0.0.1:1234.")
 
         defaults.removePersistentDomain(forName: suiteName)
+    }
+}
+
+private final class DeferredModelListing: LocalAIModelListing {
+    var continuation: CheckedContinuation<[OllamaModelInfo], Error>?
+    func listModels() async throws -> [OllamaModelInfo] {
+        try await withCheckedThrowingContinuation { continuation = $0 }
     }
 }

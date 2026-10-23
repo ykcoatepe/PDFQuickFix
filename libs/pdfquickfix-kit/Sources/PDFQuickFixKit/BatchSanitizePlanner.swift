@@ -120,6 +120,7 @@ public enum BatchSanitizePlanner {
                 throw BatchPlannerError.outputInsideInput(input: inputDir, output: outputDir)
             }
         }
+        try PDFFilePublication.requireDistinct(input: resolvedInput, output: resolvedOutput)
 
         // Enumerate PDFs
         let items = try enumeratePDFs(
@@ -222,6 +223,7 @@ public enum BatchSanitizePlanner {
 
             // Compute output URL preserving directory structure
             let outputURL = outputDir.appendingPathComponent(relativePath)
+            try PDFFilePublication.requireDistinct(input: url, output: outputURL)
 
             // Check if output exists
             let outputExists = fm.fileExists(atPath: outputURL.path)

@@ -31,10 +31,10 @@ class RecentFilesManager: ObservableObject {
     private let maxRecentFiles = 10
     private let storageKey = "PDFQuickFix_RecentFiles"
     private let bookmarking: Bookmarking
-    private let defaults: UserDefaults
+    private let defaults: UserDefaults?
 
-    /// Init allowing injection
-    init(bookmarking: Bookmarking = SystemBookmarking(), defaults: UserDefaults = .standard) {
+    /// Pass nil defaults for an independent, in-memory recent-files list.
+    init(bookmarking: Bookmarking = SystemBookmarking(), defaults: UserDefaults? = .standard) {
         self.bookmarking = bookmarking
         self.defaults = defaults
         load()
@@ -123,12 +123,12 @@ class RecentFilesManager: ObservableObject {
 
     private func save() {
         if let data = try? JSONEncoder().encode(recentFiles) {
-            defaults.set(data, forKey: storageKey)
+            defaults?.set(data, forKey: storageKey)
         }
     }
 
     private func load() {
-        if let data = defaults.data(forKey: storageKey),
+        if let data = defaults?.data(forKey: storageKey),
            let decoded = try? JSONDecoder().decode([RecentFile].self, from: data)
         {
             recentFiles = decoded

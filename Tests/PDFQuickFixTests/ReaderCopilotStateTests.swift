@@ -24,7 +24,7 @@ final class ReaderCopilotStateTests: XCTestCase {
     func testExplainSelectionUsesCurrentPDFSelectionText() async throws {
         let expectedResponse = DocumentCopilotResponse.makeStub(answer: "Explained")
         let service = StubCopilotService(response: expectedResponse)
-        let controller = ReaderControllerPro(copilotService: service)
+        let controller = ReaderControllerPro(recentFiles: RecentFilesManager(defaults: nil), copilotService: service)
         let pdfView = PDFView()
         controller.pdfView = pdfView
 
@@ -54,7 +54,7 @@ final class ReaderCopilotStateTests: XCTestCase {
     }
 
     func testSelectionChangePublishesUpdatedExplainSelectionAvailability() throws {
-        let controller = ReaderControllerPro(copilotService: StubCopilotService(response: .makeStub()))
+        let controller = ReaderControllerPro(recentFiles: RecentFilesManager(defaults: nil), copilotService: StubCopilotService(response: .makeStub()))
         let pdfView = ReaderPDFView()
         pdfView.controller = controller
         controller.pdfView = pdfView
@@ -103,7 +103,7 @@ final class ReaderCopilotStateTests: XCTestCase {
             contextWasTrimmed: false
         )
         let service = StubCopilotService(response: expectedResponse)
-        let controller = ReaderControllerPro(copilotService: service)
+        let controller = ReaderControllerPro(recentFiles: RecentFilesManager(defaults: nil), copilotService: service)
         let pdfURL = try TestPDFBuilder.makeSimplePDF(text: "Reader copilot")
         defer { try? FileManager.default.removeItem(at: pdfURL) }
 
@@ -139,7 +139,7 @@ final class ReaderCopilotStateTests: XCTestCase {
     }
 
     func testJumpToCitationPageMovesCurrentPage() throws {
-        let controller = ReaderControllerPro(copilotService: StubCopilotService(response: .makeStub()))
+        let controller = ReaderControllerPro(recentFiles: RecentFilesManager(defaults: nil), copilotService: StubCopilotService(response: .makeStub()))
         let pdfView = PDFView()
         controller.pdfView = pdfView
 
@@ -166,7 +166,7 @@ final class ReaderCopilotStateTests: XCTestCase {
     func testQuickSummaryUsesInMemoryDocumentSession() async throws {
         let expectedResponse = DocumentCopilotResponse.makeStub(answer: "In-memory summary")
         let service = StubCopilotService(response: expectedResponse)
-        let controller = ReaderControllerPro(copilotService: service)
+        let controller = ReaderControllerPro(recentFiles: RecentFilesManager(defaults: nil), copilotService: service)
 
         let pdfURL = try TestPDFBuilder.makeSimplePDF(text: "In-memory doc")
         defer { try? FileManager.default.removeItem(at: pdfURL) }
@@ -184,7 +184,7 @@ final class ReaderCopilotStateTests: XCTestCase {
     func testCurrentPageDigestUsesLiveDisplayedPage() async throws {
         let expectedResponse = DocumentCopilotResponse.makeStub(answer: "Digest")
         let service = StubCopilotService(response: expectedResponse)
-        let controller = ReaderControllerPro(copilotService: service)
+        let controller = ReaderControllerPro(recentFiles: RecentFilesManager(defaults: nil), copilotService: service)
         let pdfView = PDFView()
         controller.pdfView = pdfView
 
@@ -219,7 +219,7 @@ final class ReaderCopilotStateTests: XCTestCase {
                 "second": 10_000_000,
             ]
         )
-        let controller = ReaderControllerPro(copilotService: service)
+        let controller = ReaderControllerPro(recentFiles: RecentFilesManager(defaults: nil), copilotService: service)
 
         let pdfURL = try TestPDFBuilder.makeSimplePDF(text: "Race test")
         defer { try? FileManager.default.removeItem(at: pdfURL) }
@@ -241,7 +241,7 @@ final class ReaderCopilotStateTests: XCTestCase {
 
     func testCloseDocumentIgnoresInFlightCopilotResponse() async throws {
         let service = BlockingCopilotService(response: .makeStub(answer: "Late response"))
-        let controller = ReaderControllerPro(copilotService: service)
+        let controller = ReaderControllerPro(recentFiles: RecentFilesManager(defaults: nil), copilotService: service)
 
         let pdfURL = try TestPDFBuilder.makeSimplePDF(text: "Close document test")
         defer { try? FileManager.default.removeItem(at: pdfURL) }

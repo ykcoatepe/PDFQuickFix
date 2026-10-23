@@ -61,6 +61,8 @@ pdfquickfix-cli repair <input.pdf> <output.pdf> [--no-size-limit]
 
 Runs `PDFRepairService` and prints its JSON result. `--no-size-limit` disables the repair service's normal input-size guard. Use it only when the machine has enough memory for the document.
 
+Encrypted PDFs return `unsupportedFeature`: structural repair does not decrypt and rewrite them, including documents with an empty user password. Inspection remains available. Repair also rejects an output that identifies the source file, including symlink and hard-link aliases.
+
 Example:
 
 ```bash
@@ -76,6 +78,8 @@ pdfquickfix-cli sanitize <input.pdf> <output.pdf> \
 ```
 
 The default profile is `privacy-clean`. A preset overrides `--profile` regardless of argument order.
+
+The output must be a different file from the input, including aliases through symlinks or hard links. Locked PDFs fail without publishing an output. To sanitize an encrypted document interactively, open and unlock it in the app first, then export a separate copy.
 
 The command prints compact JSON with:
 
@@ -115,7 +119,7 @@ Progress is written to standard error. The sorted, pretty-printed JSON report is
 
 The report includes input and output directories, profile, recursion and dry-run flags, processed/skipped/failed totals, elapsed milliseconds, and per-file results. Each file result includes relative input/output paths, status, optional byte counts, optional searchability, optional elapsed time, and an error message when processing failed.
 
-Recursive mode rejects an output directory inside the input directory. Hidden files, package contents, symlinked directories, and non-PDF files are skipped. Existing outputs are skipped unless `--overwrite` is present.
+Input and output directories must differ, even without `--recursive`. Recursive mode also rejects an output directory inside the input directory. Hidden files, package contents, symlinked directories, and non-PDF files are skipped. Existing outputs are skipped unless `--overwrite` is present. Without overwrite, a destination created by another process while sanitization is running is also skipped. `--overwrite` never permits replacing the source through a symlink or hard link.
 
 Example:
 

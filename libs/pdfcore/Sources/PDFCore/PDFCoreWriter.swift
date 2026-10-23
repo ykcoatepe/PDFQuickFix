@@ -2,6 +2,16 @@ import Foundation
 
 public enum PDFCoreWriter {
     public static func write(document: PDFCoreDocument) throws -> Data {
+        guard !document.isEncrypted else {
+            throw PDFCoreError.unsupportedFeature("Encrypted PDF rewriting requires password-aware serialization")
+        }
+        guard !document.objects.isEmpty,
+              let root = document.rootRef,
+              case .dict = document.objects[root],
+              document.objects.keys.allSatisfy({ $0.objectNumber > 0 && $0.objectNumber < Int.max })
+        else {
+            throw PDFCoreError.invalidTrailer
+        }
         var data = Data()
 
         // 1. Header
@@ -88,9 +98,18 @@ public enum PDFCoreWriter {
         case let .name(s):
             return "/\(s)".data(using: .utf8)!
         case let .string(s):
-            // Simple escaping
-            let escaped = s.replacingOccurrences(of: "(", with: "\\(").replacingOccurrences(of: ")", with: "\\)")
+            let escaped = s.replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "(", with: "\\(")
+                .replacingOccurrences(of: ")", with: "\\)")
+                .replacingOccurrences(of: "\n", with: "\\n")
+                .replacingOccurrences(of: "\r", with: "\\r")
+                .replacingOccurrences(of: "\t", with: "\\t")
+                .replacingOccurrences(of: "\u{08}", with: "\\b")
+                .replacingOccurrences(of: "\u{0C}", with: "\\f")
             return "(\(escaped))".data(using: .utf8)!
+        case let .byteString(bytes):
+            let hex = bytes.map { String(format: "%02X", $0) }.joined()
+            return Data("<\(hex)>".utf8)
         case let .array(arr):
             var d = "[".data(using: .ascii)!
             for (i, item) in arr.enumerated() {

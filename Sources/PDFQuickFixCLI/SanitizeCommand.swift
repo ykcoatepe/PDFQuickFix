@@ -83,6 +83,7 @@ enum SanitizeCommand {
         guard FileManager.default.fileExists(atPath: inputURL.path) else {
             throw CLIError.fileNotFound(input)
         }
+        try PDFFilePublication.requireDistinct(input: inputURL, output: outputURL)
 
         let inputData = try Data(contentsOf: inputURL)
         guard let doc = PDFDocument(data: inputData) else {
@@ -96,9 +97,19 @@ enum SanitizeCommand {
                                                           sourceURL: inputURL,
                                                           options: options)
 
-        guard sanitized.write(to: outputURL) else {
+        let temporaryURL = outputURL.deletingLastPathComponent()
+            .appendingPathComponent(".pdfquickfix-\(UUID().uuidString).pdf")
+        defer { try? FileManager.default.removeItem(at: temporaryURL) }
+        guard sanitized.write(to: temporaryURL),
+              let validated = PDFDocument(url: temporaryURL),
+              !validated.isLocked,
+              validated.pageCount == sanitized.pageCount,
+              validated.pageCount > 0
+        else {
             throw CLIError.commandFailed("Failed to write output to \(output)")
         }
+        try PDFFilePublication.requireDistinct(input: inputURL, output: outputURL)
+        try PDFFilePublication.publish(staged: temporaryURL, to: outputURL, overwrite: true)
 
         // Gather stats for JSON output
         let outputData = try Data(contentsOf: outputURL)

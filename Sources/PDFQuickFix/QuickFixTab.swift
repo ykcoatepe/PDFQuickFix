@@ -14,6 +14,10 @@ struct QuickFixTab: View {
     @State private var quickFixResult: QuickFixResult?
     @StateObject private var optionsModel = QuickFixOptionsModel()
     @State private var isProcessing: Bool = false
+    @StateObject private var processingRequest = QuickFixRequestLifetime()
+    @StateObject private var aiRequest = QuickFixRequestLifetime()
+    @State private var resultSourceURL: URL?
+    @State private var aiOutputSnapshot: QuickFixAIOutputSnapshot?
     @State private var processedPages: Int = 0
     @State private var totalPages: Int = 0
     @State private var statusLine: String = ""
@@ -42,20 +46,7 @@ struct QuickFixTab: View {
                 .frame(minHeight: 240)
         }
         .background(AppTheme.Colors.background)
-        .onChange(of: inputURL) { _ in
-            cleanupTransientOutputs()
-            quickFixResult = nil
-            statusLine = ""
-            processError = nil
-            processedPages = 0
-            totalPages = 0
-            aiOutput = ""
-            aiStatus = ""
-            aiError = nil
-            aiImageOCRURL = nil
-            printCoordinator.inputURL = inputURL
-            printCoordinator.outputURL = nil
-        }
+        .onDisappear { invalidateRequests() }
         .onChange(of: quickFixResult?.outputURL) { outputURL in
             printCoordinator.outputURL = outputURL
         }
@@ -141,7 +132,7 @@ struct QuickFixTab: View {
                         .disabled(inputURL == nil || isProcessing)
                     }
 
-                    DropAreaView(inputURL: $inputURL)
+                    DropAreaView(inputURL: Binding(get: { inputURL }, set: adoptInput))
                         .frame(maxWidth: .infinity, minHeight: 140)
                 }
                 .cardStyle()
@@ -167,6 +158,8 @@ struct QuickFixTab: View {
 
                 if let quickFixResult {
                     resultReceipt(quickFixResult)
+                        // Recreate selectable text and previews when a temporary result becomes a saved copy.
+                        .id(quickFixResult.displayOutputURL)
                 }
 
                 if !log.isEmpty {
@@ -552,14 +545,38 @@ struct QuickFixTab: View {
         panel.allowsMultipleSelection = false
         panel.allowedContentTypes = [.pdf, .png, .jpeg]
         if panel.runModal() == .OK {
-            cleanupTransientOutputs()
-            inputURL = panel.url
-            quickFixResult = nil
+            adoptInput(panel.url)
         }
+    }
+
+    /// Invalidate synchronously at adoption, including reselecting the same URL after its bytes changed.
+    private func adoptInput(_ url: URL?) {
+        invalidateRequests()
+        cleanupTransientOutputs()
+        inputURL = url
+        quickFixResult = nil
+        resultSourceURL = nil
+        aiOutputSnapshot = nil
+        statusLine = ""
+        processError = nil
+        processedPages = 0
+        totalPages = 0
+        aiOutput = ""
+        aiStatus = ""
+        aiError = nil
+        aiImageOCRURL = nil
+        printCoordinator.inputURL = url
+        printCoordinator.outputURL = nil
     }
 
     private func runProcess() {
         guard !isProcessing, let inputURL else { return }
+        aiRequest.invalidate()
+        isAIRunning = false
+        aiOutput = ""
+        aiOutputSnapshot = nil
+        aiStatus = ""
+        aiError = nil
         cleanupTransientOutputs()
         quickFixResult = nil
         isProcessing = true
@@ -569,10 +586,18 @@ struct QuickFixTab: View {
         statusLine = "Preparing \(inputURL.lastPathComponent)…"
         log = "Processing \(inputURL.lastPathComponent)…\n"
 
-        let model = optionsModel
+        let parameters: QuickFixExecutionParameters
+        do {
+            parameters = try optionsModel.makeParameters()
+        } catch {
+            isProcessing = false
+            processError = error.localizedDescription
+            return
+        }
+        let requestID = processingRequest.begin()
         let preprocessImages = optionsModel.preprocessImages
         let targetDPI = CGFloat(optionsModel.dpi)
-        Task.detached(priority: .userInitiated) {
+        processingRequest.task = Task.detached(priority: .userInitiated) {
             let temporaryOutputURL = Self.temporaryFileURL(prefix: "quickfix-output-", extension: "pdf")
             do {
                 let prepared = try Self.prepareQuickFixInput(
@@ -588,6 +613,7 @@ struct QuickFixTab: View {
                 }
                 if prepared.wasConverted {
                     await MainActor.run {
+                        guard processingRequest.accepts(requestID), self.inputURL == inputURL else { return }
                         if prepared.didPreprocess {
                             log += "✨ Auto-cropped & deskewed image.\n"
                         }
@@ -597,18 +623,25 @@ struct QuickFixTab: View {
                 if let document = PDFDocument(url: prepared.sourceURL) {
                     let pageCount = document.pageCount
                     await MainActor.run {
+                        guard processingRequest.accepts(requestID), self.inputURL == inputURL else { return }
                         totalPages = pageCount
                         statusLine = "Cleaning up \(pageCount) page\(pageCount == 1 ? "" : "s")…"
                         log += "📄 Pages: \(pageCount)\n"
                     }
                 }
-                let processedResult = try model.runQuickFixResult(
+                let engine = PDFQuickFixEngine(options: parameters.options, languages: parameters.languages)
+                let processedResult = try engine.processResult(
                     inputURL: prepared.sourceURL,
                     outputURL: temporaryOutputURL,
                     isTemporaryOutput: true,
+                    redactionPatterns: parameters.redactionPatterns,
+                    customRegexes: parameters.customRegexes,
+                    findReplace: parameters.findReplace,
+                    manualRedactions: parameters.manualRedactions,
                     shouldCancel: { Task.isCancelled },
                     progress: { current, total in
                         DispatchQueue.main.async {
+                            guard processingRequest.accepts(requestID), self.inputURL == inputURL else { return }
                             processedPages = current
                             totalPages = total
                             statusLine = "Cleaning up page \(current) of \(total)…"
@@ -627,17 +660,27 @@ struct QuickFixTab: View {
                 } else {
                     result = processedResult
                 }
-                await MainActor.run {
+                let adopted = await MainActor.run {
+                    guard processingRequest.accepts(requestID), self.inputURL == inputURL else { return false }
                     quickFixResult = result
+                    resultSourceURL = inputURL
                     QuickFixResultStore.shared.set(result, sourceURL: inputURL)
                     printCoordinator.outputURL = result.displayOutputURL
                     statusLine = "Cleanup complete. Reviewed copy ready."
                     log += "✅ Done → temporary result at \(result.outputURL.path)\n"
                     isProcessing = false
+                    return true
+                }
+                if !adopted {
+                    try? FileManager.default.removeItem(at: result.outputURL)
+                    if result.isTemporarySource, let sourceURL = result.sourceURL {
+                        try? FileManager.default.removeItem(at: sourceURL)
+                    }
                 }
             } catch {
                 try? FileManager.default.removeItem(at: temporaryOutputURL)
                 await MainActor.run {
+                    guard processingRequest.accepts(requestID), self.inputURL == inputURL else { return }
                     statusLine = ""
                     processError = error.localizedDescription
                     log += "❌ Error: \(error.localizedDescription)\n"
@@ -648,7 +691,7 @@ struct QuickFixTab: View {
     }
 
     private var canRunAITask: Bool {
-        guard !isAIRunning else { return false }
+        guard !isAIRunning, !isProcessing else { return false }
         guard aiSettings.modelFor(task: aiTask) != nil else { return false }
         return inputURL != nil || quickFixResult != nil
     }
@@ -664,23 +707,38 @@ struct QuickFixTab: View {
         guard canRunAITask else { return }
         aiError = nil
         aiOutput = ""
+        aiOutputSnapshot = nil
         aiStatus = "Preparing document text…"
         isAIRunning = true
 
-        let sourceName = inputURL?.lastPathComponent
+        let requestID = aiRequest.begin()
+        let sourceInputURL = inputURL
+        let preparedSourceURL = quickFixResult?.outputURL
+        let cachedOCRURL = aiImageOCRURL
+        let sourceName = sourceInputURL?.lastPathComponent
+        let client = aiSettings.makeTextClient()
+        let selection = aiTask.supportsPageSelection ? aiPageSelection : ""
+        let imageParameters = optionsModel.makeAIImageOCRParameters()
+        let preprocessImages = optionsModel.preprocessImages
+        let targetDPI = CGFloat(optionsModel.dpi)
         let task = aiTask
         let modelName = aiSettings.modelFor(task: task)
         let parameters = LocalAITaskParameters(
             targetLanguage: aiTargetLanguage,
             extractionFields: aiFieldList.split(separator: ",").map { String($0) }
         )
-        Task {
+        aiRequest.task = Task {
             do {
-                let sourceURL = try await resolveAITaskSourceURL()
-                let selection = task.supportsPageSelection ? aiPageSelection : ""
+                let sourceURL = try await resolveAITaskSourceURL(
+                    inputURL: sourceInputURL, preparedSourceURL: preparedSourceURL,
+                    cachedOCRURL: cachedOCRURL, requestID: requestID,
+                    imageParameters: imageParameters, preprocessImages: preprocessImages, targetDPI: targetDPI
+                )
+                guard aiRequest.accepts(requestID), inputURL == sourceInputURL else { return }
                 let text = try await Task.detached(priority: .userInitiated) {
                     try DocumentTextSession(documentURL: sourceURL).extractText(pageSelection: selection)
                 }.value
+                guard aiRequest.accepts(requestID), inputURL == sourceInputURL else { return }
                 if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     updateAIState(error: "No text found. Run OCR first, then try again.")
                     return
@@ -688,7 +746,7 @@ struct QuickFixTab: View {
                 aiStatus = "Running \(task.displayName)…"
                 let runner = LocalAITaskRunner(
                     interactionStore: aiInteractions,
-                    client: aiSettings.makeTextClient()
+                    client: client
                 )
                 let result = try await runner.run(
                     task: task,
@@ -697,7 +755,9 @@ struct QuickFixTab: View {
                     sourceName: sourceName,
                     modelName: modelName
                 )
+                guard aiRequest.accepts(requestID), inputURL == sourceInputURL else { return }
                 aiOutput = result.output
+                aiOutputSnapshot = QuickFixAIOutputSnapshot(sourceURL: sourceInputURL, task: task)
                 if result.inputWasTrimmed {
                     aiStatus = "Used \(result.inputCharacterCount) chars (trimmed). Model: \(result.model)."
                 } else {
@@ -705,6 +765,7 @@ struct QuickFixTab: View {
                 }
                 isAIRunning = false
             } catch {
+                guard aiRequest.accepts(requestID), inputURL == sourceInputURL else { return }
                 updateAIState(error: aiErrorMessage(from: error))
             }
         }
@@ -736,16 +797,17 @@ struct QuickFixTab: View {
     }
 
     private func saveAIOutput() {
-        guard !aiOutput.isEmpty else { return }
-        let format = Self.inferAIOutputFormat(from: aiOutput)
+        guard !aiOutput.isEmpty, let snapshot = aiOutputSnapshot else { return }
+        let output = aiOutput
+        let format = Self.inferAIOutputFormat(from: output)
         let panel = NSSavePanel()
         panel.allowedContentTypes = [format == .json ? .json : .plainText]
         panel.canCreateDirectories = true
-        panel.nameFieldStringValue = Self.aiOutputFileName(task: aiTask, format: format)
-        panel.directoryURL = inputURL?.deletingLastPathComponent() ?? FileManager.default.temporaryDirectory
+        panel.nameFieldStringValue = Self.aiOutputFileName(task: snapshot.task, format: format)
+        panel.directoryURL = snapshot.sourceURL?.deletingLastPathComponent() ?? FileManager.default.temporaryDirectory
         if panel.runModal() == .OK, let url = panel.url {
             do {
-                try Self.writeAIOutput(aiOutput, to: url, format: format)
+                try Self.writeAIOutput(output, to: url, format: format)
                 aiError = nil
                 aiStatus = "Saved AI output to \(url.lastPathComponent)."
             } catch {
@@ -790,9 +852,9 @@ struct QuickFixTab: View {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.pdf]
         panel.canCreateDirectories = true
-        let suggestedName = Self.quickFixSuggestedFileName(inputURL: inputURL)
+        let suggestedName = Self.quickFixSuggestedFileName(inputURL: resultSourceURL)
         panel.nameFieldStringValue = suggestedName
-        panel.directoryURL = inputURL?.deletingLastPathComponent() ?? result.outputURL.deletingLastPathComponent()
+        panel.directoryURL = resultSourceURL?.deletingLastPathComponent() ?? result.outputURL.deletingLastPathComponent()
 
         isSavingQuickFixResult = true
         defer { isSavingQuickFixResult = false }
@@ -803,15 +865,11 @@ struct QuickFixTab: View {
                     log += "ℹ️ Result already points to \(destination.path)\n"
                     return
                 }
-                try Self.copyResultPreservingExistingFile(
-                    from: result.outputURL,
-                    to: destination
-                )
+                let savedResult = try Self.saveResult(result, to: destination)
                 OutputDirectoryAccessStore.shared.store(directory: destination.deletingLastPathComponent())
-                let savedResult = result.savedCopy(outputURL: destination)
                 let previousOutputURL = result.outputURL
                 quickFixResult = savedResult
-                QuickFixResultStore.shared.set(savedResult, previousOutputURL: previousOutputURL, sourceURL: inputURL)
+                QuickFixResultStore.shared.set(savedResult, previousOutputURL: previousOutputURL, sourceURL: resultSourceURL)
                 printCoordinator.outputURL = savedResult.displayOutputURL
                 log += "💾 Saved result → \(destination.path)\n"
                 if result.isTemporaryOutput {
@@ -896,6 +954,13 @@ struct QuickFixTab: View {
     private static func quickFixSuggestedFileName(inputURL: URL?) -> String {
         let base = inputURL?.deletingPathExtension().lastPathComponent ?? "QuickFix"
         return "\(base)-fixed.pdf"
+    }
+
+    private func invalidateRequests() {
+        processingRequest.invalidate()
+        aiRequest.invalidate()
+        isProcessing = false
+        isAIRunning = false
     }
 
     private func cleanupTransientOutputs() {
@@ -984,24 +1049,24 @@ struct QuickFixTab: View {
         }
     }
 
-    private func resolveAITaskSourceURL() async throws -> URL {
-        if let quickFixResult {
-            return quickFixResult.outputURL
-        }
-        guard let inputURL else {
-            throw PDFTextExtractorError.missingInput
-        }
+    private func resolveAITaskSourceURL(inputURL: URL?, preparedSourceURL: URL?,
+                                        cachedOCRURL: URL?, requestID: UUID,
+                                        imageParameters: (options: QuickFixOptions, languages: [String]),
+                                        preprocessImages: Bool, targetDPI: CGFloat) async throws -> URL {
+        if let preparedSourceURL { return preparedSourceURL }
+        guard let inputURL else { throw PDFTextExtractorError.missingInput }
         if documentInputKind(for: inputURL) == .image {
-            if let cached = Self.existingCachedOCRURL(aiImageOCRURL) {
-                return cached
+            if let cached = Self.existingCachedOCRURL(cachedOCRURL) { return cached }
+            aiStatus = "Running OCR for image…"
+            let generated = try await generateImageOCRTextSource(
+                from: inputURL, parameters: imageParameters,
+                preprocessImages: preprocessImages, targetDPI: targetDPI
+            )
+            guard aiRequest.accepts(requestID), self.inputURL == inputURL else {
+                try? FileManager.default.removeItem(at: generated)
+                throw CancellationError()
             }
-            await MainActor.run {
-                aiStatus = "Running OCR for image…"
-            }
-            let generated = try await generateImageOCRTextSource(from: inputURL)
-            await MainActor.run {
-                aiImageOCRURL = generated
-            }
+            aiImageOCRURL = generated
             return generated
         }
         return inputURL
@@ -1012,21 +1077,23 @@ struct QuickFixTab: View {
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
-    private func generateImageOCRTextSource(from imageURL: URL) async throws -> URL {
-        let parameters = await MainActor.run { optionsModel.makeAIImageOCRParameters() }
-        let preprocessImages = await MainActor.run { optionsModel.preprocessImages }
-        let targetDPI = await MainActor.run { CGFloat(optionsModel.dpi) }
-        return try await Task.detached(priority: .userInitiated) {
+    private func generateImageOCRTextSource(from imageURL: URL,
+                                            parameters: (options: QuickFixOptions, languages: [String]),
+                                            preprocessImages: Bool, targetDPI: CGFloat) async throws -> URL {
+        let job = Task.detached(priority: .userInitiated) {
             let conversion = try ImagePDFConverter.convertImageToPDF(
                 at: imageURL,
                 preprocess: preprocessImages,
                 targetDPI: targetDPI
             )
             let tempInput = conversion.url
+            defer { try? FileManager.default.removeItem(at: tempInput) }
             let outputURL = Self.temporaryFileURL(prefix: "ai-ocr-", extension: "pdf")
             var options = parameters.options
             options.doOCR = true
             let engine = PDFQuickFixEngine(options: options, languages: parameters.languages)
+            var completed = false
+            defer { if !completed { try? FileManager.default.removeItem(at: outputURL) } }
             _ = try engine.processResult(
                 inputURL: tempInput,
                 outputURL: outputURL,
@@ -1036,9 +1103,19 @@ struct QuickFixTab: View {
                 manualRedactions: [:],
                 shouldCancel: { Task.isCancelled }
             )
-            try? FileManager.default.removeItem(at: tempInput)
+            completed = true
             return outputURL
-        }.value
+        }
+        return try await withTaskCancellationHandler {
+            try await job.value
+        } onCancel: {
+            job.cancel()
+        }
+    }
+
+    static func saveResult(_ result: QuickFixResult, to destination: URL) throws -> QuickFixResult {
+        try copyResultPreservingExistingFile(from: result.outputURL, to: destination)
+        return result.savedCopy(outputURL: destination)
     }
 
     static func copyResultPreservingExistingFile(from sourceURL: URL,
@@ -1259,4 +1336,31 @@ struct DropAreaView: View {
         }
         .animation(.easeInOut, value: isDragging)
     }
+}
+
+/// A backend may finish after cancellation. Only the current generation can publish UI state.
+@MainActor
+final class QuickFixRequestLifetime: ObservableObject {
+    private var generation: UUID?
+    var task: Task<Void, Never>?
+
+    func begin() -> UUID {
+        invalidate()
+        let id = UUID()
+        generation = id
+        return id
+    }
+
+    func accepts(_ id: UUID) -> Bool { generation == id }
+
+    func invalidate() {
+        generation = nil
+        task?.cancel()
+        task = nil
+    }
+}
+
+struct QuickFixAIOutputSnapshot {
+    let sourceURL: URL?
+    let task: LocalAITask
 }

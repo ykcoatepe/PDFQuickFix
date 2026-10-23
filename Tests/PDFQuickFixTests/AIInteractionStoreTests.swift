@@ -3,8 +3,36 @@ import XCTest
 
 @MainActor
 final class AIInteractionStoreTests: XCTestCase {
+    private var historyDirectory: URL!
+    private var historyURL: URL { historyDirectory.appendingPathComponent("history.json") }
+
+    override func setUpWithError() throws {
+        historyDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AIInteractionStoreTests-\(UUID().uuidString)", isDirectory: true)
+    }
+
+    override func tearDownWithError() throws {
+        if FileManager.default.fileExists(atPath: historyDirectory.path) {
+            try FileManager.default.removeItem(at: historyDirectory)
+        }
+    }
+
+    func testPersistenceUsesOnlyInjectedHistoryAndPreservesOtherHistory() throws {
+        let otherURL = historyDirectory.appendingPathComponent("other/history.json")
+        let sentinel = Data("unrelated history".utf8)
+        try FileManager.default.createDirectory(at: otherURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try sentinel.write(to: otherURL)
+        let store = AIInteractionStore(persistToDisk: true, fileURL: historyURL)
+        store.clear()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: historyURL.path))
+        XCTAssertEqual(try Data(contentsOf: otherURL), sentinel)
+        store.setPersistence(enabled: false)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: historyURL.path))
+        XCTAssertEqual(try Data(contentsOf: otherURL), sentinel)
+    }
+
     func testRecordTruncatesPromptAndResponse() {
-        let store = AIInteractionStore(persistToDisk: false)
+        let store = AIInteractionStore(persistToDisk: false, fileURL: historyURL)
         let longPrompt = String(repeating: "p", count: 5000)
         let longResponse = String(repeating: "r", count: 10000)
         let entry = AIInteractionEntry(
@@ -32,7 +60,7 @@ final class AIInteractionStoreTests: XCTestCase {
     }
 
     func testMaxEntriesIsCapped() {
-        let store = AIInteractionStore(persistToDisk: false)
+        let store = AIInteractionStore(persistToDisk: false, fileURL: historyURL)
         for _ in 0 ..< 250 {
             let entry = AIInteractionEntry(
                 id: UUID(),
@@ -51,7 +79,7 @@ final class AIInteractionStoreTests: XCTestCase {
     }
 
     func testPersistenceToggleClearsSavedData() {
-        let store = AIInteractionStore(persistToDisk: true)
+        let store = AIInteractionStore(persistToDisk: true, fileURL: historyURL)
         store.clear()
         let entry = AIInteractionEntry(
             id: UUID(),
@@ -67,12 +95,12 @@ final class AIInteractionStoreTests: XCTestCase {
         store.record(entry)
         store.setPersistence(enabled: false)
 
-        let reloaded = AIInteractionStore(persistToDisk: true)
+        let reloaded = AIInteractionStore(persistToDisk: true, fileURL: historyURL)
         XCTAssertTrue(reloaded.entries.isEmpty)
     }
 
     func testEnablingPersistenceMergesExistingEntries() {
-        let persistedStore = AIInteractionStore(persistToDisk: true)
+        let persistedStore = AIInteractionStore(persistToDisk: true, fileURL: historyURL)
         persistedStore.clear()
         let persistedEntry = AIInteractionEntry(
             id: UUID(),
@@ -87,7 +115,7 @@ final class AIInteractionStoreTests: XCTestCase {
         )
         persistedStore.record(persistedEntry)
 
-        let sessionStore = AIInteractionStore(persistToDisk: false)
+        let sessionStore = AIInteractionStore(persistToDisk: false, fileURL: historyURL)
         let sessionEntry = AIInteractionEntry(
             id: UUID(),
             timestamp: Date(),
@@ -108,7 +136,7 @@ final class AIInteractionStoreTests: XCTestCase {
     }
 
     func testExportDocumentProducesJSONPayload() throws {
-        let store = AIInteractionStore(persistToDisk: false)
+        let store = AIInteractionStore(persistToDisk: false, fileURL: historyURL)
         let entry = AIInteractionEntry(
             id: UUID(),
             timestamp: Date(timeIntervalSince1970: 1_700_000_000),
@@ -137,7 +165,7 @@ final class AIInteractionStoreTests: XCTestCase {
     }
 
     func testExportDocumentProducesMarkdownPayload() throws {
-        let store = AIInteractionStore(persistToDisk: false)
+        let store = AIInteractionStore(persistToDisk: false, fileURL: historyURL)
         let entry = AIInteractionEntry(
             id: UUID(),
             timestamp: Date(timeIntervalSince1970: 1_700_000_000),
@@ -162,7 +190,7 @@ final class AIInteractionStoreTests: XCTestCase {
     }
 
     func testExportDocumentUsesGeneralizedSlugForReaderCopilotActions() throws {
-        let store = AIInteractionStore(persistToDisk: false)
+        let store = AIInteractionStore(persistToDisk: false, fileURL: historyURL)
         let entry = AIInteractionEntry(
             id: UUID(),
             timestamp: Date(timeIntervalSince1970: 1_700_000_000),
@@ -180,7 +208,7 @@ final class AIInteractionStoreTests: XCTestCase {
     }
 
     func testExportDocumentSanitizesUnknownKindSlugForFilenameSafety() throws {
-        let store = AIInteractionStore(persistToDisk: false)
+        let store = AIInteractionStore(persistToDisk: false, fileURL: historyURL)
         let entry = AIInteractionEntry(
             id: UUID(),
             timestamp: Date(timeIntervalSince1970: 1_700_000_000),

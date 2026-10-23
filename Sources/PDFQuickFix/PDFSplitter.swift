@@ -1,5 +1,6 @@
 import Foundation
 import PDFKit
+import PDFQuickFixKit
 
 enum PDFSplitMode {
     case maxPagesPerPart(Int) // e.g. 500 pages per part
@@ -64,7 +65,7 @@ final class PDFSplitter {
                progress: ((Int, Int) -> Void)? = nil,
                shouldCancel: (() -> Bool)? = nil) throws -> PDFSplitResult
     {
-        guard let sourceDoc = PDFDocument(url: options.sourceURL) else {
+        guard let sourceDoc = PDFDocument(url: options.sourceURL), !sourceDoc.isLocked else {
             throw PDFSplitError.cannotOpenSource
         }
         let pageCount = sourceDoc.pageCount
@@ -194,6 +195,12 @@ final class PDFSplitter {
 
         let totalPages = source.pageCount
         var processedPages = 0
+        let fm = FileManager.default
+        let stagingDirectory = destinationDirectory.appendingPathComponent(".pdfquickfix-split-\(UUID().uuidString)")
+        try fm.createDirectory(at: stagingDirectory, withIntermediateDirectories: false)
+        defer { try? fm.removeItem(at: stagingDirectory) }
+        var stagedParts: [(staged: URL, output: URL)] = []
+        var publishedParts: [PDFFilePublication.PublishedFile] = []
 
         for (index, range) in ranges.enumerated() {
             if shouldCancel?() == true {
@@ -210,6 +217,10 @@ final class PDFSplitter {
 
             let filename = "\(baseName)_part\(partIndexString)-of\(partCountString)_pages\(startString)-\(endString).pdf"
             let outputURL = destinationDirectory.appendingPathComponent(filename)
+            if fm.fileExists(atPath: outputURL.path) {
+                throw PDFFilePublication.PublicationError.destinationExists(outputURL)
+            }
+            let stagedURL = stagingDirectory.appendingPathComponent(filename)
 
             let partDoc = PDFDocument()
             var targetIndex = 0
@@ -218,7 +229,9 @@ final class PDFSplitter {
                     throw PDFSplitError.cancelled
                 }
                 // Copy pages so the source document remains intact; PDFPage can belong to only one PDFDocument.
-                guard let pageCopy = source.page(at: pageIndex)?.copy() as? PDFPage else { continue }
+                guard let pageCopy = source.page(at: pageIndex)?.copy() as? PDFPage else {
+                    throw PDFSplitError.writeFailed(outputURL)
+                }
                 partDoc.insert(pageCopy, at: targetIndex)
                 targetIndex += 1
 
@@ -226,12 +239,37 @@ final class PDFSplitter {
                 progress?(processedPages, totalPages)
             }
 
-            guard partDoc.pageCount > 0 else { continue }
-
-            if !partDoc.write(to: outputURL) {
+            guard partDoc.pageCount == range.count,
+                  partDoc.write(to: stagedURL),
+                  let validated = PDFDocument(url: stagedURL),
+                  !validated.isLocked,
+                  validated.pageCount == range.count
+            else {
                 throw PDFSplitError.writeFailed(outputURL)
             }
-            outputURLs.append(outputURL)
+            stagedParts.append((stagedURL, outputURL))
+        }
+
+        do {
+            for part in stagedParts {
+                if shouldCancel?() == true { throw PDFSplitError.cancelled }
+                let published = try PDFFilePublication.publish(staged: part.staged, to: part.output, overwrite: false)
+                publishedParts.append(published)
+                outputURLs.append(part.output)
+            }
+        } catch {
+            var recoveryURLs: [URL] = []
+            for part in publishedParts {
+                do {
+                    try part.removeIfUnchanged()
+                } catch PDFFilePublication.PublicationError.recoveryRequired(let urls) {
+                    recoveryURLs.append(contentsOf: urls)
+                } catch {
+                    recoveryURLs.append(part.url)
+                }
+            }
+            if !recoveryURLs.isEmpty { throw PDFFilePublication.PublicationError.recoveryRequired(recoveryURLs) }
+            throw error
         }
 
         return outputURLs

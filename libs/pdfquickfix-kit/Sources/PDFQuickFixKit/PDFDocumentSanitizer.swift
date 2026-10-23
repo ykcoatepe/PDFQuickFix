@@ -4,6 +4,7 @@ import PDFKit
 
 public enum PDFDocumentSanitizerError: LocalizedError {
     case unableToOpen(URL)
+    case lockedDocument
     case pageRenderFailed(page: Int, reason: String)
     case cancelled
 
@@ -11,6 +12,8 @@ public enum PDFDocumentSanitizerError: LocalizedError {
         switch self {
         case let .unableToOpen(url):
             "Belge açılamadı: \(url.lastPathComponent)."
+        case .lockedDocument:
+            "PDF parola ile kilitli. Temizlemeden önce belgenin kilidini açın."
         case let .pageRenderFailed(page, reason):
             "PDF içeriği sayfa \(page) sırasında işlenemedi: \(reason)."
         case .cancelled:
@@ -105,6 +108,9 @@ public enum PDFDocumentSanitizer {
                                 remoteBaseline: PDFDocumentSerializer.RemoteOutlineBaseline? = nil,
                                 shouldCancel: () -> Bool = { false }) throws -> PDFDocument
     {
+        guard !original.isLocked else {
+            throw PDFDocumentSanitizerError.lockedDocument
+        }
         enforceStructureTreeOff(original)
 
         var attributesChanged = false

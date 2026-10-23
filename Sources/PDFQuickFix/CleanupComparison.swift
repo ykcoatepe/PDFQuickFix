@@ -234,7 +234,8 @@ private extension CleanupComparisonEngine {
 
             context.setFillColor(CGColor(gray: 1, alpha: 1))
             context.fill(CGRect(x: 0, y: 0, width: renderDimension, height: renderDimension))
-            let bounds = page.bounds(for: .mediaBox)
+            let geometry = PDFPageGeometry(page: page)
+            let bounds = CGRect(origin: .zero, size: geometry.size)
             guard bounds.width > 0, bounds.height > 0 else { return false }
             let target = CGFloat(renderDimension)
             let scale = min(target / bounds.width, target / bounds.height)
@@ -242,9 +243,12 @@ private extension CleanupComparisonEngine {
             let verticalInset = (target - bounds.height * scale) / 2
             context.translateBy(x: horizontalInset, y: verticalInset)
             context.scaleBy(x: scale, y: scale)
-            context.translateBy(x: -bounds.minX, y: -bounds.minY)
-            page.draw(with: .mediaBox, to: context)
-            return true
+            do {
+                try geometry.draw(page, in: context, target: bounds)
+                return true
+            } catch {
+                return false
+            }
         }
         return rendered ? pixels : nil
     }

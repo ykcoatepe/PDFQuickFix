@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import Darwin
 import Foundation
 import os.log
 @preconcurrency import PDFKit
@@ -105,6 +106,8 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     @Published var document: PDFDocument? {
         didSet {
             if document !== oldValue {
+                retainedViewport = nil
+                currentPageIndex = 0
                 oldValue?.cancelFindString()
                 clearSearchState()
                 nativeChangeObserver.detach()
@@ -122,6 +125,16 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
 
     /// Virtualized page provider for massive documents (7000+ pages)
     lazy var virtualPageProvider: VirtualPageProvider = .init(thumbnailCache: self.thumbnailCache)
+
+    @Published private(set) var currentPageIndex = 0
+    private struct Viewport {
+        let document: PDFDocument
+        let page: PDFPage
+        let destination: PDFDestination?
+        let autoScales: Bool
+        let scaleFactor: CGFloat
+    }
+    private var retainedViewport: Viewport?
 
     @Published var selectedPageIDs: Set<Int> = []
     @Published var outlineRows: [OutlineRow] = []
@@ -271,6 +284,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     }
 
     func attach(pdfView: PDFView) {
+        guard self.pdfView !== pdfView else { return }
         if let previousView = self.pdfView {
             guard detach(pdfView: previousView) else { return }
         }
@@ -278,6 +292,20 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
         pdfView.delegate = self
         pdfView.document = document
         applyPDFViewConfiguration()
+        if let viewport = retainedViewport, viewport.document === document,
+           viewport.page.document === document, let document,
+           document.index(for: viewport.page) != NSNotFound
+        {
+            pdfView.autoScales = viewport.autoScales
+            if !viewport.autoScales { pdfView.scaleFactor = viewport.scaleFactor }
+            pdfView.layoutSubtreeIfNeeded()
+            if let destination = viewport.destination, destination.page === viewport.page {
+                pdfView.go(to: destination)
+            } else {
+                pdfView.go(to: viewport.page)
+            }
+        }
+        currentPageIndex = currentDisplayedPageIndex() ?? 0
 
         NotificationCenter.default.addObserver(self, selector: #selector(handlePageChange(_:)), name: .PDFViewPageChanged, object: pdfView)
         NotificationCenter.default.addObserver(self, selector: #selector(handleSelectionChange(_:)), name: .PDFViewSelectionChanged, object: pdfView)
@@ -296,6 +324,14 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     func detach(pdfView: PDFView) -> Bool {
         guard self.pdfView === pdfView else { return true }
         guard commitNativeEditing() else { return false }
+        if let document, pdfView.document === document,
+           let page = pdfView.currentPage, page.document === document
+        {
+            retainedViewport = Viewport(document: document, page: page,
+                                        destination: pdfView.currentDestination,
+                                        autoScales: pdfView.autoScales, scaleFactor: pdfView.scaleFactor)
+            currentPageIndex = document.index(for: page)
+        }
         nativeChangeObserver.detach()
         NotificationCenter.default.removeObserver(self, name: .PDFViewPageChanged, object: pdfView)
         NotificationCenter.default.removeObserver(self, name: .PDFViewSelectionChanged, object: pdfView)
@@ -312,6 +348,7 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
               let page = pdfView.currentPage,
               let doc = document, pdfView.document === doc, page.document === doc else { return }
         let index = doc.index(for: page)
+        currentPageIndex = index
 
         // Update virtual provider center for massive docs
         if virtualPageProvider.isVirtualized {
@@ -2271,56 +2308,39 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
                 return
             }
 
-            let fileExtension = switch format {
-            case .jpeg: "jpg"
-            case .png: "png"
-            case .tiff: "tiff"
-            default: "img"
-            }
-
+            let documentName = currentURL?.deletingPathExtension().lastPathComponent ?? "Document"
+            let outputAccess = SecurityScopedAccess(url: outputDir)
             isDocumentLoading = true
             loadingStatus = "Exporting images..."
 
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-                defer {
-                    DispatchQueue.main.async {
-                        self?.isDocumentLoading = false
-                        self?.loadingStatus = nil
-                    }
+                // Keep the user-selected destination accessible throughout the background job.
+                defer { withExtendedLifetime(outputAccess) {} }
+                let result = Result {
+                    try StudioImageExporter.export(snapshot: snapshot,
+                                                   format: format,
+                                                   to: outputDir,
+                                                   documentName: documentName)
                 }
-
-                // Create a new PDFDocument instance for background processing
-                guard let backgroundDoc = PDFDocument(data: snapshot) else {
-                    DispatchQueue.main.async {
-                        self?.pushLog("Export failed: couldn't read current document state")
-                    }
-                    return
-                }
-
-                for i in 0 ..< backgroundDoc.pageCount {
-                    guard let page = backgroundDoc.page(at: i) else { continue }
-                    let pageRect = page.bounds(for: .mediaBox)
-                    let image = page.thumbnail(of: pageRect.size, for: .mediaBox)
-
-                    if let tiffData = image.tiffRepresentation,
-                       let bitmap = NSBitmapImageRep(data: tiffData),
-                       let data = bitmap.representation(using: format, properties: [:])
-                    {
-                        let filename = "Page_\(i + 1).\(fileExtension)"
-                        let fileURL = outputDir.appendingPathComponent(filename)
-                        try? data.write(to: fileURL)
-                    }
-                }
-
                 DispatchQueue.main.async {
-                    self?.pushLog("Exported images to \(outputDir.lastPathComponent)")
-                    NSWorkspace.shared.activateFileViewerSelecting([outputDir])
+                    guard let self else { return }
+                    self.isDocumentLoading = false
+                    self.loadingStatus = nil
+                    switch result {
+                    case let .success(export):
+                        self.pushLog("Exported \(export.pageCount) images to \(export.directory.lastPathComponent)")
+                        NSWorkspace.shared.activateFileViewerSelecting([export.directory])
+                    case let .failure(error):
+                        self.pushLog("Image export failed: \(error.localizedDescription)")
+                        self.present(error)
+                    }
                 }
             }
         }
     }
 
     func imageExportSnapshotData() throws -> Data {
+        guard commitNativeEditing() else { throw PDFOpsError.saveFailed }
         guard let document else { throw PDFOpsError.missingDocument }
         let snapshot = try PDFOps.privacyPreservingSnapshot(document: document, remoteBaseline: remoteOutlineBaseline)
         guard let data = snapshot.dataRepresentation() else {
@@ -3384,7 +3404,8 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     }
 
     private func currentDisplayedPageIndex() -> Int? {
-        guard let view = pdfView, let doc = document, let current = view.currentPage else { return nil }
+        guard let view = pdfView, let doc = document, view.document === doc,
+              let current = view.currentPage, current.document === doc else { return nil }
         let index = doc.index(for: current)
         return index >= 0 ? index : nil
     }
@@ -3577,3 +3598,91 @@ extension StudioController: DocumentClosable {}
 extension StudioController: DocumentHealthPresentable {}
 extension StudioController: DocumentUndoable {}
 extension StudioController: SelectedTextReplaceable {}
+
+
+/// Writes one complete image set into an exclusively created directory. Existing exports are never reused.
+enum StudioImageExporter {
+    struct Export {
+        let directory: URL
+        let pageCount: Int
+    }
+
+    enum ExportError: LocalizedError {
+        case invalidSnapshot
+        case pageFailed(Int, Error)
+        case encodingFailed
+        case cleanupFailed(URL, Error, Error)
+
+        var errorDescription: String? {
+            switch self {
+            case .invalidSnapshot:
+                "The current document could not be read for image export."
+            case let .pageFailed(page, error):
+                "Page \(page) could not be exported: \(error.localizedDescription)"
+            case .encodingFailed:
+                "The page image could not be encoded."
+            case let .cleanupFailed(directory, original, cleanup):
+                "\(original.localizedDescription) Incomplete images remain in \(directory.path) because cleanup failed: \(cleanup.localizedDescription)"
+            }
+        }
+    }
+
+    static func export(snapshot: Data,
+                       format: NSBitmapImageRep.FileType,
+                       to parentDirectory: URL,
+                       documentName: String,
+                       write: (Data, URL) throws -> Void = { try $0.write(to: $1, options: .withoutOverwriting) }) throws -> Export
+    {
+        guard let document = PDFDocument(data: snapshot), document.pageCount > 0 else {
+            throw ExportError.invalidSnapshot
+        }
+        let fileExtension = switch format {
+        case .jpeg: "jpg"
+        case .png: "png"
+        case .tiff: "tiff"
+        default: "img"
+        }
+        // Limit the prefix so even a maximum-length input filename leaves room for the unique suffix.
+        let prefix = String(documentName.prefix(40)).replacingOccurrences(of: "/", with: "-")
+        let directory = parentDirectory.appendingPathComponent("\(prefix)-images-\(UUID().uuidString)", isDirectory: true)
+        // FileManager.createDirectory accepts an existing directory; mkdir must reserve this one exclusively.
+        guard mkdir(directory.path, 0o700) == 0 else {
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+        }
+        do {
+            for index in 0 ..< document.pageCount {
+                do {
+                    guard let page = document.page(at: index) else { throw ExportError.invalidSnapshot }
+                    let geometry = PDFPageGeometry(page: page)
+                    guard geometry.size.width.isFinite, geometry.size.height.isFinite,
+                          geometry.size.width > 0, geometry.size.height > 0,
+                          let width = Int(exactly: geometry.size.width.rounded(.up)),
+                          let height = Int(exactly: geometry.size.height.rounded(.up)),
+                          let context = CGContext(data: nil, width: width, height: height,
+                                                  bitsPerComponent: 8, bytesPerRow: 0,
+                                                  space: CGColorSpaceCreateDeviceRGB(),
+                                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+                    else { throw ExportError.encodingFailed }
+                    let target = CGRect(x: 0, y: 0, width: width, height: height)
+                    context.setFillColor(gray: 1, alpha: 1)
+                    context.fill(target)
+                    try geometry.draw(page, in: context, target: target)
+                    guard let image = context.makeImage(),
+                          let data = NSBitmapImageRep(cgImage: image).representation(using: format, properties: [:])
+                    else { throw ExportError.encodingFailed }
+                    try write(data, directory.appendingPathComponent("Page_\(index + 1).\(fileExtension)"))
+                } catch {
+                    throw ExportError.pageFailed(index + 1, error)
+                }
+            }
+            return Export(directory: directory, pageCount: document.pageCount)
+        } catch {
+            do {
+                try FileManager.default.removeItem(at: directory)
+            } catch let cleanup {
+                throw ExportError.cleanupFailed(directory, error, cleanup)
+            }
+            throw error
+        }
+    }
+}

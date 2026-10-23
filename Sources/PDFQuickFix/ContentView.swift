@@ -6,7 +6,7 @@ struct ContentView: View {
     @EnvironmentObject private var aiInteractions: AIInteractionStore
     @State private var currentMode: AppMode = .reader
     @StateObject private var documentHub = SharedDocumentHub()
-    @StateObject private var readerController = ReaderControllerPro()
+    @StateObject private var readerController: ReaderControllerPro
     @StateObject private var studioController = StudioController()
 
     // Studio State (Lifted for Toolbar access)
@@ -26,11 +26,16 @@ struct ContentView: View {
 
     init() {
         var initialMode: AppMode = .reader
+        let recentFiles: RecentFilesManager
         #if DEBUG
             let requestedMode = CleanupReviewUITestSupport.requestedMode()
             cleanupReviewUITestMode = requestedMode
             initialMode = requestedMode ?? .reader
+            recentFiles = requestedMode == nil ? .shared : RecentFilesManager(defaults: nil)
+        #else
+            recentFiles = .shared
         #endif
+        _readerController = StateObject(wrappedValue: ReaderControllerPro(recentFiles: recentFiles))
         _currentMode = State(initialValue: initialMode)
     }
 
@@ -672,6 +677,12 @@ struct UnifiedToolbar: View {
 
             // Tools Menu
             Menu {
+                Picker("Inspector", selection: $studioSelectedTool) {
+                    ForEach(StudioTool.allCases) { tool in
+                        Label(tool.rawValue, systemImage: tool.systemImage).tag(tool)
+                    }
+                }
+                Divider()
                 Button("Watermark…") { showingWatermarkSheet = true }
                     .disabled(studioController.document == nil)
                 Button("Header & Footer…") { showingHeaderFooterSheet = true }
@@ -696,10 +707,13 @@ struct UnifiedToolbar: View {
                 Button("Encrypt Copy…") { studioController.exportEncrypted() }
                     .disabled(studioController.document == nil)
             } label: {
-                Label("Tools", systemImage: "slider.horizontal.3")
+                Label(studioSelectedTool.rawValue, systemImage: studioSelectedTool.systemImage)
             }
             .menuStyle(.borderlessButton)
             .frame(height: 28)
+            .help("Studio tools and inspector")
+            .accessibilityLabel("Studio tools")
+            .accessibilityValue(studioSelectedTool.rawValue)
 
             // Edit Tools Menu
             Menu("Edit Tools") {

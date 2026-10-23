@@ -23,6 +23,9 @@ struct PageOrganizerView: View {
                     .disabled(controller.document == nil)
                 }
                 .disabled(controller.document == nil)
+            }
+
+            HStack(spacing: 8) {
                 Button("Duplicate") {
                     controller.duplicateSelectedPages()
                 }
@@ -85,6 +88,7 @@ struct PageOrganizerView: View {
                             .buttonStyle(.borderless)
                             .disabled(snapshot.index == 0)
                             .help("Move up")
+                            .accessibilityLabel("Move page \(snapshot.index + 1) up")
 
                             Button {
                                 controller.movePage(at: snapshot.index, to: snapshot.index + 1)
@@ -94,6 +98,7 @@ struct PageOrganizerView: View {
                             .buttonStyle(.borderless)
                             .disabled(snapshot.index >= controller.pageSnapshots.count - 1)
                             .help("Move down")
+                            .accessibilityLabel("Move page \(snapshot.index + 1) down")
 
                             Button {
                                 controller.goTo(page: snapshot.index)
@@ -102,8 +107,10 @@ struct PageOrganizerView: View {
                             }
                             .buttonStyle(.borderless)
                             .help("Jump to page")
+                            .accessibilityLabel("Go to page \(snapshot.index + 1)")
                         }
                         .tag(snapshot.id)
+                        .accessibilityIdentifier("studio-organizer-page-\(snapshot.index + 1)")
                         .padding(.vertical, 4)
                         .onAppear {
                             controller.ensureThumbnail(for: snapshot.index)
@@ -151,6 +158,7 @@ struct PageOrganizerView: View {
                 }
             }
         }
-        .padding()
+        .padding(16)
+        .foregroundStyle(AppTheme.Colors.primaryText)
     }
 }

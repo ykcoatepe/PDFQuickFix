@@ -151,10 +151,14 @@ final class OllamaClient: LocalAITextGenerating, LocalAIModelListing {
 
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = requestTimeout
-        let session = URLSession(configuration: config)
+        let session = URLSession(configuration: config, delegate: LocalAIRedirectBlocker(), delegateQueue: nil)
         defer { session.invalidateAndCancel() }
 
-        let (data, _) = try await session.data(for: request)
+        let (data, response) = try await session.data(for: request)
+        guard let response = response as? HTTPURLResponse,
+              (200 ..< 300).contains(response.statusCode),
+              response.url?.absoluteURL == url.absoluteURL
+        else { throw OllamaClientError.requestFailed }
         return data
     }
 
@@ -173,5 +177,16 @@ final class OllamaClient: LocalAITextGenerating, LocalAIModelListing {
             return capabilities
         }
         return []
+    }
+}
+
+/// Fixed local APIs never need redirects. Reject before URLSession can forward a prompt body.
+final class LocalAIRedirectBlocker: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession,
+                    task: URLSessionTask,
+                    willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest,
+                    completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
     }
 }

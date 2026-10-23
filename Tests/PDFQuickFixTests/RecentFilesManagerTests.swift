@@ -26,17 +26,18 @@ final class RecentFilesManagerTests: XCTestCase {
     var defaults: UserDefaults!
     var bookmarking: MockBookmarking!
     var manager: RecentFilesManager!
+    private var suiteName: String!
 
     override func setUp() {
         super.setUp()
-        defaults = UserDefaults(suiteName: "TestDefaults")!
-        defaults.removePersistentDomain(forName: "TestDefaults")
+        suiteName = "PDFQuickFixTests.RecentFiles.\(UUID().uuidString)"
+        defaults = UserDefaults(suiteName: suiteName)!
         bookmarking = MockBookmarking()
         manager = RecentFilesManager(bookmarking: bookmarking, defaults: defaults)
     }
 
     override func tearDown() {
-        defaults.removePersistentDomain(forName: "TestDefaults")
+        defaults.removePersistentDomain(forName: suiteName)
         super.tearDown()
     }
 
@@ -52,6 +53,21 @@ final class RecentFilesManagerTests: XCTestCase {
         // Check persistence
         let stored = defaults.data(forKey: "PDFQuickFix_RecentFiles")
         XCTAssertNotNil(stored)
+    }
+
+    func testInMemoryRecentsDoNotChangePersistentHistory() {
+        let existing = URL(fileURLWithPath: "/fixtures/user-document.pdf")
+        manager.add(url: existing, pageCount: 7)
+        let original = defaults.data(forKey: "PDFQuickFix_RecentFiles")
+        let ephemeral = RecentFilesManager(bookmarking: bookmarking, defaults: nil)
+
+        XCTAssertTrue(ephemeral.recentFiles.isEmpty)
+        ephemeral.add(url: URL(fileURLWithPath: "/fixtures/test-document.pdf"), pageCount: 1)
+
+        XCTAssertEqual(ephemeral.recentFiles.first?.displayName, "test-document.pdf")
+        XCTAssertEqual(defaults.data(forKey: "PDFQuickFix_RecentFiles"), original)
+        XCTAssertTrue(RecentFilesManager(bookmarking: bookmarking, defaults: nil).recentFiles.isEmpty)
+        XCTAssertEqual(RecentFilesManager(bookmarking: bookmarking, defaults: defaults).recentFiles.first?.pageCount, 7)
     }
 
     func testDeduplication() {

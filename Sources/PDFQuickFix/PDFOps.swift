@@ -97,29 +97,11 @@ enum PDFOps {
     ) {
         guard let watermarkText = PDFStringNormalizer.normalizedNonEmpty(text, context: "watermark text") else { return }
         let font = NSFont.systemFont(ofSize: fontSize, weight: .bold)
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: font,
-        ]
-
-        let rotationValue = Int(rotation)
-        let rotationKey = PDFAnnotationKey(rawValue: "Rotation")
         for index in 0 ..< document.pageCount {
             guard let page = document.page(at: index) else { continue }
-            let bounds = page.bounds(for: .mediaBox)
-            let size = (watermarkText as NSString).size(withAttributes: attributes)
-            let origin = position.origin(for: size, in: bounds, margin: margin)
-            let annotationBounds = CGRect(origin: origin, size: size)
-
-            let annotation = PDFAnnotation(bounds: annotationBounds,
-                                           forType: .freeText,
-                                           withProperties: nil)
-            annotation.contents = watermarkText
-            annotation.font = font
-            annotation.fontColor = color.withAlphaComponent(opacity)
-            annotation.color = NSColor.clear
-            annotation.alignment = .center
-            annotation.setValue(rotationValue, forAnnotationKey: rotationKey)
-            page.addAnnotation(annotation)
+            page.addAnnotation(WatermarkAnnotation(text: watermarkText, font: font, color: color, opacity: opacity,
+                                                   rotation: rotation, position: position,
+                                                   pageBounds: page.bounds(for: .cropBox), margin: margin))
         }
     }
 
@@ -256,6 +238,8 @@ enum PDFOps {
     }
 
     static func flattenedData(document: PDFDocument) throws -> Data {
+        let detached = detachSelectionAnnotations(from: document)
+        defer { restoreSelectionAnnotations(detached) }
         guard try !PDFDocumentSerializer.remoteBaseline(for: document).hasRemoteTargets else {
             throw PDFOpsError.invalidInput(
                 "Flattening a PDF with linked remote bookmarks is unsupported because their targets cannot be preserved. The destination was not changed."
@@ -266,19 +250,17 @@ enum PDFOps {
 
         for index in 0 ..< document.pageCount {
             guard let page = document.page(at: index),
-                  let image = renderedPageImage(page, box: .cropBox),
-                  let flattenedPage = PDFPage(image: NSImage(cgImage: image, size: page.bounds(for: .cropBox).size))
+                  let image = try renderedPageImage(page, box: .cropBox),
+                  let flattenedPage = PDFPage(image: NSImage(cgImage: image, size: PDFPageGeometry(page: page).size))
             else {
                 throw PDFOpsError.invalidInput("Could not flatten page \(index + 1).")
             }
             flattened.insert(flattenedPage, at: flattened.pageCount)
         }
-        flattened.outlineRoot = copyOutlineTree(from: document, to: flattened)
+        flattened.outlineRoot = copyOutlineTree(from: document, to: flattened, flattened: true)
 
-        guard let data = flattened.dataRepresentation() else {
-            throw PDFOpsError.saveFailed
-        }
-        return data
+        return try PDFDocumentSerializer.data(from: flattened,
+                                               remoteBaseline: PDFDocumentSerializer.remoteBaseline(for: flattened))
     }
 
     static func containsReplacementTextAnnotations(in document: PDFDocument) -> Bool {
@@ -367,36 +349,38 @@ enum PDFOps {
         }
     }
 
-    private static func copyOutlineTree(from source: PDFDocument, to target: PDFDocument) -> PDFOutline? {
+    private static func copyOutlineTree(from source: PDFDocument, to target: PDFDocument, flattened: Bool = false) -> PDFOutline? {
         guard let sourceRoot = source.outlineRoot else { return nil }
         let targetRoot = PDFOutline()
         targetRoot.label = sourceRoot.label
-        copyOutlineChildren(from: sourceRoot, sourceDocument: source, to: targetRoot, targetDocument: target)
+        copyOutlineChildren(from: sourceRoot, sourceDocument: source, to: targetRoot, targetDocument: target, flattened: flattened)
         return targetRoot
     }
 
     private static func copyOutlineChildren(from sourceParent: PDFOutline,
                                             sourceDocument: PDFDocument,
                                             to targetParent: PDFOutline,
-                                            targetDocument: PDFDocument)
+                                            targetDocument: PDFDocument,
+                                            flattened: Bool)
     {
         for index in 0 ..< sourceParent.numberOfChildren {
             guard let sourceChild = sourceParent.child(at: index) else { continue }
             let targetChild = PDFOutline()
             targetChild.label = sourceChild.label
-            if let destination = copiedDestination(from: sourceChild, sourceDocument: sourceDocument, targetDocument: targetDocument) {
+            if let destination = copiedDestination(from: sourceChild, sourceDocument: sourceDocument, targetDocument: targetDocument, flattened: flattened) {
                 targetChild.destination = destination
             } else if let action = sourceChild.action?.copy() as? PDFAction {
                 targetChild.action = action
             }
             targetParent.insertChild(targetChild, at: targetParent.numberOfChildren)
-            copyOutlineChildren(from: sourceChild, sourceDocument: sourceDocument, to: targetChild, targetDocument: targetDocument)
+            copyOutlineChildren(from: sourceChild, sourceDocument: sourceDocument, to: targetChild, targetDocument: targetDocument, flattened: flattened)
         }
     }
 
     private static func copiedDestination(from outline: PDFOutline,
                                           sourceDocument: PDFDocument,
-                                          targetDocument: PDFDocument) -> PDFDestination?
+                                          targetDocument: PDFDocument,
+                                          flattened: Bool) -> PDFDestination?
     {
         let destination = outline.destination ?? (outline.action as? PDFActionGoTo)?.destination
         guard let sourcePage = destination?.page else { return nil }
@@ -406,7 +390,9 @@ enum PDFOps {
         else {
             return nil
         }
-        let copy = PDFDestination(page: targetPage, at: destination?.point ?? .zero)
+        let point = destination?.point ?? .zero
+        let outputPoint = flattened ? PDFPageGeometry(page: sourcePage).displayDestinationPoint(for: point) : point
+        let copy = PDFDestination(page: targetPage, at: outputPoint)
         copy.zoom = destination?.zoom ?? 0
         return copy
     }
@@ -428,8 +414,9 @@ enum PDFOps {
         return fullText
     }
 
-    private static func renderedPageImage(_ page: PDFPage, box: PDFDisplayBox) -> CGImage? {
-        let bounds = page.bounds(for: box)
+    private static func renderedPageImage(_ page: PDFPage, box: PDFDisplayBox) throws -> CGImage? {
+        let geometry = PDFPageGeometry(page: page, box: box)
+        let bounds = CGRect(origin: .zero, size: geometry.size)
         let renderScale: CGFloat = 2
         let width = max(Int((bounds.width * renderScale).rounded(.up)), 1)
         let height = max(Int((bounds.height * renderScale).rounded(.up)), 1)
@@ -449,10 +436,7 @@ enum PDFOps {
         let outputBounds = CGRect(x: 0, y: 0, width: bounds.width, height: bounds.height)
         context.fill(outputBounds)
         context.clip(to: outputBounds)
-        context.saveGState()
-        context.translateBy(x: -bounds.minX, y: -bounds.minY)
-        page.draw(with: box, to: context)
-        context.restoreGState()
+        try geometry.draw(page, in: context, target: outputBounds, box: box)
         return context.makeImage()
     }
 }
