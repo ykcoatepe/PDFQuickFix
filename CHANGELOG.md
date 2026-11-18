@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.3] - 2026-11-18
+
 ### Security
 - Light Clean, Keep Editable and Export Metadata-Cleaned no longer carry XMP metadata into the output. Light Clean and Keep Editable also remove embedded files, file-attachment annotations, document and page JavaScript, open actions, optional-content layers and application private data, which previously survived when the source had no bookmarks.
 - Sanitize fails without writing output if hidden document data would remain, and Cleanup Evidence reports `failed` for an output that still contains it.
