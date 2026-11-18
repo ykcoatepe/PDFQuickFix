@@ -6,34 +6,53 @@ import Foundation
 /// catalog's /Metadata, so each reference and its stream are overwritten in place
 /// with bytes of the same length, leaving every object offset valid.
 enum PDFXMPEraser {
+    /// Why a file was left untouched.
+    enum Refusal: String, Error {
+        case unreadableSyntax
+        case compressedObjects
+        case objectOutsideCrossReferenceTable
+        case targetIsNotAnUnsharedXMPStream
+        case pageCountChanged
+    }
+
     /// Returns nil when the layout is not understood or an erase would be unsafe;
     /// the caller's hidden-data check then decides whether the result is usable.
     static func erasingMetadataStreams(from data: Data) -> Data? {
-        var bytes = [UInt8](data)
-        guard let objects = scanObjects(in: bytes),
-              // References inside compressed objects cannot be seen from here.
-              !objects.values.contains(where: { $0.names.contains("ObjStm") || $0.names.contains("XRef") })
-        else { return nil }
+        try? erase(from: data).get()
+    }
 
-        let targets = Set(objects.values.flatMap { $0.metadataReferences.map(\.target) })
-        guard !targets.isEmpty else { return data }
-        let otherReferences = objects.values.reduce(into: Set<Int>()) { $0.formUnion($1.otherReferences) }
-        for target in targets {
-            // Erase only a stream that is XMP and that nothing else points to.
-            guard let info = objects[target], info.isStream,
-                  info.topLevelNames.contains("XML") || info.topLevelNames.contains("Metadata"),
-                  info.bodyEnd - info.bodyStart >= 6,
-                  !otherReferences.contains(target)
-            else { return nil }
+    static func erase(from data: Data) -> Result<Data, Refusal> {
+        var bytes = [UInt8](data)
+        let objects: [ObjectInfo]
+        switch scanObjects(in: bytes) {
+        case let .success(found): objects = found
+        case let .failure(refusal): return .failure(refusal)
+        }
+        // References inside compressed objects cannot be seen from here.
+        guard !objects.contains(where: { $0.names.contains("ObjStm") || $0.names.contains("XRef") }) else {
+            return .failure(.compressedObjects)
         }
 
-        for info in objects.values {
+        let targets = Set(objects.flatMap { $0.metadataReferences.map(\.target) })
+        guard !targets.isEmpty else { return .success(data) }
+        let otherReferences = objects.reduce(into: Set<Int>()) { $0.formUnion($1.otherReferences) }
+        // A file with an update history defines a number more than once; every
+        // definition of a target must be an XMP stream that nothing else points to.
+        let definitions = objects.filter { targets.contains($0.number) }
+        guard targets.isSubset(of: Set(definitions.map(\.number))),
+              targets.isDisjoint(with: otherReferences),
+              definitions.allSatisfy({ info in
+                  info.isStream && info.bodyEnd - info.bodyStart >= 6
+                      && (info.topLevelNames.contains("XML") || info.topLevelNames.contains("Metadata"))
+              })
+        else { return .failure(.targetIsNotAnUnsharedXMPStream) }
+
+        for info in objects {
             for reference in info.metadataReferences {
                 for index in reference.span { bytes[index] = 0x20 }
             }
         }
-        for target in targets {
-            guard let info = objects[target] else { return nil }
+        for info in definitions {
             for index in info.bodyStart ..< info.bodyEnd { bytes[index] = 0x20 }
             bytes.replaceSubrange(info.bodyStart + 1 ..< info.bodyStart + 5, with: Array("null".utf8))
         }
@@ -41,13 +60,14 @@ enum PDFXMPEraser {
         let erased = Data(bytes)
         guard erased.count == data.count,
               let before = pageCount(of: data), let after = pageCount(of: erased), before == after
-        else { return nil }
-        return erased
+        else { return .failure(.pageCountChanged) }
+        return .success(erased)
     }
 
     // MARK: - Structure
 
     private struct ObjectInfo {
+        var number = 0
         /// Bytes between the `obj` and `endobj` keywords.
         var bodyStart = 0
         var bodyEnd = 0
@@ -66,13 +86,12 @@ enum PDFXMPEraser {
         return document.numberOfPages
     }
 
-    /// Reads every `N G obj … endobj` in file order, which covers both the plain
-    /// and the linearized layout. Each one must start where a cross-reference
-    /// table says an object starts, so bytes that only look like an object are
-    /// never taken for one. A file that defines an object number twice has an
-    /// update history and is not handled.
-    private static func scanObjects(in bytes: [UInt8]) -> [Int: ObjectInfo]? {
-        var objects: [Int: ObjectInfo] = [:]
+    /// Reads every `N G obj … endobj` in file order, which covers the plain and
+    /// the linearized layout and files with appended updates. Each one must
+    /// start where a cross-reference table says an object starts, so bytes that
+    /// only look like an object are never taken for one.
+    private static func scanObjects(in bytes: [UInt8]) -> Result<[ObjectInfo], Refusal> {
+        var objects: [ObjectInfo] = []
         var headerOffsets: Set<Int> = []
         var tableOffsets: Set<Int> = []
         var lexer = Lexer(bytes: bytes, position: 0, end: bytes.count)
@@ -80,29 +99,30 @@ enum PDFXMPEraser {
         while let token = lexer.next() {
             switch token.kind {
             case .invalid:
-                return nil
+                return .failure(.unreadableSyntax)
             case .keyword("obj"):
                 guard recent.count >= 2,
                       case let .integer(number) = recent[recent.count - 2].kind,
                       case .integer = recent[recent.count - 1].kind,
-                      objects[number] == nil,
-                      let info = objectInfo(lexer: &lexer, bodyStart: token.range.upperBound)
-                else { return nil }
-                objects[number] = info
+                      var info = objectInfo(lexer: &lexer, bodyStart: token.range.upperBound)
+                else { return .failure(.unreadableSyntax) }
+                info.number = number
+                objects.append(info)
                 headerOffsets.insert(recent[recent.count - 2].range.lowerBound)
                 recent.removeAll()
             case .keyword("xref"):
-                guard readCrossReferenceTable(lexer: &lexer, into: &tableOffsets) else { return nil }
+                guard readCrossReferenceTable(lexer: &lexer, into: &tableOffsets) else {
+                    return .failure(.unreadableSyntax)
+                }
                 recent.removeAll()
             default:
                 recent.append(token)
                 if recent.count > 2 { recent.removeFirst() }
             }
         }
-        guard !objects.isEmpty, headerOffsets.count == objects.count, headerOffsets.isSubset(of: tableOffsets) else {
-            return nil
-        }
-        return objects
+        guard !objects.isEmpty else { return .failure(.unreadableSyntax) }
+        guard headerOffsets.isSubset(of: tableOffsets) else { return .failure(.objectOutsideCrossReferenceTable) }
+        return .success(objects)
     }
 
     /// Collects the in-use offsets of one classic table, stopping before `trailer`.

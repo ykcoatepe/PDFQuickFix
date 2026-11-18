@@ -102,8 +102,8 @@ final class HiddenDataSanitizeTests: XCTestCase {
             guard case let PDFDocumentSanitizerError.hiddenDataRemains(kinds) = error else {
                 return XCTFail("Unexpected error: \(error)")
             }
+            // Which other kinds PDFKit's ordinary write keeps varies by macOS version.
             XCTAssertTrue(kinds.contains(.xmpMetadata))
-            XCTAssertTrue(kinds.contains(.embeddedFiles))
         }
     }
 
@@ -185,6 +185,30 @@ final class HiddenDataSanitizeTests: XCTestCase {
         XCTAssertEqual(PDFHiddenDataScanner.scan(data: erased), [])
     }
 
+    /// An appended update redefines objects; the superseded XMP is still in the file.
+    func testEraserHandlesAnAppendedUpdate() throws {
+        let first = Self.rawPDF(objects: [
+            1: "<< /Type /Catalog /Pages 2 0 R /Metadata 4 0 R >>",
+            2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>",
+            4: "<< /Type /Metadata /Subtype /XML /Length 7 >>\nstream\nOLDMARK\nendstream",
+        ], info: nil)
+        let previousTable = try XCTUnwrap(first.range(of: Data("xref".utf8))).lowerBound
+        var data = first
+        let offset = data.count
+        data.append(Data("4 0 obj\n<< /Type /Metadata /Subtype /XML /Length 7 >>\nstream\nNEWMARK\nendstream\nendobj\n".utf8))
+        let table = data.count
+        data.append(Data(("xref\n4 1\n" + String(format: "%010d 00000 n \n", offset)
+                + "trailer\n<< /Size 5 /Root 1 0 R /Prev \(previousTable) >>\nstartxref\n\(table)\n%%EOF\n").utf8))
+        XCTAssertEqual(PDFHiddenDataScanner.scan(data: data), [.xmpMetadata])
+
+        let erased = try PDFXMPEraser.erase(from: data).get()
+
+        XCTAssertEqual(PDFHiddenDataScanner.scan(data: erased), [])
+        XCTAssertNil(erased.range(of: Data("OLDMARK".utf8)))
+        XCTAssertNil(erased.range(of: Data("NEWMARK".utf8)))
+    }
+
     func testMetadataCleanedExportKeepsRemoteBookmark() throws {
         let data = Self.rawPDF(objects: [
             1: "<< /Type /Catalog /Pages 2 0 R /Metadata 5 0 R /Outlines 6 0 R >>",
@@ -195,6 +219,13 @@ final class HiddenDataSanitizeTests: XCTestCase {
             7: "<< /Title (Remote chapter) /Parent 6 0 R /A << /S /GoToR /F (linked.pdf) /D [0 /XYZ 12 34 1.25] >> >>",
         ], info: nil)
         let source = try XCTUnwrap(PDFDocument(data: data))
+        // The ordinary write must be erasable in place: the full rewrite cannot keep a remote bookmark.
+        let ordinary = try PDFDocumentSerializer.data(from: source,
+                                                      remoteBaseline: PDFDocumentSerializer.remoteBaseline(for: source))
+        if case let .failure(refusal) = PDFXMPEraser.erase(from: ordinary) {
+            let dump = String(decoding: ordinary, as: UTF8.self)
+            XCTFail("Eraser refused the ordinary write: \(refusal.rawValue)\n\(dump.prefix(6000))")
+        }
 
         let output = try PDFOps.metadataCleanedData(document: source,
                                                     remoteBaseline: PDFDocumentSerializer.remoteBaseline(for: source))
