@@ -17,8 +17,18 @@ For a first run from build to verified output, start with [Get Started with PDFQ
 | Profile | Best for | What it does |
 | --- | --- | --- |
 | `privacy-clean` | Highest privacy for external sharing | Rasterizes pages, removes outlines, and scrubs metadata. Output is not searchable by design. |
-| `light-clean` | Searchable outbound copies | Rebuilds PDF data, sanitizes annotations, removes outlines, and scrubs metadata while preserving searchable text when possible. |
-| `keep-editable` | Internal review copies that still need form/edit affordances | Keeps the current PDF structure, leaves annotations editable, removes outlines, and scrubs metadata. |
+| `light-clean` | Searchable outbound copies | Rewrites the PDF, removes outlines, and scrubs metadata while preserving searchable text when possible. Comments, links, and form values remain. |
+| `keep-editable` | Internal review copies that still need form/edit affordances | Rewrites the PDF, leaves annotations and form fields editable, removes outlines, and scrubs metadata. |
+
+Every profile removes document-level hidden data: XMP metadata, embedded files and file-attachment annotations, document and page JavaScript, open actions, optional-content layer definitions, and application private data. If any of it would remain, sanitize fails and writes no output.
+
+`light-clean` and `keep-editable` keep the page content itself. These stay in the output; use `privacy-clean` when they must go:
+
+- invisible or covered text, comment text and author names, link targets, and form values
+- alternate text stored in the document's structure tree
+- content of a hidden layer that sits in a form XObject or an annotation, which becomes visible once the layer definitions are gone (hidden-layer content marked directly in the page is dropped)
+
+The rewrite has known losses: multi-select list selections, page labels, and form-field scripts (calculation, formatting, validation) are not carried over, a form field's default value is set to its current value (an empty field with a default shows that default), and some PDFs (notably Chinese and Japanese text with certain fonts) lose part or all of their searchable text. Cleanup Evidence reports `reviewRequired` when searchable text drops by 1% or more.
 
 `privacy-clean` is the default for Finder, app export, and CLI sanitize flows. Use `light-clean` only when searchable text matters after handoff. Use `keep-editable` only when the recipient needs to continue editing or filling forms.
 

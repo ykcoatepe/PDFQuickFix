@@ -234,7 +234,10 @@ enum PDFOps {
         )
         cleaned.documentAttributes = [:]
 
-        return try PDFDocumentSerializer.data(from: cleaned, remoteBaseline: PDFDocumentSerializer.remoteBaseline(for: cleaned))
+        return try PDFDocumentSanitizer.dataWithoutXMP(
+            from: cleaned,
+            remoteBaseline: PDFDocumentSerializer.remoteBaseline(for: cleaned)
+        )
     }
 
     static func flattenedData(document: PDFDocument) throws -> Data {

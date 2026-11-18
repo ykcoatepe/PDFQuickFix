@@ -181,7 +181,10 @@ enum BatchCleanupEvidenceBuilder {
         let assessment = CleanupSanitizeAssessment.evaluate(
             sourcePageCount: initial.source.pageCount,
             outputPageCount: initial.output.pageCount,
-            remainingMetadataFields: initial.output.metadataFieldLabels
+            remainingMetadataFields: initial.output.metadataFieldLabels,
+            hiddenData: PDFHiddenDataScanner.scan(url: outputURL),
+            searchableText: profile == .privacyClean ? nil
+                : (initial.source.searchableTextCharacterCount, initial.output.searchableTextCharacterCount)
         )
 
         return CleanupEvidence(

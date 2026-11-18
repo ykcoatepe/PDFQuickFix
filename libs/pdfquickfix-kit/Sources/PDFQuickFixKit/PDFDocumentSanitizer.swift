@@ -6,6 +6,7 @@ public enum PDFDocumentSanitizerError: LocalizedError {
     case unableToOpen(URL)
     case lockedDocument
     case pageRenderFailed(page: Int, reason: String)
+    case hiddenDataRemains([PDFHiddenDataKind])
     case cancelled
 
     public var errorDescription: String? {
@@ -16,6 +17,8 @@ public enum PDFDocumentSanitizerError: LocalizedError {
             "PDF parola ile kilitli. Temizlemeden önce belgenin kilidini açın."
         case let .pageRenderFailed(page, reason):
             "PDF içeriği sayfa \(page) sırasında işlenemedi: \(reason)."
+        case let .hiddenDataRemains(kinds):
+            "Temizlenen PDF'te gizli veri kaldı (\(kinds.map(\.label).joined(separator: ", "))). Çıktı yazılmadı; Privacy Clean profilini kullanın."
         case .cancelled:
             "İşlem iptal edildi."
         }
@@ -43,13 +46,18 @@ public enum PDFDocumentSanitizer {
         public var sanitizeOutline: Bool
         public var removeOutline: Bool
         public var scrubMetadata: Bool
+        /// Fail closed unless the result is free of XMP, embedded files, scripts,
+        /// optional-content layers and application private data. The rebuild becomes
+        /// a full rewrite, which drops what the source catalog carries.
+        public var removeHiddenDocumentData: Bool
 
         public init(rebuildMode: RebuildMode = .auto,
                     validationPageLimit: Int? = nil,
                     sanitizeAnnotations: Bool = true,
                     sanitizeOutline: Bool = true,
                     removeOutline: Bool = false,
-                    scrubMetadata: Bool = false)
+                    scrubMetadata: Bool = false,
+                    removeHiddenDocumentData: Bool = false)
         {
             self.rebuildMode = rebuildMode
             self.validationPageLimit = validationPageLimit
@@ -57,6 +65,7 @@ public enum PDFDocumentSanitizer {
             self.sanitizeOutline = sanitizeOutline
             self.removeOutline = removeOutline
             self.scrubMetadata = scrubMetadata
+            self.removeHiddenDocumentData = removeHiddenDocumentData
         }
 
         public static var full: Options {
@@ -70,19 +79,22 @@ public enum PDFDocumentSanitizer {
                         sanitizeAnnotations: true, // effectively removed by rasterization
                         sanitizeOutline: false, // removed explicitly
                         removeOutline: true,
-                        scrubMetadata: true)
+                        scrubMetadata: true,
+                        removeHiddenDocumentData: true)
             case .lightClean:
                 Options(rebuildMode: .alwaysRebuildVectorOrData,
                         sanitizeAnnotations: true,
                         sanitizeOutline: false, // removed explicitly
                         removeOutline: true,
-                        scrubMetadata: true)
+                        scrubMetadata: true,
+                        removeHiddenDocumentData: true)
             case .keepEditable:
                 Options(rebuildMode: .never,
                         sanitizeAnnotations: false,
                         sanitizeOutline: false, // removed explicitly
                         removeOutline: true,
-                        scrubMetadata: true)
+                        scrubMetadata: true,
+                        removeHiddenDocumentData: true)
             }
         }
     }
@@ -175,8 +187,15 @@ public enum PDFDocumentSanitizer {
             }
             workingDocument = redrawn
         } else if requiresRebuild {
-            let data = try PDFDocumentSerializer.data(from: original, removingOutline: options.removeOutline,
-                                                       remoteBaseline: remoteBaseline)
+            let data: Data
+            if options.removeHiddenDocumentData {
+                removeFileAttachmentAnnotations(from: original)
+                data = try rewrittenDataWithoutXMP(from: original, removingOutline: options.removeOutline,
+                                                   remoteBaseline: remoteBaseline)
+            } else {
+                data = try PDFDocumentSerializer.data(from: original, removingOutline: options.removeOutline,
+                                                      remoteBaseline: remoteBaseline)
+            }
             guard let rebuilt = PDFDocument(data: data)
             else {
                 throw PDFDocumentSanitizerError.pageRenderFailed(
@@ -230,7 +249,59 @@ public enum PDFDocumentSanitizer {
                      options: validationOptions,
                      progress: progress,
                      shouldCancel: shouldCancel)
+        if options.removeHiddenDocumentData {
+            guard let residue = PDFHiddenDataScanner.scan(cgDocument: cgDocument) else {
+                throw PDFDocumentSanitizerError.pageRenderFailed(page: 0, reason: "PDF gizli veri denetimi yapılamadı")
+            }
+            guard residue.isEmpty else {
+                throw PDFDocumentSanitizerError.hiddenDataRemains(residue.sorted())
+            }
+        }
         return workingDocument
+    }
+
+    /// PDFKit's ordinary write copies the source catalog (XMP, embedded files,
+    /// scripts, layers) along with an unmodified document. The full rewrite keeps
+    /// only what PDFKit models, plus the XMP stream, which is then erased in place.
+    public static func rewrittenDataWithoutXMP(from document: PDFDocument,
+                                               removingOutline: Bool,
+                                               remoteBaseline: PDFDocumentSerializer.RemoteOutlineBaseline? = nil) throws -> Data
+    {
+        let data = try PDFDocumentSerializer.data(from: document,
+                                                  options: [kCGPDFContextCreateLinearizedPDF as String: true],
+                                                  removingOutline: removingOutline,
+                                                  remoteBaseline: remoteBaseline)
+        return PDFXMPEraser.erasingMetadataStreams(from: data) ?? data
+    }
+
+    /// Removes XMP and nothing else where the ordinary write allows it, so
+    /// bookmarks, attachments and the text layer stay byte-for-byte; otherwise
+    /// falls back to the full rewrite. Throws rather than return XMP.
+    public static func dataWithoutXMP(from document: PDFDocument,
+                                      remoteBaseline: PDFDocumentSerializer.RemoteOutlineBaseline? = nil) throws -> Data
+    {
+        let ordinary = try PDFDocumentSerializer.data(from: document, remoteBaseline: remoteBaseline)
+        if let erased = PDFXMPEraser.erasingMetadataStreams(from: ordinary),
+           PDFHiddenDataScanner.scan(data: erased)?.contains(.xmpMetadata) == false
+        {
+            return erased
+        }
+        let rewritten = try rewrittenDataWithoutXMP(from: document, removingOutline: false,
+                                                    remoteBaseline: remoteBaseline)
+        guard PDFHiddenDataScanner.scan(data: rewritten)?.contains(.xmpMetadata) == false else {
+            throw PDFDocumentSanitizerError.hiddenDataRemains([.xmpMetadata])
+        }
+        return rewritten
+    }
+
+    /// The full rewrite drops the attached file but keeps the annotation that named it.
+    private static func removeFileAttachmentAnnotations(from document: PDFDocument) {
+        for index in 0 ..< document.pageCount {
+            guard let page = document.page(at: index) else { continue }
+            for annotation in page.annotations where annotation.type == "FileAttachment" {
+                page.removeAnnotation(annotation)
+            }
+        }
     }
 
     public static func validate(cgDocument: CGPDFDocument,
