@@ -135,8 +135,12 @@ Profile names accept camel case, kebab case, or underscore-separated input. The 
 | Profile | Structure | Metadata and outlines | Search/edit expectation |
 | --- | --- | --- | --- |
 | `privacy-clean` | Rasterizes every page | Scrubs metadata and removes outlines | Not searchable; not structurally editable |
-| `light-clean` | Rebuilds PDF data | Scrubs metadata, sanitizes annotations, removes outlines | Searchable text may remain |
-| `keep-editable` | Keeps the current structure | Scrubs metadata and removes outlines; annotations remain | Intended to preserve editing/form affordances |
+| `light-clean` | Rewrites the PDF | Scrubs metadata, removes outlines; annotations remain | Searchable text may remain |
+| `keep-editable` | Rewrites the PDF | Scrubs metadata and removes outlines; annotations remain | Intended to preserve editing/form affordances |
+
+Every profile also removes XMP metadata, embedded files, scripts, open actions, optional-content layers, and application private data, and fails without writing output if any of them would remain.
+
+The CLI does not compare searchable text before and after. `light-clean` and `keep-editable` can lose part of the text layer on some PDFs; the app's Cleanup Evidence reports that, the CLI report does not.
 
 Preset schema version `1` contains a non-empty name and a camel-case profile value:
 

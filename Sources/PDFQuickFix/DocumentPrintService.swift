@@ -2,8 +2,26 @@ import AppKit
 @preconcurrency import PDFKit
 
 enum DocumentPrintService {
+    /// Redact and Replace Text only cover the page until the document is
+    /// flattened, and a print (or the print panel's Save as PDF) of the live
+    /// document would carry the covered text along.
+    @MainActor
+    static func documentForPrinting(_ document: PDFDocument) throws -> PDFDocument {
+        guard PDFOps.containsReplacementTextAnnotations(in: document) else { return document }
+        guard let flattened = PDFDocument(data: try PDFOps.flattenedData(document: document)) else {
+            throw PDFOpsError.saveFailed
+        }
+        return flattened
+    }
+
     @MainActor
     static func makePrintOperation(for document: PDFDocument, jobTitle: String?) -> NSPrintOperation? {
+        guard let printable = try? documentForPrinting(document) else { return nil }
+        return makePrintOperation(forPrintable: printable, jobTitle: jobTitle ?? document.documentURL?.lastPathComponent)
+    }
+
+    @MainActor
+    private static func makePrintOperation(forPrintable document: PDFDocument, jobTitle: String?) -> NSPrintOperation? {
         guard let operation = document.printOperation(for: NSPrintInfo.shared,
                                                       scalingMode: .pageScaleDownToFit,
                                                       autoRotate: true)
@@ -33,7 +51,20 @@ enum DocumentPrintService {
             }
             return false
         }
-        guard let operation = makePrintOperation(for: document, jobTitle: jobTitle) else {
+        let printable: PDFDocument
+        do {
+            printable = try documentForPrinting(document)
+        } catch {
+            // Always said out loud: printing the live document instead would leak.
+            presentUnavailableAlert(
+                message: "This PDF has redacted or replaced text that could not be flattened for printing. "
+                    + "Save the document or export a flattened copy, then print that. (\(error.localizedDescription))"
+            )
+            return false
+        }
+        guard let operation = makePrintOperation(forPrintable: printable,
+                                                 jobTitle: jobTitle ?? document.documentURL?.lastPathComponent)
+        else {
             if showUnavailableAlert {
                 presentUnavailableAlert(message: "Couldn't prepare this PDF for printing.")
             }

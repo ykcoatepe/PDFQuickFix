@@ -284,12 +284,14 @@ final class StudioController: NSObject, ObservableObject, PDFViewDelegate, PDFAc
     }
 
     func attach(pdfView: PDFView) {
+        // Set first: the view is on screen even when the attach below is refused,
+        // and without the delegate PDFKit opens document links itself.
+        pdfView.delegate = self
         guard self.pdfView !== pdfView else { return }
         if let previousView = self.pdfView {
             guard detach(pdfView: previousView) else { return }
         }
         self.pdfView = pdfView
-        pdfView.delegate = self
         pdfView.document = document
         applyPDFViewConfiguration()
         if let viewport = retainedViewport, viewport.document === document,
@@ -3685,4 +3687,19 @@ enum StudioImageExporter {
             throw error
         }
     }
+}
+
+/// Studio handles clicks on annotations itself; massive documents fall through
+/// to PDFKit, whose default opens whatever URL the document names.
+extension StudioController {
+    nonisolated func pdfViewWillClick(onLink _: PDFView, with url: URL) {
+        Task { @MainActor [weak self] in
+            PDFLinkOpener.handleClick(on: url, reportBlocked: { blocked in
+                NSSound.beep()
+                self?.pushLog(PDFLinkOpener.blockedMessage(for: blocked))
+            })
+        }
+    }
+
+    nonisolated func pdfViewOpenPDF(_: PDFView, forRemoteGoToAction _: PDFActionRemoteGoTo) {}
 }

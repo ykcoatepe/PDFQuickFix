@@ -152,6 +152,22 @@ struct CleanupEvidence: Codable, Equatable, Sendable {
         )
     }
 
+    func replacing(verdict: CleanupEvidenceVerdict, warnings: [String]) -> CleanupEvidence {
+        CleanupEvidence(
+            schemaVersion: schemaVersion,
+            operationKind: operationKind,
+            sanitizeProfile: sanitizeProfile,
+            source: source,
+            output: output,
+            quickFixTelemetry: quickFixTelemetry,
+            comparison: comparison,
+            redactionVerification: redactionVerification,
+            verdict: verdict,
+            warnings: warnings,
+            generatedAt: generatedAt
+        )
+    }
+
     func replacingSourceFileName(with newFileName: String) -> CleanupEvidence {
         CleanupEvidence(
             schemaVersion: schemaVersion,

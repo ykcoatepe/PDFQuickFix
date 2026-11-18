@@ -234,7 +234,10 @@ enum PDFOps {
         )
         cleaned.documentAttributes = [:]
 
-        return try PDFDocumentSerializer.data(from: cleaned, remoteBaseline: PDFDocumentSerializer.remoteBaseline(for: cleaned))
+        return try PDFDocumentSanitizer.dataWithoutXMP(
+            from: cleaned,
+            remoteBaseline: PDFDocumentSerializer.remoteBaseline(for: cleaned)
+        )
     }
 
     static func flattenedData(document: PDFDocument) throws -> Data {
@@ -249,13 +252,16 @@ enum PDFOps {
         flattened.documentAttributes = document.documentAttributes
 
         for index in 0 ..< document.pageCount {
-            guard let page = document.page(at: index),
-                  let image = try renderedPageImage(page, box: .cropBox),
-                  let flattenedPage = PDFPage(image: NSImage(cgImage: image, size: PDFPageGeometry(page: page).size))
-            else {
-                throw PDFOpsError.invalidInput("Could not flatten page \(index + 1).")
+            // Each page renders a full bitmap; release it before the next one.
+            try autoreleasepool {
+                guard let page = document.page(at: index),
+                      let image = try renderedPageImage(page, box: .cropBox),
+                      let flattenedPage = PDFPage(image: NSImage(cgImage: image, size: PDFPageGeometry(page: page).size))
+                else {
+                    throw PDFOpsError.invalidInput("Could not flatten page \(index + 1).")
+                }
+                flattened.insert(flattenedPage, at: flattened.pageCount)
             }
-            flattened.insert(flattenedPage, at: flattened.pageCount)
         }
         flattened.outlineRoot = copyOutlineTree(from: document, to: flattened, flattened: true)
 

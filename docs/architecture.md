@@ -62,7 +62,9 @@ folder batch --+                                      |
 CLI -----------+                                      +--> evidence/review in app flows
 ```
 
-`privacyClean` rasterizes pages and removes editability/searchability. `lightClean` rebuilds PDF data and sanitizes annotations while trying to preserve text. `keepEditable` avoids a structural rebuild and retains annotations. Every profile scrubs metadata and removes outlines.
+`privacyClean` rasterizes pages and removes editability/searchability. `lightClean` and `keepEditable` force PDFKit's full rewrite, which drops what the source catalog carries (embedded files, scripts, layer definitions), and then erase the XMP stream in place (`PDFXMPEraser`), while text and annotations are retained. Every profile scrubs metadata and removes outlines.
+
+`PDFHiddenDataScanner` reads the serialized result with CoreGraphics. The sanitizer fails closed when it reports hidden data, and Cleanup Evidence runs it again on the published file.
 
 The sanitizer validates rendered pages after transformation. App flows then generate Cleanup Evidence and, where available, a before/after comparison. See [Cleanup Evidence](cleanup-evidence.md) for the receipt boundary.
 

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.3] - 2026-11-18
+
+### Security
+- Light Clean, Keep Editable and Export Metadata-Cleaned no longer carry XMP metadata into the output. Light Clean and Keep Editable also remove embedded files, file-attachment annotations, document and page JavaScript, open actions, optional-content layers and application private data, which previously survived when the source had no bookmarks.
+- Sanitize fails without writing output if hidden document data would remain, and Cleanup Evidence reports `failed` for an output that still contains it.
+
+- Reader no longer hands every link in a PDF to the system. Web and mail links open after a confirmation that names the destination, every time; all other schemes, including `file:`, and links into other PDF files are blocked. Studio applies the same rule to very large documents.
+- Printing a document with Redact Text or Replace Text marks prints a flattened copy, so the print panel's Save as PDF no longer keeps the covered text.
+
+### Changed
+- Light Clean and Keep Editable always rewrite the PDF, as they already did for documents with bookmarks. Multi-select list selections and page labels are not carried over, and some PDFs lose searchable text; Cleanup Evidence reports `reviewRequired` when searchable text drops by 1% or more.
+
 ## [1.1.2] - 2026-10-23
 
 ### Fixed

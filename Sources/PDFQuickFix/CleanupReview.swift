@@ -35,18 +35,37 @@ struct CleanupSanitizeAssessment {
 
     static func evaluate(sourcePageCount: Int,
                          outputPageCount: Int,
-                         remainingMetadataFields: [String]) -> CleanupSanitizeAssessment
+                         remainingMetadataFields: [String],
+                         hiddenData: Set<PDFHiddenDataKind>?,
+                         searchableText: (source: Int, output: Int)? = nil) -> CleanupSanitizeAssessment
     {
         var warnings: [String] = []
         if sourcePageCount != outputPageCount {
             warnings.append("Source and output page counts differ.")
+        }
+        let hiddenDataRemains = !(hiddenData ?? []).isEmpty
+        if let hiddenData {
+            if hiddenDataRemains {
+                warnings.append(
+                    "Hidden data remains in the output: \(hiddenData.sorted().map(\.label).joined(separator: ", "))."
+                )
+            }
+        } else {
+            warnings.append("The output could not be checked for hidden data.")
+        }
+        // Rewriting can cost a text-preserving profile part of its text layer.
+        if let searchableText, searchableText.source > 0 {
+            let lost = searchableText.source - searchableText.output
+            if lost * 100 >= searchableText.source {
+                warnings.append("Searchable text decreased by \(lost) of \(searchableText.source) characters.")
+            }
         }
         if !remainingMetadataFields.isEmpty {
             warnings.append(
                 "Output metadata fields remain: \(remainingMetadataFields.joined(separator: ", "))."
             )
         }
-        let verdict: CleanupEvidenceVerdict = if sourcePageCount != outputPageCount {
+        let verdict: CleanupEvidenceVerdict = if sourcePageCount != outputPageCount || hiddenDataRemains {
             .failed
         } else if warnings.isEmpty {
             .passed
@@ -93,21 +112,25 @@ enum CleanupReviewBuilder {
                 source: sourceSnapshot,
                 output: outputDocument
             )
-            let assessment = CleanupSanitizeAssessment.evaluate(
-                sourcePageCount: comparison.sourcePageCount,
-                outputPageCount: comparison.outputPageCount,
-                remainingMetadataFields: comparison.metadataFieldsRemaining
-            )
-            let evidence = try CleanupEvidenceGenerator.generate(
+            let facts = try CleanupEvidenceGenerator.generate(
                 sourceURL: snapshotURL,
                 outputURL: outputURL,
                 operationKind: .sanitize,
                 sanitizeProfile: profile.rawValue,
                 comparison: comparison.evidenceSummary,
-                verdict: assessment.verdict,
-                warnings: assessment.warnings
+                verdict: .passed
             )
-            .replacingSourceFileName(with: URL(fileURLWithPath: sourceFileName).lastPathComponent)
+            let assessment = CleanupSanitizeAssessment.evaluate(
+                sourcePageCount: comparison.sourcePageCount,
+                outputPageCount: comparison.outputPageCount,
+                remainingMetadataFields: comparison.metadataFieldsRemaining,
+                hiddenData: PDFHiddenDataScanner.scan(url: outputURL),
+                searchableText: profile == .privacyClean ? nil
+                    : (facts.source.searchableTextCharacterCount, facts.output.searchableTextCharacterCount)
+            )
+            let evidence = facts
+                .replacing(verdict: assessment.verdict, warnings: assessment.warnings)
+                .replacingSourceFileName(with: URL(fileURLWithPath: sourceFileName).lastPathComponent)
 
             return CleanupReview(
                 sourceSnapshotURL: snapshotURL,

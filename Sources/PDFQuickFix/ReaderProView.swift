@@ -83,6 +83,10 @@ final class ReaderControllerPro: NSObject, ObservableObject, PDFActionable {
             if pdfView !== newValue { flushNativeChanges() }
         }
         didSet {
+            // Every view shown must have the delegate: without it PDFKit opens
+            // document links itself. configurePDFView() runs before the first
+            // view of a window exists, so it cannot be the only place.
+            pdfView?.delegate = self
             rebindPDFViewObservers(from: oldValue, to: pdfView)
             refreshSelectionState()
             attachNativeChanges()
@@ -2008,6 +2012,19 @@ extension ReaderControllerPro: PDFViewDelegate {
         }
         return scale
     }
+
+    /// Replaces PDFKit's default, which opens whatever URL the document names.
+    nonisolated func pdfViewWillClick(onLink _: PDFView, with url: URL) {
+        Task { @MainActor [weak self] in
+            PDFLinkOpener.handleClick(on: url, reportBlocked: { blocked in
+                NSSound.beep()
+                self?.log = PDFLinkOpener.blockedMessage(for: blocked)
+            })
+        }
+    }
+
+    /// A bookmark or link into another file must not open that file.
+    nonisolated func pdfViewOpenPDF(_: PDFView, forRemoteGoToAction _: PDFActionRemoteGoTo) {}
 }
 
 struct ReaderProView: View, Equatable {

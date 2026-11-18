@@ -37,6 +37,8 @@ The before/after engine processes pages serially. It compares a bounded render a
 | `reviewRequired` | A result is ambiguous or needs human inspection | Review warnings and changed pages before sharing |
 | `failed` | Processing or a confirmed verification condition failed | Do not treat the output as ready to share |
 
+A sanitize output that still contains hidden data (XMP metadata, embedded files, scripts, open actions, optional-content layers, application private data) is `failed`. If the output cannot be checked for hidden data, or a text-preserving profile lost 1% or more of its searchable text, the verdict is `reviewRequired`.
+
 Redaction candidate text found elsewhere in the output is `reviewRequired` by default because a string match does not prove that the original redaction location leaked. It becomes `failed` only after the caller marks the detection as a confirmed leak.
 
 ## Single-file schema
